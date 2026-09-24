@@ -119,6 +119,11 @@ test:linux:
 # =============================================================================
 .macos:
   tags: [macos]
+  # The shell executor's bash is not a login shell, so Homebrew (xcodegen, swiftlint, fastlane)
+  # is not on its PATH by itself.
+  before_script:
+    - eval "$(/opt/homebrew/bin/brew shellenv)"
+    - xcodegen --version && swiftlint version && fastlane --version | tail -1
   rules:
     - if: '$MACOS_RUNNER != "1"'
       when: never
