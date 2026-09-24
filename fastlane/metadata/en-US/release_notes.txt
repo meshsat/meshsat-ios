@@ -1,1 +1,1 @@
-Build 2: night mode fixed (it did nothing on the phone), the SOS card with hold to send, the SOS banner and result screen, Setup > Safety with emergency contacts from your contacts, the alarm test. Messages with mesh and satellite chats. Nothing proven on hardware yet.
+Build 3: Setup sections for the satellite modem, the Hub (scan its QR code, test the connection), Messaging (encryption key, compression), Safety (check-in timer settings), SMS and Diagnostics. Night mode fixed, SOS card and banner.

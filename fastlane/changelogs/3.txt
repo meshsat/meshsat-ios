@@ -1,0 +1,1 @@
+Build 3: Setup sections for the satellite modem, the Hub (scan its QR code, test the connection), Messaging (encryption key, compression), Safety (check-in timer settings), SMS and Diagnostics. Night mode fixed, SOS card and banner.
