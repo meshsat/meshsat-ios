@@ -49,7 +49,7 @@ extension GatewayController {
         await restartHubReporter()
     }
 
-    /// The Hub client stopped and started again on the settings as they are now.
+    /// The Hub client and the relay stopped and started again on the settings as they are now.
     public func restartHubReporter() async {
         if let hub = hubReporter {
             setHubReporter(nil)
@@ -58,6 +58,14 @@ extension GatewayController {
         }
         if settings.get(SettingsKey.hubEnabled) { interfaceManager.enable("hub_0") } else { interfaceManager.disable("hub_0") }
         initHubReporter()
+        // The relay rides on the same identity, so it starts again on it too.
+        stopHubRelay()
+        if settings.get(SettingsKey.hubRelayTarget).isEmpty {
+            interfaceManager.disable(RelayBridgeTransport.interfaceId)
+        } else {
+            interfaceManager.enable(RelayBridgeTransport.interfaceId)
+        }
+        initHubRelay()
     }
 
     /// A `meshsat://provision/` link the app was opened with, confirmed by the ProvisionLinkDialog.

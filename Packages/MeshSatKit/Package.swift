@@ -102,7 +102,7 @@ let package = Package(
         .target(
             name: "MeshSatHub",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatEngine",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatEngine", "MeshSatReticulum",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
             ]

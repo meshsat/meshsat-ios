@@ -77,6 +77,18 @@ public final class GatewayController: @unchecked Sendable {
         hubReporterValue = r
         lock.unlock()
     }
+    private var hubRelayValue: RelayBridgeTransport?
+    /// The Hub relay client, when a target bridge is configured (MESHSAT-1157).
+    public var hubRelay: RelayBridgeTransport? {
+        lock.lock()
+        defer { lock.unlock() }
+        return hubRelayValue
+    }
+    func setHubRelay(_ r: RelayBridgeTransport?) {
+        lock.lock()
+        hubRelayValue = r
+        lock.unlock()
+    }
     /// The last modem IMEI and signal the driver reported, for the Hub's birth and health.
     private var lastModemImeiValue = ""
     private var lastModemSignalValue = 0
@@ -171,6 +183,7 @@ public final class GatewayController: @unchecked Sendable {
         initPassScheduler()
         observeModemForHub()
         initHubReporter()
+        initHubRelay()
         Self.log.info("GatewayController started")
     }
 
@@ -183,6 +196,7 @@ public final class GatewayController: @unchecked Sendable {
             setHubReporter(nil)
             Task { await hub.stop() }
         }
+        stopHubRelay()
         interfaceManager.stopAll()
         lock.lock()
         let t = tasks
@@ -283,6 +297,9 @@ public final class GatewayController: @unchecked Sendable {
         // disabled, so a rule to it holds its deliveries instead of dropping them.
         mgr.register(InterfaceConfig(id: "sms_0", channelType: "sms", autoReconnect: false, alwaysOnline: true))
         mgr.register(InterfaceConfig(id: "hub_0", channelType: "hub", autoReconnect: false))
+        // Hub relay tunnel (MESHSAT-1157): the transport reconnects by itself, so the manager
+        // only mirrors its state and never schedules a reconnect of its own.
+        mgr.register(InterfaceConfig(id: RelayBridgeTransport.interfaceId, channelType: "tcp", autoReconnect: false))
         mgr.register(
             InterfaceConfig(id: "mqtt_0", channelType: "mqtt", autoReconnect: true, initialBackoffMs: 5_000, maxBackoffMs: 120_000))
         mgr.register(
@@ -337,6 +354,7 @@ public final class GatewayController: @unchecked Sendable {
         mgr.disable("sms_0")
         if !settings.get(SettingsKey.mqttEnabled) { mgr.disable("mqtt_0") }
         if !settings.get(SettingsKey.aprsEnabled) { mgr.disable("aprs_0") }
+        if settings.get(SettingsKey.hubRelayTarget).isEmpty { mgr.disable(RelayBridgeTransport.interfaceId) }
         if !settings.get(SettingsKey.hubEnabled) { mgr.disable("hub_0") }
         if !settings.get(SettingsKey.rnsTcpEnabled) { mgr.disable("tcp_rns_0") }
 

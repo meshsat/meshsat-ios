@@ -12,6 +12,8 @@ public protocol ByteStream: Sendable {
 }
 
 public protocol WebSocketTransport: Sendable {
+    /// Frames from the peer. A `.close` frame is the last element when the peer closed; the
+    /// stream ends without one when the transport failed.
     var incoming: AsyncStream<WebSocketFrame> { get }
     func send(_ frame: WebSocketFrame) async throws
     func close(code: UInt16, reason: String) async
@@ -20,6 +22,80 @@ public protocol WebSocketTransport: Sendable {
 public enum WebSocketFrame: Sendable, Equatable {
     case text(String)
     case binary([UInt8])
+    /// The peer's close frame: its status code and reason.
+    case close(code: UInt16, reason: String)
+}
+
+/// Opens WebSocket client connections (OkHttp's newWebSocket; URLSessionWebSocketTask on Apple).
+public protocol WebSocketDialer: Sendable {
+    func dial(_ url: String, headers: [String: String], timeoutSeconds: Double) async throws -> any WebSocketTransport
+}
+
+public enum WebSocketDialError: Error, Equatable, Sendable {
+    /// The server answered before the upgrade with this HTTP status.
+    case refused(Int)
+    case failed(String)
+}
+
+/// Two ends of an in-memory WebSocket for tests: frames sent by one arrive at the other, and a
+/// close from either end is delivered to the other as a `.close` frame that ends its stream.
+public final class LoopbackWebSocket: WebSocketTransport, @unchecked Sendable {
+    public let incoming: AsyncStream<WebSocketFrame>
+    private let feed: AsyncStream<WebSocketFrame>.Continuation
+    private let lock = NSLock()
+    private var peer: LoopbackWebSocket?
+    private var closed = false
+    /// The close code and reason this end received from the peer, or sent itself.
+    public private(set) var closedWith: (code: UInt16, reason: String)?
+
+    private init() {
+        var continuation: AsyncStream<WebSocketFrame>.Continuation!
+        incoming = AsyncStream(bufferingPolicy: .unbounded) { continuation = $0 }
+        feed = continuation
+    }
+
+    public static func pair() -> (LoopbackWebSocket, LoopbackWebSocket) {
+        let a = LoopbackWebSocket()
+        let b = LoopbackWebSocket()
+        a.lock.lock()
+        a.peer = b
+        a.lock.unlock()
+        b.lock.lock()
+        b.peer = a
+        b.lock.unlock()
+        return (a, b)
+    }
+
+    private func snapshot() -> (closed: Bool, peer: LoopbackWebSocket?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (closed, peer)
+    }
+
+    private func markClosed(code: UInt16, reason: String) -> (wasClosed: Bool, peer: LoopbackWebSocket?) {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = closed
+        closed = true
+        if closedWith == nil { closedWith = (code, reason) }
+        return (was, peer)
+    }
+
+    public func send(_ frame: WebSocketFrame) async throws {
+        let state = snapshot()
+        guard !state.closed, let other = state.peer else { throw ByteStreamError.closed }
+        other.feed.yield(frame)
+    }
+
+    public func close(code: UInt16, reason: String) async {
+        let state = markClosed(code: code, reason: reason)
+        guard !state.wasClosed else { return }
+        feed.finish()
+        if let other = state.peer, !other.markClosed(code: code, reason: reason).wasClosed {
+            other.feed.yield(.close(code: code, reason: reason))
+            other.feed.finish()
+        }
+    }
 }
 
 public struct HttpResponse: Sendable, Equatable {
