@@ -27,7 +27,25 @@ public final class AppLog: @unchecked Sendable {
         lock.lock()
         lines.append(line)
         if lines.count > Self.capacity { lines.removeFirst(lines.count - Self.capacity) }
+        let handle = fileHandle()
         lock.unlock()
+        // Documents/meshsat.log: the app shares its Documents folder (UIFileSharingEnabled), so
+        // the log can be copied off the phone over USB. Started afresh at each launch.
+        handle?.write(Data((line + "\n").utf8))
+    }
+
+    private var file: FileHandle?
+    private var fileTried = false
+
+    /// Called with the lock held.
+    private func fileHandle() -> FileHandle? {
+        if fileTried { return file }
+        fileTried = true
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let url = docs.appendingPathComponent("meshsat.log")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        file = try? FileHandle(forWritingTo: url)
+        return file
     }
 
     /// The most recent lines, oldest first.
@@ -69,7 +87,9 @@ public struct AppLogHandler: LogHandler {
         let text = message.description
         switch level {
         case .trace, .debug: sink.debug("\(text, privacy: .public)")
-        case .info, .notice: sink.info("\(text, privacy: .public)")
+        // Notice, not info: iOS keeps info lines of a third-party subsystem neither in its
+        // archive nor in the USB log relay, so they reach nobody (found 25 Sep 2026).
+        case .info, .notice: sink.notice("\(text, privacy: .public)")
         case .warning: sink.warning("\(text, privacy: .public)")
         case .error, .critical: sink.error("\(text, privacy: .public)")
         }
