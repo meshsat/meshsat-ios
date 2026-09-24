@@ -23,6 +23,8 @@ public final class GatewayModel {
     public private(set) var scanResults: [MeshtasticCentral.DiscoveredNode] = []
     public private(set) var myInfo: MeshtasticProtocol.MyNodeInfo?
     public private(set) var nodes: [MeshtasticProtocol.MeshNodeInfo] = []
+    /// How our radio heard the last over-the-air packet from each node (SNR, RSSI, hops), by node number.
+    public private(set) var linkSignals: [UInt32: MeshtasticProtocol.MeshLinkSignal] = [:]
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
     public private(set) var modemSignal = 0
@@ -104,6 +106,10 @@ public final class GatewayModel {
         tasks.append(
             Task { [weak self] in
                 for await list in central.radio.nodes.subscribe() { self?.nodes = list.sorted { $0.lastHeard > $1.lastHeard } }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await map in central.radio.linkSignals.subscribe() { self?.linkSignals = map }
             })
         tasks.append(
             Task { [weak self] in

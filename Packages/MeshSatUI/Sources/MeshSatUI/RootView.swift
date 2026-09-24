@@ -99,7 +99,14 @@ public struct RootView: View {
         case .home: DashboardScreen(nightMode: $nightMode)
         case .messages: MessagesScreen()
         case .map: Color.clear
-        case .people: ScreenPlaceholder(title: "People", mirrors: "ui/screens/PeersScreen.kt")
+        case .people:
+            PeersScreen(
+                onConnect: { router.navigate(.setupSection(.node)) },
+                onMessage: { router.navigate(.chat(peer: $0)) },
+                onShowOnMap: { num in
+                    mapFocus.show(Int64(num))
+                    router.selectTab(.map)
+                })
         case .setup: SetupScreen()
         }
     }
