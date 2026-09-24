@@ -68,7 +68,9 @@ let package = Package(
         .target(
             name: "MeshSatReticulum",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatNet",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatHemb", "MeshSatProto", "MeshSatMeshtastic",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "_CryptoExtras", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),

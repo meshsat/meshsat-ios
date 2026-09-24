@@ -171,10 +171,11 @@ final class DispatcherTests: XCTestCase {
         let store = FakeDeliveryStore(rows: [delivery(5, "msg:5", "tst2")])
         let dispatcher = make(store: store) { _, _, _, _, _, _ in nil }
         dispatcher.startWorker("iridium_0")
-        let woke = await waitUntil { store.log.contains("retryNow:iridium_0") }
-        XCTAssertTrue(woke)
-        XCTAssertTrue(store.log.contains("seq:5:1"))
-        XCTAssertTrue(store.log.contains("ackPending:5"))
+        // The three records land in no fixed order relative to each other, so wait for all of them.
+        let done = await waitUntil {
+            store.log.contains("retryNow:iridium_0") && store.log.contains("seq:5:1") && store.log.contains("ackPending:5")
+        }
+        XCTAssertTrue(done, "\(store.log)")
         dispatcher.stop()
     }
 
