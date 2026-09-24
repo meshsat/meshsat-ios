@@ -12,6 +12,8 @@ public enum MeshSatBLE {
     /// CBPeripheralManagerOptionRestoreIdentifierKey for the Reticulum GATT server.
     public static let peripheralRestoreIdentifier = "net.meshsat.ios.peripheral"
 
-    public static let meshtasticService = CBUUID(string: MeshtasticBleContract.serviceUUID)
-    public static let iridiumPipeService = CBUUID(string: IridiumPipeContract.serviceUUID)
+    // Computed, not stored: CBUUID is not Sendable, so a stored static would be shared mutable
+    // state under Swift 6's strict concurrency.
+    public static var meshtasticService: CBUUID { CBUUID(string: MeshtasticBleContract.serviceUUID) }
+    public static var iridiumPipeService: CBUUID { CBUUID(string: IridiumPipeContract.serviceUUID) }
 }
