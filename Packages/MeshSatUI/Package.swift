@@ -10,7 +10,8 @@ let package = Package(
         .library(name: "MeshSatUI", targets: ["MeshSatUI"])
     ],
     dependencies: [
-        .package(path: "../MeshSatKit")
+        .package(path: "../MeshSatKit"),
+        .package(path: "../MeshSatApple"),
     ],
     targets: [
         .target(
@@ -18,6 +19,11 @@ let package = Package(
             dependencies: [
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
                 .product(name: "MeshSatSatellite", package: "MeshSatKit"),
+                .product(name: "MeshSatMeshtastic", package: "MeshSatKit"),
+                .product(name: "MeshSatNet", package: "MeshSatKit"),
+                .product(name: "MeshSatPlatform", package: "MeshSatApple"),
+                .product(name: "MeshSatBLE", package: "MeshSatApple"),
+                .product(name: "MeshSatStore", package: "MeshSatApple"),
             ],
             resources: [.process("Resources")]
         ),

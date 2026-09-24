@@ -3,14 +3,35 @@
 // the stacks and shown by opacity, and the custom bottom bar. The screens themselves land
 // one by one under MESHSAT-1321; until a screen is ported its placeholder names the Kotlin
 // file it mirrors.
+import MeshSatPlatform
 import SwiftUI
 
 public struct RootView: View {
     @State private var router = Router()
-    @State private var strip = StatusStripModel()
+    @State private var model: GatewayModel
     @State private var nightMode = false
 
-    public init() {}
+    public init(gateway: GatewayController) {
+        _model = State(initialValue: GatewayModel(gateway: gateway))
+    }
+
+    /// What the strip shows, from the gateway: the mesh and satellite states and counts.
+    private var strip: StatusStripModel {
+        var m = StatusStripModel()
+        switch model.meshState {
+        case .connected: m.mesh = .working
+        case .connecting, .scanning: m.mesh = .trying
+        case .disconnected: m.mesh = .off
+        }
+        m.meshNodes = model.nodes.count
+        switch model.modemState {
+        case .connected: m.satellite = model.modemSignal > 0 ? .working : .trying
+        case .connecting: m.satellite = .trying
+        case .disconnected: m.satellite = .off
+        }
+        m.satelliteBars = model.modemSignal
+        return m
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -37,6 +58,7 @@ public struct RootView: View {
         }
         .background(MSColors.bg.ignoresSafeArea())
         .environment(router)
+        .environment(model)
         .nightMode(nightMode)
         .preferredColorScheme(.dark)
     }
@@ -58,7 +80,9 @@ public struct RootView: View {
 
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
-        if let title = route.subScreenTitle {
+        if route == .setupSection(.node) {
+            SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
+        } else if let title = route.subScreenTitle {
             SubScreen(
                 title,
                 onBack: { router.back() },
