@@ -512,10 +512,7 @@ public final class GatewayController: @unchecked Sendable {
     private func onOwnNodeBattery(_ nodeNum: UInt32, level: Int, voltage: Float) async {
         let source = "node_battery:" + String(format: "%08x", nodeNum)
         let nowMs = clock.nowMs()
-        lock.lock()
-        let store = nowMs - nodeBatteryStoredMs >= Self.nodeBatterySampleMs
-        if store { nodeBatteryStoredMs = nowMs }
-        lock.unlock()
+        let store = shouldStoreBatteryReading(at: nowMs)
         if store { try? await db.signals.insert(SignalRecord(timestamp: nowMs, source: source, value: level)) }
         var readings: [NodeBattery.Reading] = []
         do {
@@ -529,6 +526,15 @@ public final class GatewayController: @unchecked Sendable {
         nodeBattery.send(
             NodeBatteryNow(
                 nodeNum: nodeNum, level: level, voltage: voltage, hoursLeft: NodeBattery.hoursLeft(readings, nowMs: nowMs), atMs: nowMs))
+    }
+
+    /// One stored reading a minute, whatever the node's telemetry interval.
+    private func shouldStoreBatteryReading(at nowMs: Int64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if nowMs - nodeBatteryStoredMs < Self.nodeBatterySampleMs { return false }
+        nodeBatteryStoredMs = nowMs
+        return true
     }
 
     /// Fetch MT traffic. A message already in the modem's MT buffer is read for free; only a
