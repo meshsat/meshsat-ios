@@ -21,11 +21,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // ProvisionLinkDialog (MESHSAT-1324) takes it from here.
     }
 
-    func userNotificationCenter(
+    // nonisolated with the completion-handler form: the delegate's parameters are not Sendable,
+    // so Swift 6 refuses to hand them to a main-actor method. The route string is Sendable and
+    // hops to the main actor by itself.
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        _ = response.notification.request.content.userInfo["route"] as? String
-        // Router.openFromNotification once the router is reachable from here (MESHSAT-1321).
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let route = response.notification.request.content.userInfo["route"] as? String
+        Task { @MainActor in
+            _ = route  // Router.openFromNotification once the router is reachable from here (MESHSAT-1321).
+        }
+        completionHandler()
     }
 }
