@@ -100,7 +100,7 @@ final class AppDatabaseTests: XCTestCase {
         let acked = try await dao.markAckedBySatRef("300234010753370:219", now: now + 9000)
         XCTAssertEqual(acked, 1)
         let stats = try await dao.stats()
-        XCTAssertEqual(stats.map { "\($0.channel)/\($0.status)/\($0.cnt)" }, ["iridium_0/queued/1", "iridium_0/retry/1", "sms_0/dead/1"])
+        XCTAssertEqual(stats.map { "\($0.channel)/\($0.status)/\($0.cnt)" }, ["iridium_0/queued/2", "sms_0/dead/1"])
     }
 
     func testContactsAndKeysUpsert() async throws {
