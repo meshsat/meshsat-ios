@@ -129,6 +129,14 @@ public struct MessageDao: Sendable {
         }.values(in: db)
     }
 
+    /// Messages on one transport since a moment, live, for Home's SMS lane.
+    public func countSince(_ since: Int64, transport: String) -> AsyncValueObservation<Int> {
+        ValueObservation.tracking { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM messages WHERE timestamp > ? AND transport = ?", arguments: [since, transport])
+                ?? 0
+        }.values(in: db)
+    }
+
     /// Messages on one transport since a moment, for Home's lanes.
     public func countByTransportSince(_ transport: String, since: Int64) async throws -> Int {
         try await db.read { db in
