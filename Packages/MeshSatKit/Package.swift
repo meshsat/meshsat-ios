@@ -130,6 +130,8 @@ let package = Package(
                 "MeshSatWire", "MeshSatCrypto", "MeshSatHemb", "MeshSatNet", "MeshSatReticulum",
                 "MeshSatSatellite", "MeshSatProto", "MeshSatMeshtastic", "MeshSatEngine",
                 "MeshSatHub", "MeshSatMQTT", "MeshSatMsvqsc", "MeshSatAprs", "MeshSatTak",
+                .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates"),
             ],
             resources: [.copy("Fixtures")]
         ),
