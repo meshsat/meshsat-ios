@@ -65,6 +65,8 @@ public final class GatewayController: @unchecked Sendable {
     public internal(set) var dispatcher: Dispatcher?
     public internal(set) var accessEvaluator: AccessEvaluator?
     public internal(set) var ackTracker: AckTracker?
+    /// The signed audit log and its Ed25519 key (engine/SigningService.kt).
+    public internal(set) var signingService: SigningService?
     public let creditTracker: CreditTracker
     public let location = LocationProvider()
     private var hubReporterValue: HubReporter?

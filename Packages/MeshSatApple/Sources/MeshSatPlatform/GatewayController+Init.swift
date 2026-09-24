@@ -101,6 +101,10 @@ extension GatewayController {
             Task { [self] in
                 do {
                     try ChannelDefaults.register(into: registry)
+                    // The audit log had no writer at all (MESHSAT-1249): the chain is signed from here on.
+                    let signing = SigningService(audit: db.auditLog, store: settings.secure)
+                    await signing.loadLastHash()
+                    signingService = signing
                     let eval = AccessEvaluator(rules: db.accessRules, groups: db.objectGroups)
                     try await eval.reloadFromDb()
                     accessEvaluator = eval
@@ -137,6 +141,10 @@ extension GatewayController {
                         if del.channel == "iridium_0", del.msgRef.hasPrefix("msg:"), let msgId = Int64(del.msgRef.dropFirst(4)) {
                             try? await db.messages.setForwardedTo(id: msgId, Self.iridiumUnconfirmed)
                         }
+                    }
+                    disp.setOnAudit { event, iface, deliveryId, ruleId, detail in
+                        await signing.auditEvent(
+                            event, interfaceId: iface, direction: "egress", deliveryId: deliveryId, ruleId: ruleId, detail: detail)
                     }
                     // iOS has no SMS API: sms_0 deliveries wait for the person in the Messages composer.
                     disp.setManualChannels(["sms_0"])
