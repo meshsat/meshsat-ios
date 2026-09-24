@@ -1,0 +1,1 @@
+Build 13: Diagnostics: the app log can now be read off the phone over USB. To test: ping the phone from the Hub once.

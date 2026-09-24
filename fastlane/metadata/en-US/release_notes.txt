@@ -1,1 +1,1 @@
-Build 12: Diagnostics: Setup > Diagnostics > App log shows what the app did, with Share. To test: ping the phone from the Hub, then share the app log.
+Build 13: Diagnostics: the app log can now be read off the phone over USB. To test: ping the phone from the Hub once.
