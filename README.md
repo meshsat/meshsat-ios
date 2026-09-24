@@ -10,7 +10,7 @@
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/meshsat/meshsat-ios?color=F25C05&label=release&include_prereleases)](https://github.com/meshsat/meshsat-ios/releases)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white)
-[![Build](https://github.com/meshsat/meshsat-ios/actions/workflows/ios.yml/badge.svg)](https://github.com/meshsat/meshsat-ios/actions/workflows/ios.yml)
+[![Pipeline](https://gitlab.nuclearlighters.net/products/meshsat/meshsat-ios/badges/main/pipeline.svg)](https://gitlab.nuclearlighters.net/products/meshsat/meshsat-ios/-/pipelines)
 
 [Download](https://github.com/meshsat/meshsat-ios/releases) ·
 [Android app](https://github.com/meshsat/meshsat-android) ·

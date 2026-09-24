@@ -38,6 +38,7 @@ public final class GatewayModel {
     }
 
     private func observe() {
+        let gateway = self.gateway
         let central = gateway.central
         let driver = gateway.driver
         tasks.append(
