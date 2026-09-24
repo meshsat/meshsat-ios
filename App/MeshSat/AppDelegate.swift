@@ -42,7 +42,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func handle(url: URL) {
         guard url.scheme == MeshSatPlatform.provisionURLScheme, url.host == MeshSatPlatform.provisionURLHost else { return }
-        // ProvisionLinkDialog (MESHSAT-1324) takes it from here.
+        // ProvisionLinkDialog confirms it, then the gateway's claim takes over (MESHSAT-1235, 1306).
+        gateway.openProvisionLink(url.absoluteString)
     }
 
     // nonisolated with the completion-handler form: the delegate's parameters are not Sendable,

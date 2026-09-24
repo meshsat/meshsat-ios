@@ -5,6 +5,7 @@
 import Foundation
 import MeshSatBLE
 import MeshSatEngine
+import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatPlatform
@@ -29,6 +30,12 @@ public final class GatewayModel {
     public private(set) var passes: [PassPrediction] = []
     public private(set) var passMode: PassScheduler.PassMode = .idle
     public private(set) var phoneFix: PhoneFix?
+    /// The Hub provisioning claim (MESHSAT-1306) and a deep link waiting for confirmation.
+    public private(set) var provisionState: ProvisionClaim.State = .idle
+    public private(set) var provisionLink: String?
+    /// Android's Toast: the text shown at the bottom, nil when none.
+    public private(set) var toast: String?
+    private var toastTask: Task<Void, Never>?
 
     private var tasks: [Task<Void, Never>] = []
 
@@ -96,6 +103,16 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await fix in gateway.location.phoneLocation.subscribe() { self?.phoneFix = fix }
             })
+        tasks.append(
+            Task { [weak self] in
+                for await s in gateway.provisionClaim.state.subscribe() { self?.provisionState = s }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await link in gateway.pendingProvisionLink.subscribe() {
+                    if let link { self?.provisionLink = link }
+                }
+            })
         if let scheduler = gateway.passScheduler {
             tasks.append(
                 Task { [weak self] in
@@ -105,6 +122,25 @@ public final class GatewayModel {
     }
 
     // MARK: Actions (the intents Android's screens send the service)
+
+    public func provisionFromLink(_ request: ProvisionImporter.ProvisionRequest) { gateway.provisionClaim.fromLink(request) }
+    public func provisionFromQr(_ url: String) { gateway.provisionClaim.fromQr(url) }
+    public func applyProvision() { gateway.provisionClaim.apply() }
+    public func dismissProvision() { gateway.provisionClaim.dismiss() }
+    /// The link dialog took the pending link, or is done with it.
+    public func provisionLinkHandled() {
+        provisionLink = nil
+        gateway.pendingProvisionLink.send(nil)
+    }
+
+    public func showToast(_ text: String, seconds: Double = 3.5) {
+        toast = text
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            if !Task.isCancelled { self?.toast = nil }
+        }
+    }
 
     public func startScan() {
         scanResults.removeAll()
