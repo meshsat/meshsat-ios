@@ -101,6 +101,7 @@ let package = Package(
             name: "MeshSatHub",
             dependencies: [
                 "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatEngine",
+                .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
