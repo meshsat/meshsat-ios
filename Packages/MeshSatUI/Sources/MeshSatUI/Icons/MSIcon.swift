@@ -52,6 +52,13 @@ public enum MSIcon {
     public static var expandMore: Image { asset("outlined_expand_more", fallback: "chevron.down") }
     public static var expandLess: Image { asset("outlined_expand_less", fallback: "chevron.up") }
     public static var delete: Image { asset("outlined_delete", fallback: "trash") }
+    public static var altRoute: Image { asset("outlined_alt_route", fallback: "arrow.triangle.branch") }
+    public static var link: Image { asset("outlined_link", fallback: "link") }
+    public static var outbox: Image { asset("outlined_outbox", fallback: "tray.and.arrow.up") }
+    public static var hub: Image { asset("outlined_hub", fallback: "circle.hexagongrid") }
+    public static var history: Image { asset("outlined_history", fallback: "clock.arrow.circlepath") }
+    public static var key: Image { asset("outlined_key", fallback: "key") }
+    public static var monitorHeart: Image { asset("outlined_monitor_heart", fallback: "waveform.path.ecg") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {
