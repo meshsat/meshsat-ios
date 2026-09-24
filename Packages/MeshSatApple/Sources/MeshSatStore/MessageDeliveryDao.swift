@@ -35,7 +35,7 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    public func setStatus(id: Int64, _ status: String, lastError: String = "", now: Int64 = nowMs()) async throws {
+    public func setStatus(id: Int64, _ status: String, lastError: String = "", now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET status = ?, last_error = ?, updated_at = ? WHERE id = ?",
@@ -43,7 +43,8 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    public func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64 = nowMs()) async throws {
+    public func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws
+    {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -56,7 +57,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     /// Wait until `nextRetry` without counting a try: the channel could not take it just now.
-    public func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64 = nowMs()) async throws {
+    public func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET status = 'retry', next_retry = ?, last_error = ?, updated_at = ? WHERE id = ?",
@@ -64,7 +65,7 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    public func cancel(id: Int64, now: Int64 = nowMs()) async throws {
+    public func cancel(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -76,7 +77,7 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    public func retryNow(id: Int64, now: Int64 = nowMs()) async throws {
+    public func retryNow(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -91,7 +92,7 @@ public struct MessageDeliveryDao: Sendable {
     /// Cancel a delivery that is still waiting, including one on hold until its link is back
     /// (MESHSAT-1249). Returns the rows changed: 0 when it was sent or stopped in the meantime.
     @discardableResult
-    public func cancelWaiting(id: Int64, now: Int64 = nowMs()) async throws -> Int {
+    public func cancelWaiting(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -126,7 +127,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     @discardableResult
-    public func expireDeliveries(now: Int64 = nowMs()) async throws -> Int {
+    public func expireDeliveries(now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: """
@@ -140,7 +141,7 @@ public struct MessageDeliveryDao: Sendable {
 
     /// Hold deliveries for a channel going offline; held_at pauses the TTL clock.
     @discardableResult
-    public func holdForChannel(_ channel: String, now: Int64 = nowMs()) async throws -> Int {
+    public func holdForChannel(_ channel: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -155,7 +156,7 @@ public struct MessageDeliveryDao: Sendable {
 
     /// Unhold when the channel comes back: expires_at moves by the time spent held.
     @discardableResult
-    public func unholdForChannel(_ channel: String, now: Int64 = nowMs()) async throws -> Int {
+    public func unholdForChannel(_ channel: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: """
@@ -176,7 +177,8 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     @discardableResult
-    public func cancelRunaway(safetyLimit: Int = MessageDelivery.runawaySafetyLimit, now: Int64 = nowMs()) async throws -> Int {
+    public func cancelRunaway(safetyLimit: Int = MessageDelivery.runawaySafetyLimit, now: Int64 = MeshSatStore.nowMs()) async throws -> Int
+    {
         try await db.write { db in
             try db.execute(
                 sql: """
@@ -191,7 +193,7 @@ public struct MessageDeliveryDao: Sendable {
 
     /// Make every waiting retry of `channel` due now: the interface has just come online.
     @discardableResult
-    public func retryNowForChannel(_ channel: String, now: Int64 = nowMs()) async throws -> Int {
+    public func retryNowForChannel(_ channel: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET next_retry = ?, updated_at = ? WHERE channel = ? AND status = 'retry'",
@@ -201,7 +203,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     @discardableResult
-    public func recoverStale(now: Int64 = nowMs()) async throws -> Int {
+    public func recoverStale(now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -216,7 +218,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     /// The satellite session ("imei:momsn") a delivery went out in (MESHSAT-1246).
-    public func setSatRef(id: Int64, _ ref: String, now: Int64 = nowMs()) async throws {
+    public func setSatRef(id: Int64, _ ref: String, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(sql: "UPDATE message_deliveries SET sat_ref = ?, updated_at = ? WHERE id = ?", arguments: [ref, now, id])
         }
@@ -230,7 +232,7 @@ public struct MessageDeliveryDao: Sendable {
 
     /// The far end confirmed it: the Hub's receipt for a satellite session, or an SMS report.
     @discardableResult
-    public func markAckedBySatRef(_ ref: String, now: Int64 = nowMs()) async throws -> Int {
+    public func markAckedBySatRef(_ ref: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET ack_status = 'acked', ack_timestamp = ?, updated_at = ? WHERE sat_ref = ?",
@@ -240,7 +242,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     @discardableResult
-    public func markAcked(id: Int64, now: Int64 = nowMs()) async throws -> Int {
+    public func markAcked(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET ack_status = 'acked', ack_timestamp = ?, updated_at = ? WHERE id = ?",
@@ -268,7 +270,7 @@ public struct MessageDeliveryDao: Sendable {
 
     /// Stop every delivery of one SOS that has not gone out yet.
     @discardableResult
-    public func cancelWaitingByRefPrefix(_ prefix: String, now: Int64 = nowMs()) async throws -> Int {
+    public func cancelWaitingByRefPrefix(_ prefix: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -303,13 +305,13 @@ public struct MessageDeliveryDao: Sendable {
 
     // MARK: Sequence numbers and ACK tracking (Phase C)
 
-    public func setSeqNum(id: Int64, _ seqNum: Int64, now: Int64 = nowMs()) async throws {
+    public func setSeqNum(id: Int64, _ seqNum: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(sql: "UPDATE message_deliveries SET seq_num = ?, updated_at = ? WHERE id = ?", arguments: [seqNum, now, id])
         }
     }
 
-    public func setAckPending(id: Int64, now: Int64 = nowMs()) async throws {
+    public func setAckPending(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET ack_status = 'pending', ack_timestamp = ?, updated_at = ? WHERE id = ?",
@@ -318,7 +320,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     /// ACKed: promotes the status to 'delivered'.
-    public func setAcked(id: Int64, now: Int64 = nowMs()) async throws {
+    public func setAcked(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql:
@@ -330,7 +332,7 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    public func setNacked(id: Int64, now: Int64 = nowMs()) async throws {
+    public func setNacked(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
                 sql: "UPDATE message_deliveries SET ack_status = 'nacked', ack_timestamp = ?, updated_at = ? WHERE id = ?",
@@ -353,7 +355,7 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     @discardableResult
-    public func timeoutPendingAcks(cutoff: Int64, now: Int64 = nowMs()) async throws -> Int {
+    public func timeoutPendingAcks(cutoff: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
                 sql: """
