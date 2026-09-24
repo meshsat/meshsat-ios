@@ -164,9 +164,12 @@ public final class RelayBridgeTransport: RnsInterface, @unchecked Sendable {
                 password: config.password, dialer: dialer, frameListener: { [weak self] frame in self?.deliver(frame) }, log: log)
             setTunnel(t)
             state.send(.connecting)
-            let mirror = Task { [state] in
+            // The tunnel's states become ours while we run; after shutdown() the "stopped" it
+            // set must not be overwritten by the tunnel's own close (seen under parallel tests).
+            let mirror = Task { [weak self] in
                 for await s in t.state.subscribe() {
-                    state.send(s)
+                    guard let self, self.isRunning() else { return }
+                    self.state.send(s)
                     if s.isTerminal { return }
                 }
             }
@@ -178,9 +181,9 @@ public final class RelayBridgeTransport: RnsInterface, @unchecked Sendable {
                 break
             }
             await mirror.value
+            if !isRunning() { break }
             state.send(end)
             setTunnel(nil)
-            if !isRunning() { break }
             let wait = Self.retryDelayMs(after: end, backoff: backoff)
             if case .closed(.normal, _) = end { backoff = Self.retryMinMs } else { backoff = min(backoff * 2, Self.retryMaxMs) }
             log("relay to \(config.targetBridgeId) ended (\(end)); retry in \(wait / 1000)s")

@@ -28,6 +28,8 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
 
     var log: [String] { locked { calls } }
     func row(_ id: Int64) -> MessageDelivery? { locked { rows[id] } }
+    /// Every row, by id.
+    func all() -> [MessageDelivery] { locked { rows.keys.sorted().compactMap { rows[$0] } } }
     private func note(_ s: String) { locked { calls.append(s) } }
 
     func insert(_ delivery: MessageDelivery) async throws -> Int64 {
@@ -51,6 +53,7 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
     func setStatus(id: Int64, _ status: String, lastError: String, now: Int64) async throws {
         locked {
             rows[id]?.status = status
+            rows[id]?.lastError = lastError
             calls.append("status:\(id):\(status)")
         }
     }
