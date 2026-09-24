@@ -135,10 +135,13 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
         let task = Task { [weak self] in
             for await result in c.createPublishListener() {
                 guard let self else { return }
-                if case .success(let info) = result {
+                switch result {
+                case .success(let info):
                     var payload = info.payload
                     let bytes = payload.readBytes(length: payload.readableBytes) ?? []
                     inbound.send(MQTTInbound(topic: info.topicName, payload: bytes))
+                case .failure(let error):
+                    Self.log.warning("MQTT receive failed: \(error)")
                 }
             }
         }
