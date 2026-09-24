@@ -1,1 +1,1 @@
-Build 7: Message queue: every message on its way out, by link and state, with retry and cancel. Setup > Advanced and About.
+Build 8: Routing rules: which messages pass from one link to another, with the rule editor, and the deliveries and queue those rules fill.
