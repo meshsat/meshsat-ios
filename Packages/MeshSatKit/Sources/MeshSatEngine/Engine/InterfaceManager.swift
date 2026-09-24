@@ -24,6 +24,19 @@ public struct InterfaceStatus: Sendable, Equatable {
     public var lastOnline: Int64
     public var lastActivity: Int64
     public var reconnectAttempts: Int
+
+    public init(
+        id: String, channelType: String, state: InterfaceState, error: String = "", lastOnline: Int64 = 0, lastActivity: Int64 = 0,
+        reconnectAttempts: Int = 0
+    ) {
+        self.id = id
+        self.channelType = channelType
+        self.state = state
+        self.error = error
+        self.lastOnline = lastOnline
+        self.lastActivity = lastActivity
+        self.reconnectAttempts = reconnectAttempts
+    }
 }
 
 public struct InterfaceConfig: Sendable, Equatable {
