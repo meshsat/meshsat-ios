@@ -314,5 +314,7 @@ public final class AppDatabase: Sendable {
     ]
 }
 
-/// Now, as the DAOs' `System.currentTimeMillis()` defaults.
-@inline(__always) func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+extension MeshSatStore {
+    /// Now, as the DAOs' `System.currentTimeMillis()` defaults.
+    public static func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+}

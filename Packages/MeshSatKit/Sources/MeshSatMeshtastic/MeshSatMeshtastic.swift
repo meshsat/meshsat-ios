@@ -4,21 +4,13 @@
 // IridiumATDriver over a ModemLink) are ported into this module. CoreBluetooth itself is in
 // Packages/MeshSatApple (MeshSatBLE).
 import Foundation
+import MeshSatNet
 
 public enum MeshSatMeshtastic {
     public static let module = "MeshSatMeshtastic"
 }
 
-/// Time as the drivers see it, so tests run their timeouts on a virtual clock.
-public protocol DriverClock: Sendable {
-    func nowMs() -> Int64
-    func sleep(ms: Int64) async
-}
-
-public struct SystemDriverClock: DriverClock {
-    public init() {}
-    public func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
-    public func sleep(ms: Int64) async {
-        try? await Task.sleep(for: .milliseconds(max(0, ms)))
-    }
-}
+/// The clock the drivers and the engine run on lives in MeshSatNet; the names stay here for
+/// the driver's callers and tests.
+public typealias DriverClock = MeshSatNet.DriverClock
+public typealias SystemDriverClock = MeshSatNet.SystemDriverClock
