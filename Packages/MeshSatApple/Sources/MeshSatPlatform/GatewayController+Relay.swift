@@ -1,8 +1,7 @@
 // Mirrors GatewayService.initHubRelay (MESHSAT-1157): the Hub relay client, a Reticulum
 // interface over a WebSocket tunnel to one kit, carrying Reticulum packets as bare frames.
 // Rides on the Hub Reporter's identity (bridge id and MQTT password) and needs only a target
-// bridge id. Until the Reticulum transport node lands (MESHSAT-1326) received frames are
-// counted and dropped; the tunnel, its states and the InterfaceManager entry are the same.
+// bridge id. Received frames go to the Reticulum transport node (MESHSAT-1326).
 import Foundation
 import MeshSatEngine
 import MeshSatHub
@@ -34,10 +33,10 @@ extension GatewayController {
         let relay = RelayBridgeTransport(
             config: RelayBridgeTransport.Config(hubApiBase: hubApiBase, targetBridgeId: target, ownBridgeId: ownId, password: password),
             dialer: UrlSessionWebSocketDialer(), log: { Self.log.debug("\($0)") })
-        // Wire receive before start: the transport node is not there yet (MESHSAT-1326).
+        // Wire receive before start: the transport node may not have started yet.
         relay.setReceiveCallback { [weak self] ifaceId, raw in
             self?.interfaceManager.recordActivity(ifaceId)
-            Self.log.debug("Hub relay: \(raw.count) B Reticulum frame on \(ifaceId) dropped, no transport node yet")
+            self?.rnsNode?.onPacketReceived(sourceInterface: ifaceId, raw)
         }
         relay.startNow()
         setHubRelay(relay)

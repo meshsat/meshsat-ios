@@ -96,9 +96,11 @@ public final class RnsMeshtasticBleInterface: RnsInterface, @unchecked Sendable 
     }
 
     public func start() async {
+        // Subscribed here, not inside the task: a FromRadio that arrives before the task runs
+        // must not be lost (it was, under CI's parallel test load).
+        let stream = radio.receivedData.subscribe()
         let task = Task { [weak self] in
-            guard let self else { return }
-            for await raw in self.radio.receivedData.subscribe() { self.handleRadioData(raw) }
+            for await raw in stream { self?.handleRadioData(raw) }
         }
         replaceCollect(task)
     }

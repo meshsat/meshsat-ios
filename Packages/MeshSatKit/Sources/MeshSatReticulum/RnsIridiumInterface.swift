@@ -44,9 +44,9 @@ public final class RnsIridiumInterface: RnsInterface, @unchecked Sendable {
 
     /// Follows the driver's state; the driver's own lifetime belongs to the gateway.
     public func start() async {
+        let stream = driver.stateChanges.subscribe()  // subscribed before the task runs, nothing missed
         let task = Task { [weak self] in
-            guard let self else { return }
-            for await s in self.driver.stateChanges.subscribe() { self.setOnline(s == .connected) }
+            for await s in stream { self?.setOnline(s == .connected) }
         }
         replaceWatch(task)
     }

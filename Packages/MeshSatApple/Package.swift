@@ -48,6 +48,8 @@ let package = Package(
             dependencies: [
                 "MeshSatBLE", "MeshSatStore",
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
+                .product(name: "MeshSatReticulum", package: "MeshSatKit"),
+                .product(name: "MeshSatCrypto", package: "MeshSatKit"),
                 .product(name: "MeshSatHub", package: "MeshSatKit"),
                 .product(name: "MeshSatSatellite", package: "MeshSatKit"),
                 .product(name: "MeshSatMeshtastic", package: "MeshSatKit"),

@@ -203,7 +203,7 @@ final class ProvisionClaimTests: XCTestCase {
         XCTAssertEqual(bundle.bridgeId, "msa-flaneur")
         XCTAssertTrue(applier.applied.isEmpty)
         claim.apply()
-        XCTAssertEqual(claim.state.value, .idle)
+        if case .ready = claim.state.value { XCTFail("the dialog must go at once") }  // idle, or already applied under load
         let end = await wait(for: claim) { if case .applied = $0 { return true } else { return false } }
         XCTAssertEqual(end, .applied(bridgeId: "msa-flaneur"))
         claim.apply()  // a second tap applies nothing

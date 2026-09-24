@@ -194,23 +194,28 @@ public final class HubReporter: @unchecked Sendable {
             return false
         }
         setSession(s)
+        // Observing before "connected" is announced: a message delivered the moment a caller
+        // sees the connected state must already have a subscriber (seen under test load).
+        observe(s)
         state.send(.connected)
         lastError.send("")
         Self.log.info("Connected to Hub at \(config.hubUrl)")
-        observe(s)
         await subscribeAndAnnounce(s)
         startHealthLoop()
         return true
     }
 
     private func observe(_ s: any MQTTSession) {
+        // Subscribed here, synchronously, so nothing sent before the tasks first run is lost.
+        let inboundStream = s.inbound.subscribe()
+        let eventStream = s.events.subscribe()
         let inbound = Task { [self] in
-            for await m in s.inbound.subscribe() {
+            for await m in inboundStream {
                 await handleInbound(topic: m.topic, payload: String(decoding: m.payload, as: UTF8.self))
             }
         }
         let events = Task { [self] in
-            for await e in s.events.subscribe() {
+            for await e in eventStream {
                 switch e {
                 case .connectionLost(let why):
                     Self.log.warning("Hub connection lost: \(why)")
