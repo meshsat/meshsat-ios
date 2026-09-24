@@ -12,6 +12,7 @@ import Foundation
 import Logging
 import MeshSatBLE
 import MeshSatEngine
+import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatSatellite
@@ -64,6 +65,31 @@ public final class GatewayController: @unchecked Sendable {
     public private(set) var ackTracker: AckTracker?
     public let creditTracker: CreditTracker
     public let location = LocationProvider()
+    private var hubReporterValue: HubReporter?
+    /// The Hub client, when the Hub is set up (MESHSAT-1324).
+    public var hubReporter: HubReporter? {
+        lock.lock()
+        defer { lock.unlock() }
+        return hubReporterValue
+    }
+    func setHubReporter(_ r: HubReporter?) {
+        lock.lock()
+        hubReporterValue = r
+        lock.unlock()
+    }
+    /// The last modem IMEI and signal the driver reported, for the Hub's birth and health.
+    private var lastModemImeiValue = ""
+    private var lastModemSignalValue = 0
+    var lastModemImei: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastModemImeiValue
+    }
+    var lastModemSignal: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastModemSignalValue
+    }
     public private(set) var tleFetcher: TleFetcher?
     public private(set) var passScheduler: PassScheduler?
     /// The predicted passes for the phone's position, three hours back and six ahead, refreshed
@@ -136,6 +162,8 @@ public final class GatewayController: @unchecked Sendable {
         startSignalPolling()
         startLocationUpdates()
         initPassScheduler()
+        observeModemForHub()
+        initHubReporter()
         Self.log.info("GatewayController started")
     }
 
@@ -144,6 +172,10 @@ public final class GatewayController: @unchecked Sendable {
         ackTracker?.stop()
         passScheduler?.stop()
         location.stop()
+        if let hub = hubReporter {
+            setHubReporter(nil)
+            Task { await hub.stop() }
+        }
         interfaceManager.stopAll()
         lock.lock()
         let t = tasks
@@ -415,7 +447,39 @@ public final class GatewayController: @unchecked Sendable {
             }
             return nil
         }
+        if interfaceId == "hub_0" {
+            return await deliverToHub(
+                payload: payload, textPreview: textPreview, recipient: recipient, deliveryId: deliveryId, sourceBearer: sourceBearer)
+        }
         return "\(interfaceId) is not built yet"
+    }
+
+    /// The modem's IMEI and signal, kept for the Hub's birth and health reports.
+    private func observeModemForHub() {
+        keep(
+            Task { [self] in
+                for await bars in driver.signalReadings.subscribe() { setModemSignal(bars) }
+            })
+        keep(
+            Task { [self] in
+                for await state in driver.stateChanges.subscribe() where state == .connected {
+                    let imei = await driver.modemInfo.imei
+                    setModemImei(imei)
+                    if !imei.isEmpty, imei != settings.get(SettingsKey.lastModemImei) { settings.set(SettingsKey.lastModemImei, imei) }
+                }
+            })
+    }
+
+    private func setModemSignal(_ bars: Int) {
+        lock.lock()
+        lastModemSignalValue = bars
+        lock.unlock()
+    }
+
+    private func setModemImei(_ imei: String) {
+        lock.lock()
+        lastModemImeiValue = imei
+        lock.unlock()
     }
 
     // MARK: The node and its modem
@@ -529,6 +593,7 @@ public final class GatewayController: @unchecked Sendable {
                         NodePosition(
                             timestamp: fix.timeMs, nodeId: 0, nodeName: "Phone", latitude: fix.latitude, longitude: fix.longitude,
                             altitude: Int(fix.altitude)))
+                    await publishPositionToHub(fix)
                 }
             })
         location.start()
