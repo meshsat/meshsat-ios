@@ -54,7 +54,8 @@ final class HubProtocolTests: XCTestCase {
         XCTAssertEqual(health, "{\"name\":\"iridium_0\",\"status\":\"online\",\"signal_bars\":4,\"signal_dbm\":-75}")
         let resp = CommandResponse(requestId: "r1", cmd: "unknown", status: "error", error: "unsupported command").toJson(now: now)
         XCTAssertEqual(resp.string("error"), "unsupported command")
-        XCTAssertEqual(HubReporterConfig(hubUrl: "wss://hub.example", bridgeId: "abcdefghijklmnop").clientId, "meshsat-ios-efghijklmnop")
+        XCTAssertEqual(
+            HubReporterConfig(hubUrl: "wss://hub.example", bridgeId: "abcdefghijklmnop").clientId, "meshsat-ios-abcdefghijklmnop")
     }
 
     func testCanonicalJsonIsSortedAndUnspaced() {
@@ -340,5 +341,13 @@ final class HubReporterTests: XCTestCase {
         XCTAssertFalse(t.mayReceiveTakBroadcast)
         XCTAssertEqual(HubTopics(prefix: "").prefix, "meshsat")
         XCTAssertEqual(HubTopics(prefix: "meshsat/acme/").prefix, "meshsat/acme")
+    }
+
+    func testARefusedPasswordSaysToScanANewCode() {
+        struct Refused: Error, CustomStringConvertible { var description: String { "connectionError(.notAuthorized)" } }
+        let timeout = NSError(domain: "t", code: 1, userInfo: [NSLocalizedDescriptionKey: "connect failed: timeout"])
+        XCTAssertTrue(HubReporter.connectFailureMessage(Refused()).contains("scan a new provisioning QR code"))
+        XCTAssertTrue(HubReporter.isAuthFailure("Authentication Error"))
+        XCTAssertEqual(HubReporter.connectFailureMessage(timeout), "connect failed: timeout")
     }
 }

@@ -44,8 +44,10 @@ public struct HubReporterConfig: Sendable, Equatable {
         self.topicPrefix = topicPrefix
     }
 
-    /// The MQTT client id: "meshsat-ios-" and the last 12 characters of the bridge id.
-    public var clientId: String { "meshsat-ios-" + String(bridgeId.suffix(12)) }
+    /// The MQTT client id: "meshsat-ios-" and the whole bridge id. MQTT allows one session per
+    /// client id, so the 12-character suffix Android uses let two bridges whose ids end alike
+    /// keep throwing each other off the broker (MESHSAT-1324; Android: MESHSAT-1334).
+    public var clientId: String { "meshsat-ios-" + bridgeId }
 }
 
 /// What the reporter reads off the phone: the interfaces and their health, the position, the
@@ -189,7 +191,7 @@ public final class HubReporter: @unchecked Sendable {
             try await s.connect(will: will)
         } catch {
             Self.log.error("Hub connect failed: \(error)")
-            lastError.send(Self.connectFailureText(error))
+            lastError.send(Self.connectFailureMessage(error))
             state.send(.error)
             await s.disconnect()
             return false
@@ -565,6 +567,22 @@ public final class HubReporter: @unchecked Sendable {
 
     /// A connection failure as a person can read it: the outermost message and, when it
     /// differs, the innermost underlying error's, which is where the real reason sits.
+    /// What Setup > Hub says when a connect fails. A refused password after provisioning means
+    /// the Hub minted new credentials (a newer provisioning QR code) or revoked this bridge;
+    /// retrying cannot fix that, so the words say what does.
+    public static func connectFailureMessage(_ error: Error) -> String {
+        let text = connectFailureText(error)
+        return isAuthFailure(text) || isAuthFailure(String(describing: error))
+            ? "The Hub refused this phone's credentials. They were replaced by a newer provisioning QR code, or the bridge was removed: "
+                + "scan a new provisioning QR code in Setup > Hub."
+            : text
+    }
+
+    public static func isAuthFailure(_ text: String) -> Bool {
+        let t = text.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "_", with: "")
+        return ["notauthorized", "badusernamepassword", "authenticationerror", "authorizationviolation"].contains { t.contains($0) }
+    }
+
     public static func connectFailureText(_ error: Error) -> String {
         var chain: [NSError] = []
         var current: NSError? = error as NSError
