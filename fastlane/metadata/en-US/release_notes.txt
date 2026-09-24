@@ -1,1 +1,1 @@
-Build 6: People: every node your MeshSat node heard, with signal, battery and last heard, a node's details with Message and Show on map, and contact cards swapped face to face by QR code.
+Build 7: Message queue: every message on its way out, by link and state, with retry and cancel. Setup > Advanced and About.
