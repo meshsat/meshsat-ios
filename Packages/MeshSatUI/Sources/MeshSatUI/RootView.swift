@@ -56,6 +56,14 @@ public struct RootView: View {
             }
             MSNavigationBar(selected: router.selectedTab) { router.selectTab($0) }
         }
+        .overlay {
+            // MainActivity's ProvisionLinkDialog and ProvisionClaimHost: over every screen.
+            if let link = model.provisionLink {
+                ProvisionLinkDialog(url: link) { model.provisionLinkHandled() }
+            }
+            ProvisionClaimHost()
+            if let toast = model.toast { MSToast(toast) }
+        }
         .background(MSColors.bg.ignoresSafeArea())
         .environment(router)
         .environment(model)

@@ -106,6 +106,11 @@ public final class GatewayController: @unchecked Sendable {
     private let iridiumWanted = StateBroadcast<Bool>(true)
     /// A message arrived: title and text, for the notification the app shows.
     public let messageNotifications = Broadcast<(title: String, text: String)>(bufferSize: 8)
+    /// The Hub provisioning claim in progress, held here so it outlives any screen (MESHSAT-1306).
+    public let provisionClaim: ProvisionClaim
+    private let provisionApplier = ProvisionApplierBox()
+    /// A meshsat://provision link the app was opened with; nil once a dialog took it.
+    public let pendingProvisionLink = StateBroadcast<String?>(nil)
 
     let clock: any DriverClock
     let lock = NSLock()
@@ -124,6 +129,8 @@ public final class GatewayController: @unchecked Sendable {
         self.driver = IridiumATDriver(clock: clock)
         self.interfaceManager = InterfaceManager(clock: clock)
         self.creditTracker = CreditTracker(store: db.iridiumCredits)
+        self.provisionClaim = ProvisionClaim(http: UrlSessionHttpGetter(), applier: provisionApplier)
+        provisionApplier.gateway = self
     }
 
     func keep(_ task: Task<Void, Never>) {
