@@ -117,6 +117,8 @@ public struct RootView: View {
             ConversationChatView(peer: peer)
         } else if route == .sos {
             SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
+        } else if route == .rules {
+            SubScreen("Routing rules", onBack: { router.back() }, content: { RulesScreen() })
         } else if route == .deliveries {
             SubScreen("Message queue", onBack: { router.back() }, content: { DeliveryScreen() })
         } else if route == .setupAdvanced {
