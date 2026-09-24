@@ -117,6 +117,12 @@ public struct RootView: View {
             ConversationChatView(peer: peer)
         } else if route == .sos {
             SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
+        } else if route == .deliveries {
+            SubScreen("Message queue", onBack: { router.back() }, content: { DeliveryScreen() })
+        } else if route == .setupAdvanced {
+            SubScreen("Advanced", onBack: { router.back() }, content: { AdvancedScreen() })
+        } else if route == .about {
+            SubScreen("About", onBack: { router.back() }, content: { AboutScreen() })
         } else if route == .passes {
             SubScreen(Route.passes.subScreenTitle ?? "Satellite passes", onBack: { router.back() }, content: { PassesScreen() })
         } else if route == .setupSection(.safety) {

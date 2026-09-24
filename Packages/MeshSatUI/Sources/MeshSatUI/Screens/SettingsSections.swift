@@ -14,6 +14,7 @@ import SwiftUI
 public struct SettingsSatelliteSection: View {
     @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
+    @Environment(Router.self) private var router
 
     public init() {}
 
@@ -32,6 +33,10 @@ public struct SettingsSatelliteSection: View {
 
     public var body: some View {
         ScrollView {
+            // SetupPageLinks: the screen that belongs with these settings, at the top.
+            NavRow(icon: MSIcon.schedule, title: "Satellite passes", detail: "When satellites are high overhead") {
+                router.navigate(.passes)
+            }
             VStack(spacing: MSSpace.screen) {
                 SectionCard("Satellite modem on the node") {
                     ConnectionStatusRow(
