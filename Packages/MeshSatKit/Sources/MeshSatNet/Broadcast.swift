@@ -102,3 +102,43 @@ public final class AsyncMutex: @unchecked Sendable {
         return try await body()
     }
 }
+
+/// Kotlin's StateFlow: a Broadcast that always has a value, replayed to every new subscriber.
+public final class StateBroadcast<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: T
+    private let broadcast: Broadcast<T>
+
+    public init(_ initial: T, bufferSize: Int = 8) {
+        current = initial
+        broadcast = Broadcast<T>(replayLatest: true, bufferSize: bufferSize)
+        broadcast.send(initial)
+    }
+
+    public var value: T {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
+        set { send(newValue) }
+    }
+
+    public func send(_ value: T) {
+        lock.lock()
+        current = value
+        lock.unlock()
+        broadcast.send(value)
+    }
+
+    /// Read-modify-write under the lock, as Kotlin's `MutableStateFlow.update`.
+    public func update(_ transform: (T) -> T) {
+        lock.lock()
+        let next = transform(current)
+        current = next
+        lock.unlock()
+        broadcast.send(next)
+    }
+
+    public func subscribe() -> AsyncStream<T> { broadcast.subscribe() }
+}

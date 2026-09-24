@@ -83,6 +83,7 @@ let package = Package(
             name: "MeshSatMeshtastic",
             dependencies: [
                 "MeshSatProto", "MeshSatWire", "MeshSatNet",
+                .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
