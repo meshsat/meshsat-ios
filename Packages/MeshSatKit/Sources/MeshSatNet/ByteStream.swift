@@ -113,6 +113,26 @@ public protocol HttpGetter: Sendable {
     func get(_ url: String, headers: [String: String], timeoutSeconds: Double) async throws -> HttpResponse
 }
 
+/// TLS for a client connection: the Hub-issued client certificate and key for mTLS, and the CA
+/// to trust instead of the system roots when given (mqtt/CertificatePinner.createMtlsSSLSocketFactory).
+public struct TlsClientOptions: Sendable, Equatable {
+    public var clientCertPem: String
+    public var clientKeyPem: String
+    public var caCertPem: String
+    public init(clientCertPem: String = "", clientKeyPem: String = "", caCertPem: String = "") {
+        self.clientCertPem = clientCertPem
+        self.clientKeyPem = clientKeyPem
+        self.caCertPem = caCertPem
+    }
+    public var hasClientIdentity: Bool { !clientCertPem.isEmpty && !clientKeyPem.isEmpty }
+}
+
+/// Opens TCP (optionally TLS) client connections: java.net.Socket on Android, Network.framework
+/// on the phone, a loopback in the tests.
+public protocol ByteStreamDialer: Sendable {
+    func dial(host: String, port: Int, tls: TlsClientOptions?, timeoutSeconds: Double) async throws -> any ByteStream
+}
+
 public enum ByteStreamError: Error, Equatable, Sendable {
     case closed
     case timeout
