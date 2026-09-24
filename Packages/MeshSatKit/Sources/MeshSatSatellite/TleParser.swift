@@ -20,6 +20,10 @@ public struct TleElements: Sendable, Equatable, Hashable {
     /// Epoch as a Julian date (days).
     public let epochJd: Double
     public let bstar: Double
+    /// First derivative of the mean motion, rev/day^2 (line 1 columns 34-43); read, not used by SGP4.
+    public let meanMotionDot: Double
+    /// Second derivative of the mean motion, rev/day^3 (line 1 columns 45-52); read, not used by SGP4.
+    public let meanMotionDDot: Double
     public let inclinationDeg: Double
     public let raanDeg: Double
     public let eccentricity: Double
@@ -27,6 +31,27 @@ public struct TleElements: Sendable, Equatable, Hashable {
     public let meanAnomalyDeg: Double
     /// Revolutions per day.
     public let meanMotion: Double
+
+    public init(
+        name: String, line1: String, line2: String, catalogNumber: Int, epochJd: Double, bstar: Double,
+        meanMotionDot: Double, meanMotionDDot: Double, inclinationDeg: Double, raanDeg: Double,
+        eccentricity: Double, argPerigeeDeg: Double, meanAnomalyDeg: Double, meanMotion: Double
+    ) {
+        self.name = name
+        self.line1 = line1
+        self.line2 = line2
+        self.catalogNumber = catalogNumber
+        self.epochJd = epochJd
+        self.bstar = bstar
+        self.meanMotionDot = meanMotionDot
+        self.meanMotionDDot = meanMotionDDot
+        self.inclinationDeg = inclinationDeg
+        self.raanDeg = raanDeg
+        self.eccentricity = eccentricity
+        self.argPerigeeDeg = argPerigeeDeg
+        self.meanAnomalyDeg = meanAnomalyDeg
+        self.meanMotion = meanMotion
+    }
 
     public var epoch: UnixSeconds { TleParser.jdToUnix(epochJd) }
 }
@@ -52,6 +77,8 @@ public enum TleParser {
         let year = epochYear2 < 57 ? 2000 + epochYear2 : 1900 + epochYear2
         let epochJd = julianDay(year: year, month: 1, day: 1) + epochDay - 1.0
         let bstar = try parseExponent(String(l1[53..<61]))
+        let ndot = try double(String(l1[33..<43]), "mean motion dot")
+        let nddot = try parseExponent(String(l1[44..<52]))
         let inc = try double(String(l2[8..<16]), "inclination")
         let raan = try double(String(l2[17..<25]), "raan")
         let ecc = try double("0." + String(l2[26..<33]).trimmingCharacters(in: .whitespaces), "eccentricity")
@@ -65,7 +92,7 @@ public enum TleParser {
         return TleElements(
             name: cleanName.isEmpty ? "SAT \(catalog)" : cleanName,
             line1: line1, line2: line2, catalogNumber: catalog, epochJd: epochJd, bstar: bstar,
-            inclinationDeg: inc, raanDeg: raan, eccentricity: ecc, argPerigeeDeg: argp,
+            meanMotionDot: ndot, meanMotionDDot: nddot, inclinationDeg: inc, raanDeg: raan, eccentricity: ecc, argPerigeeDeg: argp,
             meanAnomalyDeg: ma, meanMotion: mm
         )
     }
