@@ -53,7 +53,9 @@ let package = Package(
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
     ],
     targets: [
-        .target(name: "MeshSatWire"),
+        .target(
+            name: "MeshSatWire",
+            dependencies: [.product(name: "Crypto", package: "swift-crypto")]),
         .target(
             name: "MeshSatCrypto",
             dependencies: [

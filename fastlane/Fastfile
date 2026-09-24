@@ -56,15 +56,39 @@ platform :ios do
     )
   end
 
-  desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
-  lane :beta do
+  # The App Store Connect API key from the environment (OpenBao secret/ci-no/apps/meshsat-ios/asc-api-key).
+  private_lane :asc_key do
     key_id = ENV["ASC_KEY_ID"]
     issuer = ENV["ASC_ISSUER_ID"]
     key_b64 = ENV["ASC_KEY_P8_B64"]
     UI.user_error!("ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8_B64 are not set; no signing material yet") if key_id.nil? || issuer.nil? || key_b64.nil?
-    app_store_connect_api_key(key_id: key_id, issuer_id: issuer, key_content: key_b64, is_key_content_base64: true)
+    app_store_connect_api_key(key_id: key_id, issuer_id: issuer, key_content: key_b64, is_key_content_base64: true, in_house: false)
+  end
+
+  # The match profile on the generated project: manual signing with the Apple Distribution
+  # certificate, so the archive needs no Xcode account (MATCH_GIT_URL and MATCH_PASSWORD from
+  # OpenBao secret/ci-no/apps/meshsat-ios/match).
+  private_lane :sign_with_match do
     match(type: "appstore", readonly: is_ci)
-    build_app(project: PROJECT, scheme: SCHEME, export_method: "app-store")
+    update_code_signing_settings(
+      path: PROJECT, targets: [SCHEME], use_automatic_signing: false, team_id: "4CXPKM8L4V",
+      code_sign_identity: "Apple Distribution", profile_name: ENV["sigh_net.meshsat.ios_appstore_profile-name"],
+      bundle_identifier: "net.meshsat.ios"
+    )
+  end
+
+  desc "Signed App Store archive -> MeshSat-<v>.ipa (no upload)"
+  lane :build_signed do
+    asc_key
+    sign_with_match
+    build_app(project: PROJECT, scheme: SCHEME, export_method: "app-store", output_directory: ".", output_name: "MeshSat-#{marketing_version}.ipa")
+  end
+
+  desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
+  lane :beta do
+    asc_key
+    sign_with_match
+    build_app(project: PROJECT, scheme: SCHEME, export_method: "app-store", output_directory: ".", output_name: "MeshSat-#{marketing_version}.ipa")
     upload_to_testflight(skip_waiting_for_build_processing: true, changelog: File.read("metadata/en-US/release_notes.txt"))
   end
 end

@@ -252,6 +252,15 @@ public struct MessageDeliveryDao: Sendable {
     }
 
     /// The deliveries of one SOS (msg_ref "sos:<run>:..."), for its result screen (MESHSAT-1249).
+    /// The deliveries of a channel in one status, oldest first (the composer lane's queue).
+    public func observeByChannelAndStatus(_ channel: String, _ status: String) -> AsyncValueObservation<[MessageDelivery]> {
+        ValueObservation.tracking { db in
+            try MessageDelivery.fetchAll(
+                db, sql: "SELECT * FROM message_deliveries WHERE channel = ? AND status = ? ORDER BY created_at ASC, id ASC",
+                arguments: [channel, status])
+        }.values(in: db)
+    }
+
     public func observeByRefPrefix(_ prefix: String) -> AsyncValueObservation<[MessageDelivery]> {
         ValueObservation.tracking { db in
             try MessageDelivery.fetchAll(

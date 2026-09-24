@@ -1,5 +1,6 @@
 // The announce handler and the transport node with stub interfaces, and the interfaces that
 // need no hardware: Meshtastic fragmentation, TCP over a loopback stream, MQTT over a fake link.
+import MeshSatHemb
 import MeshSatNet
 import XCTest
 
@@ -86,7 +87,17 @@ final class RnsTransportNodeTests: XCTestCase {
         mesh = StubInterface("mesh_rns_0", cost: 0, latency: 200)
         iridium = StubInterface("iridium_rns_0", cost: 5, latency: 60000)
         tcp = StubInterface("tcp_rns_0", cost: 0, latency: 50)
-        me = Identity.generate()
+        // The HeMB compact header has no magic: any 8+ byte packet whose byte 7 happens to equal
+        // the CRC-8 of bytes 0 to 6 reads as a HeMB frame (1 in 256; Android has the same
+        // check). Byte 7 of a data packet is byte 5 of our destination hash, so pick an
+        // identity whose hash does not collide, or the local-delivery test flakes (seen in CI).
+        repeat {
+            me = Identity.generate()
+        } while HembFrame.isHembFrame(
+            RnsPacket.data(
+                destHash: RnsDestination.computeDestHash(encryptionPub: me.encryptionPubRaw, signingPub: me.signingPubRaw),
+                payload: Array("hi".utf8)
+            ).marshal())
         handler = RnsAnnounceHandler(identity: me, now: { 5_000 }, sleep: { _ in })
         links = RnsLinkManager(identity: me, localDestHash: handler.localDestHash)
         let all: [any RnsInterface] = [mesh, iridium, tcp]
