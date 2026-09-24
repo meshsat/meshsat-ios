@@ -1,0 +1,1 @@
+Build 14: Hub commands now reach the app: a ping from the Hub is answered. To test: press Ping on the Hub once; no new QR code needed.
