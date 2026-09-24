@@ -99,6 +99,36 @@ public final class Dispatcher: @unchecked Sendable {
 
     /// Asked before each send; false stops the delivery for good (dead, "cancelled"). An SOS
     /// cancelled while one of its sends was under way must not go out on the retry (MESHSAT-1249).
+    /// A delivery on a manual channel waits for the user to send it themselves (iOS has no SMS
+    /// API: the Messages composer is the only way, so sms_0 is manual here, MESHSAT-1328).
+    public static let awaitingUser = "awaiting_user"
+    private var manualChannels: Set<String> = []
+
+    public func setManualChannels(_ channels: Set<String>) {
+        lock.lock()
+        manualChannels = channels
+        lock.unlock()
+    }
+
+    private func isManual(_ channelId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return manualChannels.contains(channelId)
+    }
+
+    /// The user sent a manual delivery themselves (the composer reported it sent).
+    public func userSent(deliveryId id: Int64) async {
+        guard let del = try? await store.getById(id), del.status == Self.awaitingUser else { return }
+        try? await store.setStatus(id: id, "sent", lastError: "", now: clock.nowMs())
+        if let onSent = hooks().onSent { await onSent(del) }
+    }
+
+    /// The user declined to send a manual delivery (the composer was cancelled).
+    public func userDeclined(deliveryId id: Int64) async {
+        guard let del = try? await store.getById(id), del.status == Self.awaitingUser else { return }
+        try? await store.setStatus(id: id, "dead", lastError: "not sent by you", now: clock.nowMs())
+    }
+
     public func setMayDeliver(_ hook: (@Sendable (MessageDelivery) async -> Bool)?) {
         lock.lock()
         mayDeliverHook = hook
@@ -417,6 +447,11 @@ public final class Dispatcher: @unchecked Sendable {
             return true
         }
 
+        if isManual(channelId) {
+            // Parked for the user; the composer lane picks it up and reports userSent/userDeclined.
+            try? await store.setStatus(id: id, Self.awaitingUser, lastError: "", now: clock.nowMs())
+            return true
+        }
         try? await store.setStatus(id: id, "sending", lastError: "", now: clock.nowMs())
         let payload = del.payload.map { [UInt8]($0) } ?? Array(del.textPreview.utf8)
         let error = await deliveryCallback(channelId, payload, del.textPreview, del.recipient, id, Self.sourceBearerOf(del.visited))
