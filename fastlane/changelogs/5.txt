@@ -1,0 +1,1 @@
+Build 5: Map: OpenStreetMap tiles with an offline world overview, your own MBTiles maps from Setup > Maps, node markers, tracks and this phone. Night mode reaches the map.

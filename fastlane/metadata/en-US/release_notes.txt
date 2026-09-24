@@ -1,1 +1,1 @@
-Build 4: Satellite passes: the sky chart with the passes, the modem's signal and its sessions, window and surroundings presets, the pass list, orbit data update. Home shows the next three hours.
+Build 5: Map: OpenStreetMap tiles with an offline world overview, your own MBTiles maps from Setup > Maps, node markers, tracks and this phone. Night mode reaches the map.
