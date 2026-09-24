@@ -76,7 +76,13 @@ targets:
           - CFBundleURLName: net.meshsat.ios.provision
             CFBundleURLSchemes:
               - meshsat
-        ITSAppUsesNonExemptEncryption: true
+        # Export compliance (MESHSAT-1331): on iOS every cipher the app uses (AES-GCM, Ed25519,
+        # X25519, TLS) is Apple's own CryptoKit or Network framework, which is Apple's exemption
+        # for encryption provided by the operating system, so the answer is "no non-exempt
+        # encryption" and App Store Connect stops asking per build. Set to true with a
+        # ITSEncryptionExportComplianceCode only if that ever changes; true without a code
+        # makes the upload fail ("Invalid Export Compliance Code", seen 24 Sep 2026).
+        ITSAppUsesNonExemptEncryption: false
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
     settings:
