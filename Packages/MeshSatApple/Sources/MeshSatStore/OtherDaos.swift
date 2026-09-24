@@ -156,6 +156,17 @@ public struct NodePositionDao: Sendable {
         }
     }
 
+    /// Mirrors map/MapTracks.kt loadRecentTracks: the newest `maxPoints` positions since `sinceMs`,
+    /// oldest first, without the phone's own rows (node 0), for the map's track lines (B17).
+    public func getRecentTracks(sinceMs: Int64, maxPoints: Int) async throws -> [NodePosition] {
+        try await db.read { db in
+            try NodePosition.fetchAll(
+                db, sql: "SELECT * FROM node_positions WHERE nodeId != 0 AND timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
+                arguments: [sinceMs, maxPoints]
+            ).reversed()
+        }
+    }
+
     /// Most recent position across all nodes (for the dead-man switch).
     public func getLatest() async throws -> NodePosition? {
         try await db.read { db in try NodePosition.fetchOne(db, sql: "SELECT * FROM node_positions ORDER BY timestamp DESC LIMIT 1") }

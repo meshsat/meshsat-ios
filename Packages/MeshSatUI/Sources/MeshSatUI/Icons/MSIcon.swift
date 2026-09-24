@@ -45,6 +45,13 @@ public enum MSIcon {
     public static var sync: Image { asset("outlined_sync", fallback: "arrow.triangle.2.circlepath") }
     public static var block: Image { asset("outlined_block", fallback: "nosign") }
     public static var close: Image { asset("outlined_close", fallback: "xmark") }
+    public static var zoomOutMap: Image { asset("outlined_zoom_out_map", fallback: "arrow.up.left.and.arrow.down.right") }
+    public static var add: Image { asset("outlined_add", fallback: "plus") }
+    public static var remove: Image { asset("outlined_remove", fallback: "minus") }
+    public static var layers: Image { asset("outlined_layers", fallback: "square.3.layers.3d") }
+    public static var expandMore: Image { asset("outlined_expand_more", fallback: "chevron.down") }
+    public static var expandLess: Image { asset("outlined_expand_less", fallback: "chevron.up") }
+    public static var delete: Image { asset("outlined_delete", fallback: "trash") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {

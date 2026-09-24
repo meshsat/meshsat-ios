@@ -12,6 +12,7 @@ public struct RootView: View {
     @State private var messages: MessagesModel
     @State private var settings: SettingsModel
     @State private var nightMode = false
+    @State private var mapFocus = MapFocus()
 
     public init(gateway: GatewayController) {
         _model = State(initialValue: GatewayModel(gateway: gateway))
@@ -61,8 +62,7 @@ public struct RootView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .toolbar(.hidden, for: .tabBar)
                 .scrollDisabled(true)
-                MapPlaceholder()
-                    .nightMode(nightMode)
+                MapScreen(visible: router.selectedTab == .map, nightMode: nightMode)
                     .opacity(router.selectedTab == .map ? 1 : 0)
                     .allowsHitTesting(router.selectedTab == .map)
             }
@@ -85,6 +85,7 @@ public struct RootView: View {
         .environment(model)
         .environment(messages)
         .environment(settings)
+        .environment(mapFocus)
         .preferredColorScheme(.dark)
     }
 
@@ -125,6 +126,8 @@ public struct RootView: View {
             SubScreen(SetupSection.diagnostics.title, onBack: { router.back() }, content: { SettingsDiagnosticsSection() })
         } else if route == .setupSection(.node) {
             SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
+        } else if route == .setupSection(.maps) {
+            SubScreen(SetupSection.maps.title, onBack: { router.back() }, content: { SettingsMapsSection() })
         } else if let title = route.subScreenTitle {
             SubScreen(
                 title,
@@ -134,22 +137,6 @@ public struct RootView: View {
         } else {
             ScreenPlaceholder(title: route.string, mirrors: "ui/screens (route \(route.string))")
         }
-    }
-}
-
-struct MapPlaceholder: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Map").msText(.headlineMedium).padding(MSSpace.screen)
-            RoundedRectangle(cornerRadius: MSRadius.card, style: .continuous)
-                .fill(MSColors.surface)
-                .overlay(RoundedRectangle(cornerRadius: MSRadius.card, style: .continuous).stroke(MSColors.border, lineWidth: 1))
-                .overlay(Text("MapKit tile overlay lands with MESHSAT-1321").msText(.bodySmall, color: MSColors.textMuted))
-                .padding(.horizontal, MSSpace.screen)
-                .padding(.bottom, MSSpace.screen)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MSColors.bg)
     }
 }
 
