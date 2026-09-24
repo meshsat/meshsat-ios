@@ -9,6 +9,7 @@ import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatPlatform
+import MeshSatProto
 import MeshSatSatellite
 import MeshSatStore
 import Observation
@@ -29,6 +30,15 @@ public final class GatewayModel {
     public private(set) var neighborReports: [UInt32: MeshtasticProtocol.NeighborReport] = [:]
     /// The Bluetooth signal of the node link, dBm, 0 when unknown.
     public private(set) var bluetoothRssi = 0
+    // The radio's own settings, as it reported them (RadioConfigScreen edits on top of these).
+    public private(set) var ownerName = ""
+    public private(set) var ownerShortName = ""
+    public private(set) var loraConfig: Meshtastic_Config.LoRaConfig?
+    public private(set) var positionConfig: Meshtastic_Config.PositionConfig?
+    public private(set) var bluetoothConfig: Meshtastic_Config.BluetoothConfig?
+    public private(set) var networkConfig: Meshtastic_Config.NetworkConfig?
+    public private(set) var channels: [MeshtasticProtocol.MeshChannel] = []
+    public private(set) var deviceMetadata: MeshtasticProtocol.MeshDeviceMetadata?
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
     public private(set) var modemSignal = 0
@@ -123,6 +133,7 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await rssi in central.rssi.subscribe() { self?.bluetoothRssi = rssi }
             })
+        mirrorRadioSettings(central.radio)
         tasks.append(
             Task { [weak self] in
                 for await b in gateway.nodeBattery.subscribe() { self?.nodeBattery = b }
@@ -265,6 +276,18 @@ public final class GatewayModel {
     public func provisionLinkHandled() {
         provisionLink = nil
         gateway.pendingProvisionLink.send(nil)
+    }
+
+    /// The radio's own settings (RadioConfigScreen edits on top of what it reported).
+    private func mirrorRadioSettings(_ radio: MeshtasticRadioState) {
+        tasks.append(Task { [weak self] in for await v in radio.ownerName.subscribe() { self?.ownerName = v } })
+        tasks.append(Task { [weak self] in for await v in radio.ownerShortName.subscribe() { self?.ownerShortName = v } })
+        tasks.append(Task { [weak self] in for await v in radio.loraConfig.subscribe() { self?.loraConfig = v } })
+        tasks.append(Task { [weak self] in for await v in radio.positionConfig.subscribe() { self?.positionConfig = v } })
+        tasks.append(Task { [weak self] in for await v in radio.bluetoothConfig.subscribe() { self?.bluetoothConfig = v } })
+        tasks.append(Task { [weak self] in for await v in radio.networkConfig.subscribe() { self?.networkConfig = v } })
+        tasks.append(Task { [weak self] in for await v in radio.channels.subscribe() { self?.channels = v } })
+        tasks.append(Task { [weak self] in for await v in radio.deviceMetadata.subscribe() { self?.deviceMetadata = v } })
     }
 
     public func showToast(_ text: String, seconds: Double = 3.5) {
