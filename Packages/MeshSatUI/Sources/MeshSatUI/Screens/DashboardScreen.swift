@@ -1,16 +1,38 @@
 // Mirrors ui/screens/DashboardScreen.kt and HomeLanes.kt: the HomeHeader (brand lockup at
 // 26 dp, the night-mode moon, Arrange), the headline sentence with its follow-up line, one
-// card of four TransportLanes, then the reorderable cards. This first cut carries the header,
-// the sentence and the lanes card with static states; the lanes' state machine, the
-// travelling dot, the checklist and the cards follow under MESHSAT-1321.
+// card of four TransportLanes, the Getting started checklist, then the cards in the order set
+// with Arrange (HomeCards.swift).
+import MeshSatEngine
 import SwiftUI
 
 public struct DashboardScreen: View {
     @Binding var nightMode: Bool
     @Environment(Router.self) private var router
     @Environment(GatewayModel.self) private var model
+    @Environment(SettingsModel.self) private var settings
+    @State private var cards = HomeCardsModel()
+    @State private var showReorder = false
 
     public init(nightMode: Binding<Bool>) { _nightMode = nightMode }
+
+    private var hubLane: LaneState {
+        guard model.hubSetUp else { return .off }
+        switch model.interfaces["hub_0"]?.state {
+        case .online: return .working
+        case .connecting: return .trying
+        default: return .off
+        }
+    }
+
+    private var hubDetail: String {
+        guard model.hubSetUp else { return "Not set up." }
+        switch model.interfaces["hub_0"]?.state {
+        case .online: return "Connected to the Hub."
+        case .connecting: return "Connecting to the Hub."
+        case .error: return "The Hub cannot be reached."
+        default: return "Off."
+        }
+    }
 
     private var meshLane: LaneState {
         switch model.meshState {
@@ -39,7 +61,7 @@ public struct DashboardScreen: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MSSpace.list) {
-                HomeHeader(nightMode: $nightMode)
+                HomeHeader(nightMode: $nightMode) { showReorder = true }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline.0).msText(.headlineSmall)
                     Text(headline.1).msText(.bodyLarge, color: MSColors.textSecondary)
@@ -66,30 +88,72 @@ public struct DashboardScreen: View {
                     MSDivider()
                     TransportLane(
                         icon: MSIcon.sms, color: MSColors.sms, name: "SMS",
-                        metric: "0 today", detail: "Through the Messages app.", state: .off
+                        metric: "\(cards.smsToday) today", detail: "Through the Messages app.", state: model.canSendSms ? .working : .off
                     ) {
                         router.navigate(.setupSection(.sms))
                     }
                     MSDivider()
                     TransportLane(
                         icon: MSIcon.cloud, color: MSColors.hub, name: "Hub",
-                        metric: "", detail: "Not set up.", state: .off
+                        metric: model.hubCallsign, detail: hubDetail, state: hubLane
                     ) {
                         router.navigate(.setupSection(.hub))
                     }
                 }
                 .msCard()
-                SatelliteSkyCard()
-                SosCard()
+                SetupChecklistCard()
+                // The cards below follow the order set with Arrange (MESHSAT-401).
+                ForEach(HomeCards.order(settings.string(SettingsKey.dashboardOrder)), id: \.self) { card in
+                    switch card {
+                    case "mailbox":
+                        // On request only: each check is billed (MESHSAT-400).
+                        if model.modemState == .connected { DashboardCard("Satellite mailbox") { CheckMailboxButton() } }
+                    case "signals":
+                        SatelliteSkyCard()
+                        if !cards.meshHistory.isEmpty {
+                            SignalChart(
+                                title: "Mesh signal strength, last 6 hours", records: cards.meshHistory, maxValue: -30, minValue: -100,
+                                color: MSColors.mesh, formatValue: { "\(Int($0)) dBm" })
+                        }
+                        if !cards.cellularHistory.isEmpty {
+                            SignalChart(
+                                title: "Mobile signal, last 6 hours", records: cards.cellularHistory, maxValue: -50, minValue: -120,
+                                color: MSColors.cellular, formatValue: { "\(Int($0)) dBm" })
+                        }
+                    case "sos": SosCard()
+                    case "location": LocationCard(fix: model.phoneFix, nowMs: cards.nowMs)
+                    case "queue": QueueCard(cards: cards)
+                    case "activity":
+                        Text("Recent messages").msText(.titleMedium).padding(.top, 4)
+                        if cards.recentMessages.isEmpty {
+                            Text("No messages yet.").msText(.bodyMedium, color: MSColors.textMuted).padding(.vertical, 8)
+                        } else {
+                            ForEach(cards.recentMessages, id: \.id) { ActivityLogEntry(msg: $0) }
+                        }
+                    default: EmptyView()
+                    }
+                }
             }
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+        .task { await cards.run(db: model.gateway.db) }
+        .overlay {
+            if showReorder {
+                ReorderDialog(
+                    cards: HomeCards.order(settings.string(SettingsKey.dashboardOrder)), onDismiss: { showReorder = false },
+                    onConfirm: { order in
+                        settings.set(SettingsKey.dashboardOrder, order.joined(separator: ","))
+                        showReorder = false
+                    })
+            }
+        }
     }
 }
 
 struct HomeHeader: View {
     @Binding var nightMode: Bool
+    var onArrange: () -> Void = {}
     var body: some View {
         HStack(spacing: 0) {
             BrandLockup().frame(height: 26)
@@ -103,8 +167,7 @@ struct HomeHeader: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Night mode")
-            Button {
-            } label: {
+            Button(action: onArrange) {
                 MSIcon.swapVert.resizable().scaledToFit().frame(width: 24, height: 24)
                     .foregroundStyle(MSColors.textSecondary)
                     .frame(width: MSSpace.touch, height: MSSpace.touch)
