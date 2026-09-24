@@ -72,6 +72,7 @@ let package = Package(
         ),
         .target(
             name: "MeshSatSatellite",
+            dependencies: ["MeshSatNet", .product(name: "Logging", package: "swift-log")],
             resources: [.copy("Resources/tle")]
         ),
         .target(
