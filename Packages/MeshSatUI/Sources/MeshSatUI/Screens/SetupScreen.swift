@@ -18,6 +18,25 @@ public struct SetupScreen: View {
         }
     }
 
+    private var hubDetail: String {
+        guard model.hubSetUp else { return "Not set up" }
+        switch model.interfaces["hub_0"]?.state {
+        case .online: return "Connected"
+        case .connecting: return "Connecting"
+        case .error: return "Cannot reach the Hub"
+        default: return "Not connected"
+        }
+    }
+
+    private var hubDot: Color {
+        switch model.interfaces["hub_0"]?.state {
+        case .online: MSColors.green
+        case .connecting: MSColors.amber
+        case .error: MSColors.red
+        default: MSColors.textMuted
+        }
+    }
+
     private var modemDot: Color {
         switch model.modemState {
         case .connected: MSColors.green
@@ -39,10 +58,10 @@ public struct SetupScreen: View {
                 NavRow(
                     icon: MSIcon.transportSatellite, tint: MSColors.iridium, title: "Satellite",
                     detail: model.modemStatusText, dot: modemDot
-                ) { router.navigate(.setupSection(.node)) }
+                ) { router.navigate(.setupSection(.satellite)) }
                 NavRow(
                     icon: MSIcon.cloud, tint: MSColors.hub, title: "Hub",
-                    detail: "Not set up", dot: MSColors.textMuted
+                    detail: hubDetail, dot: hubDot
                 ) { router.navigate(.setupSection(.hub)) }
                 NavRow(
                     icon: MSIcon.sms, tint: MSColors.sms, title: "SMS",
@@ -69,6 +88,9 @@ public struct SetupScreen: View {
                 GroupTitle("For experts")
                 NavRow(icon: MSIcon.build, title: "Advanced", detail: "Routing rules, links, queue, logs") {
                     router.navigate(.setupAdvanced)
+                }
+                NavRow(icon: MSIcon.info, title: "Diagnostics", detail: "Link health, crash reports, the background service") {
+                    router.navigate(.setupSection(.diagnostics))
                 }
                 NavRow(icon: MSIcon.info, title: "About", detail: "MeshSat iOS \(AppVersion.marketing)") {
                     router.navigate(.about)

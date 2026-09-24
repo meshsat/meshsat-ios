@@ -10,11 +10,13 @@ public struct RootView: View {
     @State private var router = Router()
     @State private var model: GatewayModel
     @State private var messages: MessagesModel
+    @State private var settings: SettingsModel
     @State private var nightMode = false
 
     public init(gateway: GatewayController) {
         _model = State(initialValue: GatewayModel(gateway: gateway))
         _messages = State(initialValue: MessagesModel(gateway: gateway))
+        _settings = State(initialValue: SettingsModel(gateway: gateway))
     }
 
     /// What the strip shows, from the gateway: the mesh and satellite states and counts.
@@ -82,6 +84,7 @@ public struct RootView: View {
         .environment(router)
         .environment(model)
         .environment(messages)
+        .environment(settings)
         .preferredColorScheme(.dark)
     }
 
@@ -107,8 +110,17 @@ public struct RootView: View {
         } else if route == .sos {
             SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
         } else if route == .setupSection(.safety) {
-            SubScreen(
-                SetupSection.safety.title, onBack: { router.back() }, content: { ScrollView { SosSettingsCard().padding(MSSpace.screen) } })
+            SubScreen(SetupSection.safety.title, onBack: { router.back() }, content: { SettingsSafetySection() })
+        } else if route == .setupSection(.satellite) {
+            SubScreen(SetupSection.satellite.title, onBack: { router.back() }, content: { SettingsSatelliteSection() })
+        } else if route == .setupSection(.hub) {
+            SubScreen(SetupSection.hub.title, onBack: { router.back() }, content: { SettingsHubSection() })
+        } else if route == .setupSection(.messaging) {
+            SubScreen(SetupSection.messaging.title, onBack: { router.back() }, content: { SettingsMessagingSection() })
+        } else if route == .setupSection(.sms) {
+            SubScreen(SetupSection.sms.title, onBack: { router.back() }, content: { SettingsSmsSection() })
+        } else if route == .setupSection(.diagnostics) {
+            SubScreen(SetupSection.diagnostics.title, onBack: { router.back() }, content: { SettingsDiagnosticsSection() })
         } else if route == .setupSection(.node) {
             SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
         } else if let title = route.subScreenTitle {

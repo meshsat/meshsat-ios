@@ -33,6 +33,22 @@ public final class GatewayModel {
     public private(set) var passes: [PassPrediction] = []
     public private(set) var passMode: PassScheduler.PassMode = .idle
     public private(set) var phoneFix: PhoneFix?
+    /// The last mailbox check the user asked for (CheckMailboxButton.kt).
+    public private(set) var mailbox = GatewayController.MailboxCheck()
+    public var mailboxRunning: Bool { mailbox.running }
+    public var mailboxResultText: String? {
+        guard !mailbox.running, mailbox.finishedAt > 0 else { return nil }
+        switch mailbox.result {
+        case nil: return "The check did not complete."
+        case .notConnected: return "The modem is not connected."
+        case .held(let seconds): return "The modem pauses after a failed session, \(seconds) s more."
+        case .sessionFailed(let moStatus): return "The session failed: \(IridiumATDriver.moStatusText(moStatus))."
+        case .noAnswer: return "The modem gave no readable answer."
+        case .checked(let received, let stillQueued):
+            if received == 0 { return "No messages waiting." }
+            return Words.count(received, "message") + " received" + (stillQueued > 0 ? ", \(stillQueued) more waiting." : ".")
+        }
+    }
     /// The Hub provisioning claim (MESHSAT-1306) and a deep link waiting for confirmation.
     public private(set) var provisionState: ProvisionClaim.State = .idle
     public private(set) var provisionLink: String?
@@ -92,6 +108,10 @@ public final class GatewayModel {
         tasks.append(
             Task { [weak self] in
                 for await b in gateway.nodeBattery.subscribe() { self?.nodeBattery = b }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await m in gateway.mailbox.subscribe() { self?.mailbox = m }
             })
         modemImei = gateway.settings.get(SettingsKey.lastModemImei)
         tasks.append(

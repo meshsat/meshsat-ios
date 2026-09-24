@@ -68,6 +68,8 @@ public final class GatewayController: @unchecked Sendable {
     public let creditTracker: CreditTracker
     public let location = LocationProvider()
     private var hubReporterValue: HubReporter?
+    /// The Hub client, whenever it is made or dropped; the settings screen subscribes here.
+    public let hubReporters = StateBroadcast<HubReporter?>(nil)
     /// The Hub client, when the Hub is set up (MESHSAT-1324).
     public var hubReporter: HubReporter? {
         lock.lock()
@@ -78,6 +80,7 @@ public final class GatewayController: @unchecked Sendable {
         lock.lock()
         hubReporterValue = r
         lock.unlock()
+        hubReporters.send(r)
     }
     private var hubRelayValue: RelayBridgeTransport?
     /// The Hub relay client, when a target bridge is configured (MESHSAT-1157).
