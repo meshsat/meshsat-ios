@@ -121,6 +121,12 @@ test:linux:
   tags: [macos]
   # The shell executor's bash is not a login shell, so Homebrew (xcodegen, swiftlint, fastlane)
   # is not on its PATH by itself.
+  variables:
+    # fastlane crashes on non-UTF-8 output ("Cr" on UTF-16) when the shell has no locale.
+    LANG: "en_US.UTF-8"
+    LC_ALL: "en_US.UTF-8"
+    FASTLANE_SKIP_UPDATE_CHECK: "1"
+    FASTLANE_HIDE_CHANGELOG: "1"
   before_script:
     - eval "$(/opt/homebrew/bin/brew shellenv)"
     - xcodegen --version && swiftlint version && fastlane --version | tail -1
