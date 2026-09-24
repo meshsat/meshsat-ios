@@ -1,0 +1,1 @@
+Hub provisioning should now work: the phone presents the Hub's client certificate, uses your tenant's topics, and signs its birth the way the Hub checks it. To test: Setup > Hub, scan the Hub's provisioning QR code, and watch the status turn Connected. Also since build 4: satellite passes, map, people, message queue, routing rules, links.
