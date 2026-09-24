@@ -11,10 +11,12 @@
 import Foundation
 import Logging
 import MeshSatBLE
+import MeshSatCrypto
 import MeshSatEngine
 import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatNet
+import MeshSatReticulum
 import MeshSatSatellite
 import MeshSatStore
 import MeshSatWire
@@ -89,6 +91,27 @@ public final class GatewayController: @unchecked Sendable {
         hubRelayValue = r
         lock.unlock()
     }
+    // Reticulum (MESHSAT-1326): the node, its interfaces and the routing identity, one locked value.
+    struct RnsParts {
+        var node: RnsTransportNode?
+        var tcp: RnsTcpInterface?
+        var mesh: RnsMeshtasticBleInterface?
+        var iridium: RnsIridiumInterface?
+        var identity: Identity?
+    }
+    private var rnsPartsValue = RnsParts()
+    var rnsParts: RnsParts {
+        lock.lock()
+        defer { lock.unlock() }
+        return rnsPartsValue
+    }
+    func updateRnsParts(_ change: (inout RnsParts) -> Void) {
+        lock.lock()
+        change(&rnsPartsValue)
+        lock.unlock()
+    }
+    public var rnsNode: RnsTransportNode? { rnsParts.node }
+    public var routingIdentity: Identity? { rnsParts.identity }
     /// The last modem IMEI and signal the driver reported, for the Hub's birth and health.
     private var lastModemImeiValue = ""
     private var lastModemSignalValue = 0
@@ -184,6 +207,8 @@ public final class GatewayController: @unchecked Sendable {
         observeModemForHub()
         initHubReporter()
         initHubRelay()
+        initRnsTcp()
+        initReticulumTransportNode()
         Self.log.info("GatewayController started")
     }
 
@@ -197,6 +222,7 @@ public final class GatewayController: @unchecked Sendable {
             Task { await hub.stop() }
         }
         stopHubRelay()
+        stopReticulum()
         interfaceManager.stopAll()
         lock.lock()
         let t = tasks
