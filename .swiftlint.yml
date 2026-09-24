@@ -1,0 +1,49 @@
+included:
+  - App
+  - Packages
+excluded:
+  - Packages/*/.build
+  - Packages/*/Tests/*/Fixtures
+  - "**/*.pb.swift"
+disabled_rules:
+  - todo
+  - trailing_comma
+  - opening_brace
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - unneeded_parentheses_in_closure_argument
+line_length:
+  warning: 140
+  error: 180
+  ignores_comments: true
+  ignores_urls: true
+identifier_name:
+  min_length: 1
+  max_length: 60
+  excluded: [id, x, y, z, i, j, k, n, dx, dy, at, to, ok]
+type_name:
+  max_length: 60
+file_length:
+  warning: 1200
+  error: 2000
+type_body_length:
+  warning: 600
+  error: 1000
+function_body_length:
+  warning: 120
+  error: 200
+cyclomatic_complexity:
+  warning: 20
+  error: 40
+nesting:
+  type_level: 3
+custom_rules:
+  no_synthetic_bold:
+    name: "No synthetic bold"
+    regex: '\.(bold\(\)|fontWeight\(\.bold\)|fontWeight\(\.semibold\))'
+    message: "IBM Plex has no bold on iOS; use MSFont.sans(_, .semiBold) so the SemiBold file is used, as Android's Type.kt does."
+    severity: error

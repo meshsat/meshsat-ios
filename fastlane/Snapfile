@@ -1,0 +1,6 @@
+devices(["iPhone 16"])
+languages(["en-US"])
+scheme("MeshSat")
+output_directory("docs/screenshots/simulator")
+clear_previous_screenshots(true)
+override_status_bar(true)

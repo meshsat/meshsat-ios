@@ -1,0 +1,39 @@
+# Generated Xcode project (XcodeGen writes it from project.yml) and Xcode state
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.build/
+.swiftpm/
+Packages/*/.build/
+Packages/*/.swiftpm/
+Package.resolved
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Signing material never enters git
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+
+# fastlane output
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/screenshots/
+
+# macOS and editors
+.DS_Store
+.env
+.idea/
+*.swp
+
+# Claude Code files are local-only, never committed
+CLAUDE.md
+.claude/

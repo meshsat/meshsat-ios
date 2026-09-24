@@ -1,0 +1,3 @@
+app_identifier("net.meshsat.ios")
+team_id("4CXPKM8L4V")
+# apple_id is deliberately absent: CI authenticates with the App Store Connect API key.

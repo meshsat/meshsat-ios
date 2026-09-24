@@ -1,0 +1,70 @@
+# fastlane lanes for MeshSat iOS. Every lane assumes `xcodegen generate` has run.
+#
+#   fastlane test            unit tests on a simulator
+#   fastlane build_unsigned  Release build with signing off -> MeshSat-<v>-unsigned.ipa
+#                            and a Debug simulator build -> MeshSat-<v>-simulator.zip
+#   fastlane screenshots     the parity screenshot suite (UI tests) on the iPhone 16 simulator
+#   fastlane beta            match + gym + pilot; refuses to run until the App Store Connect
+#                            API key is present in the environment (MESHSAT-1331)
+default_platform(:ios)
+
+PROJECT = "MeshSat.xcodeproj"
+SCHEME = "MeshSat"
+SIMULATOR = "iPhone 16"
+
+def marketing_version
+  File.read("../Config/Version.xcconfig")[/^MARKETING_VERSION\s*=\s*([\d.]+)/, 1]
+end
+
+platform :ios do
+  desc "Unit tests on the simulator"
+  lane :test do
+    run_tests(
+      project: PROJECT,
+      scheme: SCHEME,
+      devices: [SIMULATOR],
+      xcargs: "CODE_SIGNING_ALLOWED=NO",
+      result_bundle: true,
+      output_directory: "fastlane/test_output"
+    )
+  end
+
+  desc "Unsigned Release .ipa for sideloading, plus a simulator build"
+  lane :build_unsigned do
+    v = marketing_version
+    sh("cd .. && xcodebuild build -project #{PROJECT} -scheme #{SCHEME} -configuration Release " \
+       "-sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build " \
+       "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' | tail -50")
+    sh("cd .. && rm -rf Payload && mkdir Payload && cp -R build/Build/Products/Release-iphoneos/MeshSat.app Payload/ " \
+       "&& zip -qr MeshSat-#{v}-unsigned.ipa Payload && rm -rf Payload")
+    sh("cd .. && xcodebuild build -project #{PROJECT} -scheme #{SCHEME} -configuration Debug " \
+       "-sdk iphonesimulator -destination 'platform=iOS Simulator,name=#{SIMULATOR}' -derivedDataPath build-sim " \
+       "CODE_SIGNING_ALLOWED=NO | tail -20")
+    sh("cd ../build-sim/Build/Products/Debug-iphonesimulator && zip -qr ../../../../MeshSat-#{v}-simulator.zip MeshSat.app")
+  end
+
+  desc "Parity screenshot suite on the iPhone 16 simulator"
+  lane :screenshots do
+    capture_screenshots(
+      project: PROJECT,
+      scheme: SCHEME,
+      devices: [SIMULATOR],
+      languages: ["en-US"],
+      output_directory: "docs/screenshots/simulator",
+      clear_previous_screenshots: true,
+      override_status_bar: true
+    )
+  end
+
+  desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
+  lane :beta do
+    key_id = ENV["ASC_KEY_ID"]
+    issuer = ENV["ASC_ISSUER_ID"]
+    key_b64 = ENV["ASC_KEY_P8_B64"]
+    UI.user_error!("ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8_B64 are not set; no signing material yet") if key_id.nil? || issuer.nil? || key_b64.nil?
+    app_store_connect_api_key(key_id: key_id, issuer_id: issuer, key_content: key_b64, is_key_content_base64: true)
+    match(type: "appstore", readonly: is_ci)
+    build_app(project: PROJECT, scheme: SCHEME, export_method: "app-store")
+    upload_to_testflight(skip_waiting_for_build_processing: true, changelog: File.read("metadata/en-US/release_notes.txt"))
+  end
+end

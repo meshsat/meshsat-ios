@@ -1,0 +1,239 @@
+# =============================================================================
+# MeshSat iOS CI/CD Pipeline
+# =============================================================================
+# The GitLab runners are Linux, so this pipeline builds and tests everything
+# that has no Apple dependency (Packages/MeshSatKit) in the official Swift
+# image. The app itself is built in two places:
+#   - GitHub Actions on the public mirror (.github/workflows/ios.yml), free
+#     macOS runners, on every mirrored push to main and every v* tag;
+#   - the `macos`-tagged runner (a rented Mac, MESHSAT-1332) once it exists.
+#     The macos stage only appears when the project variable MACOS_RUNNER is
+#     "1": a job tagged for a runner that does not exist sits pending until the
+#     pipeline timeout and blocks the release stage behind it.
+# - Push to main: validate, lint, Linux tests (+ macOS build where available)
+# - Tag push (v*): the above, then GitLab release, GitHub release notes and the
+#   meshsat.net changelog trigger. Release artefacts come from the macOS lanes.
+# =============================================================================
+
+stages:
+  - validate
+  - lint
+  - test
+  - macos
+  - release
+
+variables:
+  SWIFT_IMAGE: "swift:6.2-noble"
+  GITHUB_REPO: "meshsat/meshsat-ios"
+  BAO_ADDR: "https://openbao.nuclearlighters.net:8200"
+
+# =============================================================================
+# The version and its release notes must agree (mirrors Android's changelog-files
+# check). Versions live only in Config/Version.xcconfig; scripts/bump-version.sh
+# writes the matching fastlane/changelogs/<build>.txt and release_notes.txt.
+# =============================================================================
+changelog-files:
+  stage: validate
+  image: python:3.12-slim
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - |
+      python3 - <<'PYEOF'
+      import os, re, sys, pathlib
+      cfg = pathlib.Path("Config/Version.xcconfig").read_text()
+      m = re.search(r'^MARKETING_VERSION\s*=\s*(\d+\.\d+\.\d+)\s*$', cfg, re.M)
+      b = re.search(r'^CURRENT_PROJECT_VERSION\s*=\s*(\d+)\s*$', cfg, re.M)
+      if not m or not b:
+          sys.exit("MARKETING_VERSION and CURRENT_PROJECT_VERSION must be literal in Config/Version.xcconfig")
+      version, build = m.group(1), int(b.group(1))
+      notes = pathlib.Path(f"fastlane/changelogs/{build}.txt")
+      release_notes = pathlib.Path("fastlane/metadata/en-US/release_notes.txt")
+      problems = []
+      if not notes.is_file() or not notes.read_text().strip():
+          problems.append(f"missing or empty {notes}")
+      if not release_notes.is_file() or not release_notes.read_text().strip():
+          problems.append(f"missing or empty {release_notes}")
+      if not problems and notes.read_text().strip() != release_notes.read_text().strip():
+          problems.append("fastlane/changelogs/<build>.txt and release_notes.txt differ")
+      tag = os.environ.get("CI_COMMIT_TAG")
+      if tag and tag != f"v{version}":
+          problems.append(f"tag {tag} does not match MARKETING_VERSION {version}")
+      if problems:
+          for p in problems: print("  -", p)
+          sys.exit("run scripts/bump-version.sh, or fix the files by hand")
+      print(f"v{version} (build {build}): release notes present and consistent")
+      PYEOF
+
+lint:swiftlint:
+  stage: lint
+  image: ghcr.io/realm/swiftlint:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - swiftlint version
+    - swiftlint lint --strict --reporter emoji
+
+lint:swift-format:
+  stage: lint
+  image: $SWIFT_IMAGE
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  script:
+    - swift format lint --strict --recursive --configuration .swift-format App Packages/MeshSatKit/Sources Packages/MeshSatKit/Tests Packages/MeshSatApple Packages/MeshSatUI
+
+# =============================================================================
+# Linux build and tests of MeshSatKit: wire formats, crypto, HeMB, Reticulum,
+# SGP4, the 9603 driver, the Hub protocol, APRS, TAK, MSVQ-SC decoding, engine.
+# =============================================================================
+test:linux:
+  stage: test
+  image: $SWIFT_IMAGE
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  cache:
+    key: "meshsatkit-$CI_COMMIT_REF_SLUG"
+    paths:
+      - Packages/MeshSatKit/.build
+  script:
+    - cd Packages/MeshSatKit
+    - swift --version
+    - swift build -j 4
+    - swift test -j 4 --parallel --xunit-output ../../junit.xml
+  artifacts:
+    when: always
+    expire_in: 7 days
+    reports:
+      junit: junit.xml
+
+# =============================================================================
+# macOS lane on the self-hosted runner (tag `macos`). Present only when
+# MACOS_RUNNER == "1"; otherwise the job does not exist and the release stage
+# runs with `needs: optional`.
+# =============================================================================
+.macos:
+  tags: [macos]
+  rules:
+    - if: '$MACOS_RUNNER != "1"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+
+build-macos:
+  stage: macos
+  extends: .macos
+  id_tokens:
+    BAO_ID_TOKEN:
+      aud: https://gitlab.nuclearlighters.net
+  script:
+    - xcodebuild -version
+    - xcodegen generate
+    - bundle exec fastlane test || fastlane test
+    - |
+      VERSION=$(grep -oE '^MARKETING_VERSION *= *[0-9.]+' Config/Version.xcconfig | grep -oE '[0-9.]+$')
+      fastlane build_unsigned
+      echo "VERSION=${VERSION}" >> build.env
+      ls -la MeshSat-*-unsigned.ipa MeshSat-*-simulator.zip
+  artifacts:
+    paths:
+      - "MeshSat-*-unsigned.ipa"
+      - "MeshSat-*-simulator.zip"
+    reports:
+      dotenv: build.env
+    expire_in: 7 days
+
+# =============================================================================
+# Release (tags only). Artefacts are optional: on path A they come from GitHub
+# Actions and land on the GitHub release directly.
+# =============================================================================
+create-gitlab-release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  needs:
+    - job: build-macos
+      artifacts: true
+      optional: true
+  script:
+    - echo "Creating GitLab release for ${CI_COMMIT_TAG}"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "MeshSat iOS ${CI_COMMIT_TAG}"
+    description: |
+      MeshSat iOS ${CI_COMMIT_TAG}
+
+      Downloads are on the GitHub release:
+      https://github.com/meshsat/meshsat-ios/releases/tag/${CI_COMMIT_TAG}
+
+      Release notes: fastlane/metadata/en-US/release_notes.txt at this tag.
+
+create-github-release:
+  stage: release
+  image: alpine:latest
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  needs:
+    - job: build-macos
+      artifacts: true
+      optional: true
+  script:
+    - apk add --no-cache curl jq
+    - |
+      set -e
+      if [ -z "${GHCR_TOKEN:-}" ]; then
+        echo "WARN: GHCR_TOKEN not set, skipping GitHub release."
+        exit 0
+      fi
+      NOTES="$(cat fastlane/metadata/en-US/release_notes.txt)"
+      BODY="## MeshSat iOS ${CI_COMMIT_TAG}
+
+      ${NOTES}
+
+      Unsigned builds for sideloading and the simulator are attached by the GitHub Actions workflow when it finishes."
+      EXISTING=$(curl -s -H "Authorization: token ${GHCR_TOKEN}" -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${CI_COMMIT_TAG}")
+      EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
+      if [ -n "$EXISTING_ID" ]; then
+        echo "Release exists (ID ${EXISTING_ID}); updating the notes."
+        curl -s -X PATCH -H "Authorization: token ${GHCR_TOKEN}" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${GITHUB_REPO}/releases/${EXISTING_ID}" \
+          -d "$(jq -n --arg name "MeshSat iOS ${CI_COMMIT_TAG}" --arg body "$BODY" '{name: $name, body: $body, prerelease: true}')" > /dev/null
+        RELEASE_ID="$EXISTING_ID"
+      else
+        RESP=$(curl -s -X POST -H "Authorization: token ${GHCR_TOKEN}" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${GITHUB_REPO}/releases" \
+          -d "$(jq -n --arg tag "${CI_COMMIT_TAG}" --arg name "MeshSat iOS ${CI_COMMIT_TAG}" --arg body "$BODY" \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: true}')")
+        RELEASE_ID=$(echo "$RESP" | jq -r '.id')
+        echo "Release created (ID ${RELEASE_ID})."
+      fi
+      for F in MeshSat-*-unsigned.ipa MeshSat-*-simulator.zip; do
+        [ -f "$F" ] || continue
+        echo "Uploading ${F}"
+        curl -s -o /dev/null -w "  HTTP %{http_code}\n" --max-time 600 -X POST \
+          -H "Authorization: token ${GHCR_TOKEN}" -H "Content-Type: application/octet-stream" \
+          "https://uploads.github.com/repos/${GITHUB_REPO}/releases/${RELEASE_ID}/assets?name=${F}" --data-binary "@${F}"
+      done
+      echo "https://github.com/${GITHUB_REPO}/releases/tag/${CI_COMMIT_TAG}"
+  allow_failure: true
+
+# -----------------------------------------------------------------------------
+# CHANGELOG: tell meshsat.net to regenerate /changelog/ when a tag is cut
+# (the same trigger as the other MeshSat repos, MESHSAT-853). meshsat-website
+# picks this repo up once its REPOS list has the ios entry (MESHSAT-1330).
+# -----------------------------------------------------------------------------
+changelog:notify-website:
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v/'
+  allow_failure: true
+  variables:
+    CHANGELOG_RUN: "1"
+  trigger:
+    project: products/meshsat/meshsat-website
+    branch: main
