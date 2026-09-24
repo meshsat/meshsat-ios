@@ -6,8 +6,25 @@ import SwiftUI
 
 public struct SetupScreen: View {
     @Environment(Router.self) private var router
+    @Environment(GatewayModel.self) private var model
 
     public init() {}
+
+    private var nodeDot: Color {
+        switch model.meshState {
+        case .connected: MSColors.green
+        case .connecting, .scanning: MSColors.amber
+        case .disconnected: MSColors.textMuted
+        }
+    }
+
+    private var modemDot: Color {
+        switch model.modemState {
+        case .connected: MSColors.green
+        case .connecting: MSColors.amber
+        case .disconnected: MSColors.textMuted
+        }
+    }
 
     public var body: some View {
         ScrollView {
@@ -17,12 +34,12 @@ public struct SetupScreen: View {
                 GroupTitle("Get connected")
                 NavRow(
                     icon: MSIcon.bluetooth, tint: MSColors.mesh, title: "Your MeshSat node",
-                    detail: "Not connected", dot: MSColors.textMuted
+                    detail: model.meshStatusText, dot: nodeDot
                 ) { router.navigate(.setupSection(.node)) }
                 NavRow(
                     icon: MSIcon.transportSatellite, tint: MSColors.iridium, title: "Satellite",
-                    detail: "No modem", dot: MSColors.textMuted
-                ) { router.navigate(.setupSection(.satellite)) }
+                    detail: model.modemStatusText, dot: modemDot
+                ) { router.navigate(.setupSection(.node)) }
                 NavRow(
                     icon: MSIcon.cloud, tint: MSColors.hub, title: "Hub",
                     detail: "Not set up", dot: MSColors.textMuted

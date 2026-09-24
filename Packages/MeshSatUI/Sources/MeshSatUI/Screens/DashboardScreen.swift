@@ -8,29 +8,58 @@ import SwiftUI
 public struct DashboardScreen: View {
     @Binding var nightMode: Bool
     @Environment(Router.self) private var router
+    @Environment(GatewayModel.self) private var model
 
     public init(nightMode: Binding<Bool>) { _nightMode = nightMode }
+
+    private var meshLane: LaneState {
+        switch model.meshState {
+        case .connected: .working
+        case .connecting, .scanning: .trying
+        case .disconnected: .off
+        }
+    }
+
+    private var satelliteLane: LaneState {
+        switch model.modemState {
+        case .connected: model.modemSignal > 0 ? .working : .trying
+        case .connecting: .trying
+        case .disconnected: .off
+        }
+    }
+
+    private var headline: (String, String) {
+        switch (model.meshState == .connected, model.modemState == .connected) {
+        case (true, true): ("Mesh and satellite are up.", "Messages can go out both ways.")
+        case (true, false): ("The mesh is up.", "The node's modem is not there yet.")
+        default: ("Nothing can send yet.", "Connect your node in Setup.")
+        }
+    }
 
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: MSSpace.list) {
                 HomeHeader(nightMode: $nightMode)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Nothing can send yet.").msText(.headlineSmall)
-                    Text("Connect your node in Setup.").msText(.bodyLarge, color: MSColors.textSecondary)
+                    Text(headline.0).msText(.headlineSmall)
+                    Text(headline.1).msText(.bodyLarge, color: MSColors.textSecondary)
                 }
                 .padding(4)
                 VStack(spacing: 0) {
                     TransportLane(
                         icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
-                        metric: "0/5", detail: "No modem. Connect your node.", state: .off
+                        metric: "\(model.modemSignal)/5",
+                        detail: model.modemState == .connected ? "Modem on the node." : "No modem. Connect your node.",
+                        state: satelliteLane
                     ) {
-                        router.navigate(.setupSection(.satellite))
+                        router.navigate(.setupSection(.node))
                     }
                     MSDivider()
                     TransportLane(
                         icon: MSIcon.transportMesh, color: MSColors.mesh, name: "Mesh",
-                        metric: "0 nodes", detail: "Not connected.", state: .off
+                        metric: "\(model.nodes.count) nodes",
+                        detail: model.meshState == .connected ? "Connected to your node." : "\(model.meshStatusText).",
+                        state: meshLane
                     ) {
                         router.navigate(.setupSection(.node))
                     }

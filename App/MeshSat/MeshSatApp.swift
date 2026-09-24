@@ -11,7 +11,7 @@ struct MeshSatApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(gateway: appDelegate.gateway)
                 .onOpenURL { url in
                     appDelegate.handle(url: url)
                 }
