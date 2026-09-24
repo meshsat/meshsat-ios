@@ -66,6 +66,9 @@ jobs:
       - name: Resolve packages
         run: xcodebuild -resolvePackageDependencies -project MeshSat.xcodeproj -scheme "$SCHEME"
 
+      - name: Package tests (macOS, MeshSatApple)
+        run: set -o pipefail; swift test --package-path Packages/MeshSatApple 2>&1 | tail -40
+
       - name: Unit tests (simulator)
         run: |
           set -o pipefail
