@@ -27,11 +27,12 @@ final class SosSettingsAdapter: SosSettings, @unchecked Sendable {
 }
 
 /// The delivery DAO's by-prefix queries as the controller wants them.
-struct SosDeliveryQueriesAdapter: SosDeliveryQueries {
-    let dao: MessageDeliveryDao
-    func getByRefPrefix(_ prefix: String) async throws -> [MessageDelivery] { try await dao.getByRefPrefix(prefix) }
-    func cancelWaitingByRefPrefix(_ prefix: String) async throws -> Int { try await dao.cancelWaitingByRefPrefix(prefix) }
-    func observeByRefPrefix(_ prefix: String) -> AsyncStream<[MessageDelivery]> {
+public struct SosDeliveryQueriesAdapter: SosDeliveryQueries {
+    public let dao: MessageDeliveryDao
+    public init(dao: MessageDeliveryDao) { self.dao = dao }
+    public func getByRefPrefix(_ prefix: String) async throws -> [MessageDelivery] { try await dao.getByRefPrefix(prefix) }
+    public func cancelWaitingByRefPrefix(_ prefix: String) async throws -> Int { try await dao.cancelWaitingByRefPrefix(prefix) }
+    public func observeByRefPrefix(_ prefix: String) -> AsyncStream<[MessageDelivery]> {
         let observation = dao.observeByRefPrefix(prefix)
         return AsyncStream { continuation in
             let task = Task {

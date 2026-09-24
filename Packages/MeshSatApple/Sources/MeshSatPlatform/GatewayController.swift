@@ -113,6 +113,8 @@ public final class GatewayController: @unchecked Sendable {
     public var rnsNode: RnsTransportNode? { rnsParts.node }
     public var routingIdentity: Identity? { rnsParts.identity }
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
+    /// The controller, once the dispatcher exists; the screens subscribe here.
+    public let sosControllers = StateBroadcast<SosController?>(nil)
     private var sosValue: SosController?
     private var sosEnvValue: SosEnvAdapter?
     public var sos: SosController? {
@@ -125,6 +127,7 @@ public final class GatewayController: @unchecked Sendable {
         sosValue = c
         sosEnvValue = env
         lock.unlock()
+        sosControllers.send(c)
     }
     /// The last modem IMEI and signal the driver reported, for the Hub's birth and health.
     private var lastModemImeiValue = ""

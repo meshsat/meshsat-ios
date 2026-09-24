@@ -8,9 +8,15 @@ public struct MSFilledButton: View {
     let fullWidth: Bool
     let action: () -> Void
 
-    public init(_ title: String, container: Color = MSColors.signalOrange, fullWidth: Bool = true, action: @escaping () -> Void) {
+    let labelColor: Color
+
+    public init(
+        _ title: String, container: Color = MSColors.signalOrange, labelColor: Color = MSColors.ink, fullWidth: Bool = true,
+        action: @escaping () -> Void
+    ) {
         self.title = title
         self.container = container
+        self.labelColor = labelColor
         self.fullWidth = fullWidth
         self.action = action
     }
@@ -18,7 +24,7 @@ public struct MSFilledButton: View {
     public var body: some View {
         Button(action: action) {
             Text(title)
-                .msText(.bodySmall, color: MSColors.ink)
+                .msText(.bodySmall, color: labelColor)
                 .padding(.horizontal, 24)
                 .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 40)
                 .background(container, in: Capsule())
@@ -57,5 +63,31 @@ public struct MSTextButton: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(MSPressedStyle())
+    }
+}
+
+/// The Material 3 outlined button: a pill with a 1 dp outline and no fill.
+public struct MSOutlinedButton: View {
+    let title: String
+    let enabled: Bool
+    let action: () -> Void
+
+    public init(_ title: String, enabled: Bool = true, action: @escaping () -> Void) {
+        self.title = title
+        self.enabled = enabled
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            Text(title)
+                .msText(.bodySmall, color: enabled ? MSColors.offWhite : MSColors.textMuted)
+                .padding(.horizontal, 24)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(MSPressedStyle())
+        .disabled(!enabled)
     }
 }
