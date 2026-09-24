@@ -109,6 +109,8 @@ public struct RootView: View {
             ConversationChatView(peer: peer)
         } else if route == .sos {
             SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
+        } else if route == .passes {
+            SubScreen(Route.passes.subScreenTitle ?? "Satellite passes", onBack: { router.back() }, content: { PassesScreen() })
         } else if route == .setupSection(.safety) {
             SubScreen(SetupSection.safety.title, onBack: { router.back() }, content: { SettingsSafetySection() })
         } else if route == .setupSection(.satellite) {

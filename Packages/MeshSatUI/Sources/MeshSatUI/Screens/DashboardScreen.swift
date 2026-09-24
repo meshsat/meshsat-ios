@@ -79,6 +79,7 @@ public struct DashboardScreen: View {
                     }
                 }
                 .msCard()
+                SatelliteSkyCard()
                 SosCard()
             }
             .padding(MSSpace.screen)
