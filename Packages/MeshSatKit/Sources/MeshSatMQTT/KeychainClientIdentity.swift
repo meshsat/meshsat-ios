@@ -61,11 +61,18 @@ public enum KeychainClientIdentity {
             throw IdentityError(description: "Keychain refused the client certificate (\(certStatus))")
         }
         // The identity is the pair the Keychain matched by the public key; pick ours by its DER.
+        // Right after the two adds the Keychain can still answer "not found" (-25300, the first
+        // connect after launch on 25 Sep 2026), so ask a few times.
         var found: CFTypeRef?
-        let status = SecItemCopyMatching(
+        var status = errSecItemNotFound
+        let query =
             [kSecClass as String: kSecClassIdentity, kSecReturnRef as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
-                as CFDictionary,
-            &found)
+            as CFDictionary
+        for attempt in 0..<10 {
+            if attempt > 0 { usleep(100_000) }
+            status = SecItemCopyMatching(query, &found)
+            if status != errSecItemNotFound { break }
+        }
         guard status == errSecSuccess, let items = found as? [SecIdentity] else {
             throw IdentityError(description: "no identity for the client certificate (\(status))")
         }

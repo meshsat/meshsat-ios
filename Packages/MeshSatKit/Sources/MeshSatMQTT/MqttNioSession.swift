@@ -28,7 +28,6 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
     private var client: MQTTClient?
     private var will: MQTTWill?
     private var closedByUs = false
-    private var listenerTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
 
     public init(endpoint: MqttEndpoint) {
@@ -131,26 +130,27 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
         }
     }
 
+    /// Every received message into `inbound`. A callback on the client, not the AsyncSequence
+    /// `createPublishListener()`: that object removes its listener in `deinit`, and a
+    /// `for await` over a temporary frees it at once, so the client went on acknowledging
+    /// messages (QoS 1 PUBACK) that never reached the app. The Hub's pings were lost that way
+    /// (MESHSAT-1324). The same name replaces the listener on a reconnect.
     private func listen(_ c: MQTTClient) {
-        let task = Task { [weak self] in
-            for await result in c.createPublishListener() {
-                guard let self else { return }
-                switch result {
-                case .success(let info):
-                    var payload = info.payload
-                    let bytes = payload.readBytes(length: payload.readableBytes) ?? []
-                    if !info.topicName.contains("/tak/") { Self.log.info("MQTT received \(info.topicName) (\(bytes.count) bytes)") }
-                    inbound.send(MQTTInbound(topic: info.topicName, payload: bytes))
-                case .failure(let error):
-                    Self.log.warning("MQTT receive failed: \(error)")
-                }
+        c.addPublishListener(named: Self.listenerName) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let info):
+                var payload = info.payload
+                let bytes = payload.readBytes(length: payload.readableBytes) ?? []
+                if !info.topicName.contains("/tak/") { Self.log.info("MQTT received \(info.topicName) (\(bytes.count) bytes)") }
+                inbound.send(MQTTInbound(topic: info.topicName, payload: bytes))
+            case .failure(let error):
+                Self.log.warning("MQTT receive failed: \(error)")
             }
         }
-        lock.lock()
-        listenerTask?.cancel()
-        listenerTask = task
-        lock.unlock()
     }
+
+    static let listenerName = "meshsat-inbound"
 
     /// The connection closed: not by us, so get it back with a doubling wait (Paho's
     /// automatic reconnect), then say so.
@@ -212,7 +212,6 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
 
     private struct Teardown {
         let client: MQTTClient?
-        let listener: Task<Void, Never>?
         let reconnect: Task<Void, Never>?
     }
 
@@ -220,9 +219,8 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         closedByUs = true
-        let out = Teardown(client: client, listener: listenerTask, reconnect: reconnectTask)
+        let out = Teardown(client: client, reconnect: reconnectTask)
         client = nil
-        listenerTask = nil
         reconnectTask = nil
         return out
     }
@@ -241,7 +239,7 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
 
     public func disconnect() async {
         let gone = takeForDisconnect()
-        gone.listener?.cancel()
+        gone.client?.removePublishListener(named: Self.listenerName)
         gone.reconnect?.cancel()
         guard let c = gone.client else { return }
         if c.isActive() { try? await c.disconnect() }
