@@ -8,6 +8,7 @@ import MeshSatEngine
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatPlatform
+import MeshSatSatellite
 import Observation
 
 @Observable
@@ -25,6 +26,9 @@ public final class GatewayModel {
     public private(set) var modemSignal = 0
     public private(set) var interfaces: [String: InterfaceStatus] = [:]
     public private(set) var lastError = ""
+    public private(set) var passes: [PassPrediction] = []
+    public private(set) var passMode: PassScheduler.PassMode = .idle
+    public private(set) var phoneFix: PhoneFix?
 
     private var tasks: [Task<Void, Never>] = []
 
@@ -83,6 +87,20 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await err in central.errors.subscribe() { self?.lastError = err }
             })
+        tasks.append(
+            Task { [weak self] in
+                for await p in gateway.passes.subscribe() { self?.passes = p }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await fix in gateway.location.phoneLocation.subscribe() { self?.phoneFix = fix }
+            })
+        if let scheduler = gateway.passScheduler {
+            tasks.append(
+                Task { [weak self] in
+                    for await m in scheduler.mode.subscribe() { self?.passMode = m }
+                })
+        }
     }
 
     // MARK: Actions (the intents Android's screens send the service)
