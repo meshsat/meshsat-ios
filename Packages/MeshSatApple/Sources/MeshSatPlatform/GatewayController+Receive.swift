@@ -64,6 +64,7 @@ extension GatewayController {
                 NodePosition(
                     timestamp: clock.nowMs(), nodeId: Int64(pos.from), nodeName: nodeId, latitude: pos.latitude, longitude: pos.longitude,
                     altitude: pos.altitude))
+            geofenceMonitor.checkPosition(nodeId: nodeId, lat: pos.latitude, lon: pos.longitude)
         case .telemetry(let t):
             central.touchNode(t.from)
             // 101 is Meshtastic's "on external power", kept so it can be shown as such.

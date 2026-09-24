@@ -151,6 +151,27 @@ final class TrackPolyline: MKPolyline {
     var label = ""
 }
 
+/// A zone on the map (Zones, MESHSAT-1249): its outline as the gateway holds it.
+struct MapZone: Equatable {
+    let id: String
+    let name: String
+    let subtitle: String
+    let polygon: [CLLocationCoordinate2D]
+    static func == (a: MapZone, b: MapZone) -> Bool { a.id == b.id && a.name == b.name && a.polygon.count == b.polygon.count }
+}
+
+/// The zone being placed: a circle in the teal of "this phone", moved by long-pressing.
+struct MapDraft: Equatable {
+    let center: CLLocationCoordinate2D
+    let radiusM: Double
+    static func == (a: MapDraft, b: MapDraft) -> Bool {
+        a.center.latitude == b.center.latitude && a.center.longitude == b.center.longitude && a.radiusM == b.radiusM
+    }
+}
+
+final class ZonePolygon: MKPolygon {}
+final class DraftCircle: MKCircle {}
+
 /// The map view: the tiles, three layers bottom to top (tracks, nodes, this phone), each
 /// refilled on its own, so a phone fix no longer rebuilds every node marker and track.
 struct MeshMapView: UIViewRepresentable {
@@ -162,10 +183,16 @@ struct MeshMapView: UIViewRepresentable {
     let phone: PhoneFix?
     let now: Int64
     let ticket: MapCommandTicket?
+    var zones: [MapZone] = []
+    var draft: MapDraft?
+    var onLongPress: ((CLLocationCoordinate2D) -> Void)?
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
         map.delegate = context.coordinator
+        let press = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.longPressed(_:)))
+        press.minimumPressDuration = 0.5
+        map.addGestureRecognizer(press)
         map.mapType = .standard
         map.pointOfInterestFilter = .excludingAll
         map.showsCompass = false
@@ -214,6 +241,19 @@ struct MeshMapView: UIViewRepresentable {
         private var lastTracksKey = ""
         private var lastNodesKey = ""
         private var lastPhoneKey = ""
+        private var zoneOverlays: [ZonePolygon] = []
+        private var lastZonesKey = ""
+        private var draftCircle: DraftCircle?
+        private var draftAnnotation: NodeAnnotation?
+        private var lastDraft: MapDraft?
+        var onLongPress: ((CLLocationCoordinate2D) -> Void)?
+
+        @objc func longPressed(_ g: UILongPressGestureRecognizer) {
+            guard g.state == .began, let map = g.view as? MKMapView else { return }
+            let coord = map.convert(g.location(in: map), toCoordinateFrom: map)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            onLongPress?(coord)
+        }
 
         func install(_ map: MKMapView, detailed: DetailedMap?, night: Bool) {
             if let old = overlay { map.removeOverlay(old) }
@@ -321,9 +361,48 @@ struct MeshMapView: UIViewRepresentable {
                 }
             }
 
+            onLongPress = v.onLongPress
+            applyZones(v, to: map, teal: teal)
+
             if let t = v.ticket, t.seq != lastTicket {
                 lastTicket = t.seq
                 run(t.command, on: map)
+            }
+        }
+
+        /// Zones and the zone being placed: bottom to top under the nodes and this phone.
+        private func applyZones(_ v: MeshMapView, to map: MKMapView, teal: UIColor) {
+            let zonesKey = v.zones.map { "\($0.id)|\($0.name)|\($0.polygon.count)" }.joined(separator: ",")
+            if zonesKey != lastZonesKey {
+                lastZonesKey = zonesKey
+                map.removeOverlays(zoneOverlays)
+                zoneOverlays = v.zones.map { z in
+                    let p = ZonePolygon(coordinates: z.polygon, count: z.polygon.count)
+                    p.title = z.name
+                    p.subtitle = z.subtitle
+                    return p
+                }
+                map.addOverlays(zoneOverlays, level: .aboveLabels)
+            }
+            if v.draft != lastDraft {
+                lastDraft = v.draft
+                if let c = draftCircle {
+                    map.removeOverlay(c)
+                    draftCircle = nil
+                }
+                if let a = draftAnnotation {
+                    map.removeAnnotation(a)
+                    draftAnnotation = nil
+                }
+                if let d = v.draft, let painter {
+                    let circle = DraftCircle(center: d.center, radius: d.radiusM)
+                    draftCircle = circle
+                    map.addOverlay(circle, level: .aboveLabels)
+                    let a = NodeAnnotation(nodeId: -1, coordinate: d.center)
+                    a.icon = painter.dot(fill: teal, sizePt: 14)
+                    draftAnnotation = a
+                    map.addAnnotation(a)
+                }
             }
         }
 
@@ -374,6 +453,23 @@ struct MeshMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
             if let tiles = overlay as? MKTileOverlay { return MKTileOverlayRenderer(tileOverlay: tiles) }
+            let night = lastNight == true
+            if let zone = overlay as? ZonePolygon {
+                let r = MKPolygonRenderer(polygon: zone)
+                let amber = night ? UIColor(MSColors.amber).nightRed() : UIColor(MSColors.amber)
+                r.fillColor = amber.withAlphaComponent(0.12)
+                r.strokeColor = amber
+                r.lineWidth = 2
+                return r
+            }
+            if let draft = overlay as? DraftCircle {
+                let r = MKCircleRenderer(circle: draft)
+                let teal = night ? UIColor(MSColors.teal).nightRed() : UIColor(MSColors.teal)
+                r.fillColor = teal.withAlphaComponent(0.15)
+                r.strokeColor = teal
+                r.lineWidth = 2
+                return r
+            }
             if let circle = overlay as? MKCircle {
                 let r = MKCircleRenderer(circle: circle)
                 let teal = lastNight == true ? UIColor(MSColors.teal).nightRed() : UIColor(MSColors.teal)

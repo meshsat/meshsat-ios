@@ -29,6 +29,7 @@ extension RootView {
         case .deliveries: RoutedScreen("Message queue", DeliveryScreen())
         case .setupAdvanced: RoutedScreen("Advanced", AdvancedScreen())
         case .about: RoutedScreen("About", AboutScreen())
+        case .geofence: RoutedScreen("Zones", GeofenceScreen())
         case .passes: RoutedScreen(Route.passes.subScreenTitle ?? "Satellite passes", PassesScreen())
         default: nil
         }

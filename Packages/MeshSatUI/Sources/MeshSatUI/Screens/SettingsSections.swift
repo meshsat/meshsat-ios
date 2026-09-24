@@ -400,10 +400,16 @@ public struct SettingsMessagingSection: View {
 public struct SettingsSafetySection: View {
     @Environment(SettingsModel.self) private var settings
 
+    @Environment(Router.self) private var router
+
     public init() {}
 
     public var body: some View {
         ScrollView {
+            // SetupPageLinks: the screen that belongs with these settings, at the top.
+            NavRow(icon: MSIcon.fence, title: "Zones", detail: "Alerts when someone enters or leaves an area") {
+                router.navigate(.geofence)
+            }
             VStack(spacing: MSSpace.screen) {
                 SosSettingsCard()
                 SectionCard("Check-in timer (dead man's switch)") {
