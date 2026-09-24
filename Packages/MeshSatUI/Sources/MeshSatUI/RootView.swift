@@ -38,6 +38,7 @@ public struct RootView: View {
     public var body: some View {
         VStack(spacing: 0) {
             StatusStrip(model: strip)
+            SosBanner { router.navigate(.sos) }
             ZStack {
                 TabView(selection: $router.selectedTab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
@@ -94,6 +95,11 @@ public struct RootView: View {
     private func destination(_ route: Route) -> some View {
         if case .chat(let peer) = route {
             ConversationChatView(peer: peer)
+        } else if route == .sos {
+            SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
+        } else if route == .setupSection(.safety) {
+            SubScreen(
+                SetupSection.safety.title, onBack: { router.back() }, content: { ScrollView { SosSettingsCard().padding(MSSpace.screen) } })
         } else if route == .setupSection(.node) {
             SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
         } else if let title = route.subScreenTitle {

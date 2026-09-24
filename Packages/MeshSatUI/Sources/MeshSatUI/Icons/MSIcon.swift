@@ -42,6 +42,9 @@ public enum MSIcon {
     public static var errorOutline: Image { asset("outlined_error_outline", fallback: "exclamationmark.circle") }
     public static var done: Image { asset("outlined_done", fallback: "checkmark") }
     public static var doneAll: Image { asset("outlined_done_all", fallback: "checkmark.circle.fill") }
+    public static var sync: Image { asset("outlined_sync", fallback: "arrow.triangle.2.circlepath") }
+    public static var block: Image { asset("outlined_block", fallback: "nosign") }
+    public static var close: Image { asset("outlined_close", fallback: "xmark") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {
