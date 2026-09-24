@@ -121,6 +121,8 @@ public struct RootView: View {
             SubScreen("Routing rules", onBack: { router.back() }, content: { RulesScreen() })
         } else if route == .interfaces {
             SubScreen("Links", onBack: { router.back() }, content: { InterfacesScreen() })
+        } else if route == .audit {
+            SubScreen("Audit log", onBack: { router.back() }, content: { AuditScreen() })
         } else if route == .decrypt {
             SubScreen("Encrypt or decrypt text", onBack: { router.back() }, content: { DecryptScreen() })
         } else if route == .credentials {

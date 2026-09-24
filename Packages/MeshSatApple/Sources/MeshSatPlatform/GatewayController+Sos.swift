@@ -80,9 +80,7 @@ final class SosEnvAdapter: SosEnv, @unchecked Sendable {
     }
 
     func audit(event: String, detail: String) async {
-        guard let gateway else { return }
-        try? await gateway.db.auditLog.insert(
-            AuditLogEntry(timestamp: ISO8601DateFormatter().string(from: Date()), eventType: event, detail: detail))
+        await gateway?.signingService?.auditEvent(event, detail: detail)
     }
 }
 
