@@ -37,6 +37,7 @@ let package = Package(
             name: "MeshSatStore",
             dependencies: [
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
+                .product(name: "MeshSatNet", package: "MeshSatKit"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Logging", package: "swift-log"),
             ]

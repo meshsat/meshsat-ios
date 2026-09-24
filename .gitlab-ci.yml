@@ -145,6 +145,7 @@ build-macos:
   script:
     - xcodebuild -version
     - xcodegen generate
+    - set -o pipefail; swift test --package-path Packages/MeshSatApple 2>&1 | tail -40
     - bundle exec fastlane test || fastlane test
     - |
       VERSION=$(grep -oE '^MARKETING_VERSION *= *[0-9.]+' Config/Version.xcconfig | grep -oE '[0-9.]+$')
