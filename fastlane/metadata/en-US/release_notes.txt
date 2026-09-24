@@ -1,1 +1,1 @@
-Build 5: Map: OpenStreetMap tiles with an offline world overview, your own MBTiles maps from Setup > Maps, node markers, tracks and this phone. Night mode reaches the map.
+Build 6: People: every node your MeshSat node heard, with signal, battery and last heard, a node's details with Message and Show on map, and contact cards swapped face to face by QR code.
