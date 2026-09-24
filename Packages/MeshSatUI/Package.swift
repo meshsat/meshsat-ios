@@ -7,10 +7,10 @@ let package = Package(
     name: "MeshSatUI",
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
-        .library(name: "MeshSatUI", targets: ["MeshSatUI"]),
+        .library(name: "MeshSatUI", targets: ["MeshSatUI"])
     ],
     dependencies: [
-        .package(path: "../MeshSatKit"),
+        .package(path: "../MeshSatKit")
     ],
     targets: [
         .target(

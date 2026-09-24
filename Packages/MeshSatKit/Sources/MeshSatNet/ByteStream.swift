@@ -60,8 +60,12 @@ public final class LoopbackByteStream: ByteStream, @unchecked Sendable {
     public static func pair() -> (LoopbackByteStream, LoopbackByteStream) {
         let a = LoopbackByteStream()
         let b = LoopbackByteStream()
-        a.lock.lock(); a.peer = b; a.lock.unlock()
-        b.lock.lock(); b.peer = a; b.lock.unlock()
+        a.lock.lock()
+        a.peer = b
+        a.lock.unlock()
+        b.lock.lock()
+        b.peer = a
+        b.lock.unlock()
         return (a, b)
     }
 

@@ -7,7 +7,9 @@ import SwiftUI
 
 public enum NightMode {
     /// Rec.601-ish luminance weights, exactly Android's ColorMatrix red row.
-    public static let weights: (r: Float, g: Float, b: Float) = (0.24, 0.47, 0.09)
+    public static let redWeight: Float = 0.24
+    public static let greenWeight: Float = 0.47
+    public static let blueWeight: Float = 0.09
 }
 
 struct NightModeModifier: ViewModifier {

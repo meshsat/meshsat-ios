@@ -66,8 +66,10 @@ public struct NavRow: View {
     let dot: Color?
     let action: () -> Void
 
-    public init(icon: Image, tint: Color = MSColors.textSecondary, title: String, detail: String? = nil,
-                dot: Color? = nil, action: @escaping () -> Void) {
+    public init(
+        icon: Image, tint: Color = MSColors.textSecondary, title: String, detail: String? = nil,
+        dot: Color? = nil, action: @escaping () -> Void
+    ) {
         self.icon = icon
         self.tint = tint
         self.title = title

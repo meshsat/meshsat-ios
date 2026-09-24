@@ -102,7 +102,12 @@ public enum TleParser {
         let chars = Array(s)
         var sign = 1.0
         var idx = 0
-        if chars[0] == "-" { sign = -1; idx = 1 } else if chars[0] == "+" { idx = 1 }
+        if chars[0] == "-" {
+            sign = -1
+            idx = 1
+        } else if chars[0] == "+" {
+            idx = 1
+        }
         // the exponent is the last two characters (sign + digit)
         guard chars.count - idx >= 3 else { throw TleParseError.badField("exponent \(field)") }
         let expPart = String(chars[(chars.count - 2)...])
@@ -146,7 +151,7 @@ public enum TleParser {
 public enum BundledTle {
     public static func load() -> [TleElements] {
         guard let url = Bundle.module.url(forResource: "iridium-next", withExtension: "3le", subdirectory: "tle"),
-              let text = try? String(contentsOf: url, encoding: .utf8)
+            let text = try? String(contentsOf: url, encoding: .utf8)
         else { return [] }
         return TleParser.parseMulti(text)
     }
