@@ -14,11 +14,12 @@ import MeshSatBLE
 import MeshSatEngine
 import MeshSatMeshtastic
 import MeshSatNet
+import MeshSatSatellite
 import MeshSatStore
 import MeshSatWire
 
 public final class GatewayController: @unchecked Sendable {
-    private static let log = Logger(label: "MeshSat")
+    static let log = Logger(label: "MeshSat")
     public static let iridiumQueued = "iridium:queued"
     public static let iridiumUnconfirmed = "iridium:unconfirmed"
     public static let iridiumDelivered = "iridium:delivered"
@@ -62,6 +63,14 @@ public final class GatewayController: @unchecked Sendable {
     public private(set) var accessEvaluator: AccessEvaluator?
     public private(set) var ackTracker: AckTracker?
     public let creditTracker: CreditTracker
+    public let location = LocationProvider()
+    public private(set) var tleFetcher: TleFetcher?
+    public private(set) var passScheduler: PassScheduler?
+    /// The predicted passes for the phone's position, three hours back and six ahead, refreshed
+    /// every five minutes while the scheduler runs (MESHSAT-498, MESHSAT-1300).
+    public let passes = StateBroadcast<[PassPrediction]>([])
+    static let passCacheTtlMs: Int64 = 5 * 60_000
+    static let tleRefreshEveryMs: Int64 = 12 * 3_600_000
 
     /// The phone's own node's battery, as last reported (MESHSAT-1315).
     public let nodeBattery = StateBroadcast<NodeBatteryNow?>(nil)
@@ -72,10 +81,10 @@ public final class GatewayController: @unchecked Sendable {
     /// A message arrived: title and text, for the notification the app shows.
     public let messageNotifications = Broadcast<(title: String, text: String)>(bufferSize: 8)
 
-    private let clock: any DriverClock
-    private let lock = NSLock()
+    let clock: any DriverClock
+    let lock = NSLock()
     private var tasks: [Task<Void, Never>] = []
-    private var nodeBatteryStoredMs: Int64 = 0
+    var nodeBatteryStoredMs: Int64 = 0
     private var started = false
 
     public init(
@@ -91,7 +100,7 @@ public final class GatewayController: @unchecked Sendable {
         self.creditTracker = CreditTracker(store: db.iridiumCredits)
     }
 
-    private func keep(_ task: Task<Void, Never>) {
+    func keep(_ task: Task<Void, Never>) {
         lock.lock()
         tasks.append(task)
         lock.unlock()
@@ -125,12 +134,16 @@ public final class GatewayController: @unchecked Sendable {
         reconnectSavedNode()
         observeIridiumPipe()
         startSignalPolling()
+        startLocationUpdates()
+        initPassScheduler()
         Self.log.info("GatewayController started")
     }
 
     public func stop() {
         dispatcher?.stop()
         ackTracker?.stop()
+        passScheduler?.stop()
+        location.stop()
         interfaceManager.stopAll()
         lock.lock()
         let t = tasks
@@ -405,173 +418,6 @@ public final class GatewayController: @unchecked Sendable {
         return "\(interfaceId) is not built yet"
     }
 
-    // MARK: Receive paths (GatewayService.observeTransports)
-
-    private func observeTransports() {
-        keep(
-            Task { [self] in
-                for await data in central.receivedData.subscribe() {
-                    await onMeshFrame(data)
-                }
-            })
-        // Iridium MT: once the modem is up, and on every ring alert. Never on a timer, because
-        // every SBDIX is billed (MESHSAT-1236).
-        keep(
-            Task { [self] in
-                for await state in driver.stateChanges.subscribe() where state == .connected {
-                    await pollIridiumMt(ringAlert: false)
-                }
-            })
-        keep(
-            Task { [self] in
-                for await _ in driver.ringAlerts.subscribe() {
-                    await pollIridiumMt(ringAlert: true)
-                }
-            })
-        // The modem sees a satellite: send what waits now instead of at its next retry, as the
-        // Bridge drains its queue on a signal of at least one bar (MESHSAT-1249). Not during the
-        // 3 minutes after a session that found no network.
-        keep(
-            Task { [self] in
-                for await bars in driver.signalReadings.subscribe() where bars >= Self.iridiumMinSignalBars {
-                    if await driver.sbdixHoldRemainingMs() == 0 {
-                        await dispatcher?.drainNow(channelId: "iridium_0", reason: "the modem sees a satellite (\(bars)/5)")
-                    }
-                }
-            })
-    }
-
-    private func onMeshFrame(_ data: [UInt8]) async {
-        guard let result = MeshtasticProtocol.parseFromRadioFull(data, nowMs: clock.nowMs()) else { return }
-        let radio = central.radio
-        switch result {
-        case .textMessage(let msg):
-            let nodeId = MeshtasticProtocol.formatNodeId(msg.from)
-            central.touchNode(msg.from)
-            if deduplicator.isDuplicateKey("mesh:\(msg.from):\(msg.id)") { return }
-            try? await db.messages.insert(
-                MessageRecord(timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId, text: msg.text))
-            messageNotifications.send((title: "Mesh: \(nodeId)", text: msg.text))
-            interfaceManager.recordActivity("mesh_0")
-            await evaluateAndForward(sourceInterface: "mesh_0", text: msg.text, sender: nodeId)
-        case .position(let pos):
-            let nodeId = MeshtasticProtocol.formatNodeId(pos.from)
-            central.touchNode(pos.from)
-            try? await db.nodePositions.insert(
-                NodePosition(
-                    timestamp: clock.nowMs(), nodeId: Int64(pos.from), nodeName: nodeId, latitude: pos.latitude, longitude: pos.longitude,
-                    altitude: pos.altitude))
-        case .telemetry(let t):
-            central.touchNode(t.from)
-            // 101 is Meshtastic's "on external power", kept so it can be shown as such.
-            if (0...NodeBattery.externalPower).contains(t.batteryLevel) {
-                radio.updateNodeBattery(t.from, batteryLevel: t.batteryLevel)
-                if t.from == radio.myInfo.value?.myNodeNum { await onOwnNodeBattery(t.from, level: t.batteryLevel, voltage: t.voltage) }
-            }
-        case .environmentTelemetry(let env):
-            central.touchNode(env.from)
-        case .myInfo(let info):
-            radio.setMyInfo(info)
-        case .nodeInfo(let info):
-            radio.addNodeInfo(info)
-            if info.nodeNum == radio.myInfo.value?.myNodeNum { radio.setOwner(longName: info.longName, shortName: info.shortName) }
-        case .routing(let routing):
-            await ackTracker?.processAck(channel: "mesh", seqNum: Int64(routing.requestId), positive: routing.isAck)
-        case .waypoint(let wp):
-            let nodeId = MeshtasticProtocol.formatNodeId(wp.from)
-            try? await db.messages.insert(
-                MessageRecord(
-                    timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId,
-                    text: "\u{1F4CD} Waypoint: \(wp.name) \u{2014} \(wp.description)"))
-        case .storeForward(let sf):
-            if let text = sf.text {
-                let nodeId = MeshtasticProtocol.formatNodeId(sf.from)
-                try? await db.messages.insert(
-                    MessageRecord(timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId, text: text))
-                interfaceManager.recordActivity("mesh_0")
-            }
-        case .detectionSensor(let ds):
-            let nodeId = MeshtasticProtocol.formatNodeId(ds.from)
-            try? await db.messages.insert(
-                MessageRecord(
-                    timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId,
-                    text: "\u{26A0}\u{FE0F} Sensor alert: \(ds.name)"))
-        case .channel(let ch):
-            radio.addChannel(ch)
-        case .deviceMetadata(let md):
-            radio.setDeviceMetadata(md)
-        case .config(let config):
-            radio.setConfig(config)
-        case .neighborInfo, .traceroute, .rangeTest, .paxcounter, .reply, .configCompleteId, .unhandled:
-            break
-        }
-    }
-
-    /// The phone's own node reported its battery: keep a reading a minute and work out how long
-    /// it has left from how fast it has actually been falling (MESHSAT-1315).
-    private func onOwnNodeBattery(_ nodeNum: UInt32, level: Int, voltage: Float) async {
-        let source = "node_battery:" + String(format: "%08x", nodeNum)
-        let nowMs = clock.nowMs()
-        let store = shouldStoreBatteryReading(at: nowMs)
-        if store { try? await db.signals.insert(SignalRecord(timestamp: nowMs, source: source, value: level)) }
-        var readings: [NodeBattery.Reading] = []
-        do {
-            for try await rows in db.signals.getSince(source: source, since: nowMs - NodeBattery.windowMs) {
-                readings = rows.map { NodeBattery.Reading(atMs: $0.timestamp, level: $0.value) }
-                break
-            }
-        } catch {
-            Self.log.warning("Node battery readings could not be read: \(error)")
-        }
-        nodeBattery.send(
-            NodeBatteryNow(
-                nodeNum: nodeNum, level: level, voltage: voltage, hoursLeft: NodeBattery.hoursLeft(readings, nowMs: nowMs), atMs: nowMs))
-    }
-
-    /// One stored reading a minute, whatever the node's telemetry interval.
-    private func shouldStoreBatteryReading(at nowMs: Int64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if nowMs - nodeBatteryStoredMs < Self.nodeBatterySampleMs { return false }
-        nodeBatteryStoredMs = nowMs
-        return true
-    }
-
-    /// Fetch MT traffic. A message already in the modem's MT buffer is read for free; only a
-    /// ring alert, or a gateway that reported messages waiting, is worth a billed SBDIX.
-    private func pollIridiumMt(ringAlert: Bool) async {
-        guard let status = await driver.sbdStatus() else { return }
-        if status.mtFlag, let text = await driver.readMtBuffer() {
-            await storeIridiumMt(text)
-            // Drop it from the modem now that it is in the database, or the next poll would
-            // store it again (MESHSAT-1266).
-            _ = await driver.clearMtBuffer()
-        }
-        if ringAlert || status.raFlag || status.msgWaiting > 0 {
-            _ = await driver.sbdix(answeringRing: ringAlert || status.raFlag)
-        }
-    }
-
-    /// Store an MT message and hand it to the routing rules.
-    private func storeIridiumMt(_ mtText: String) async {
-        var imei = await driver.modemInfo.imei
-        if imei.isEmpty { imei = "iridium" }
-        if deduplicator.isDuplicateKey("iridium:\(imei):\(mtText.hashValue)") { return }
-        try? await db.messages.insert(
-            MessageRecord(timestamp: clock.nowMs(), transport: "iridium", direction: "rx", sender: imei, text: mtText))
-        Self.log.info("Iridium MT stored: \(mtText.count) chars")
-        messageNotifications.send((title: "Iridium: \(imei)", text: mtText))
-        interfaceManager.recordActivity("iridium_0")
-        await evaluateAndForward(sourceInterface: "iridium_0", text: mtText, sender: imei)
-    }
-
-    private func evaluateAndForward(sourceInterface: String, text: String, sender: String) async {
-        guard let disp = dispatcher else { return }
-        let n = await disp.dispatchAccess(
-            sourceInterface: sourceInterface, msg: RouteMessage(text: text, from: sender, portNum: 1), payload: Array(text.utf8))
-        if n > 0 { Self.log.info("Dispatched \(n) deliveries via access rules from \(sourceInterface)") }
-    }
-
     // MARK: The node and its modem
 
     /// Reconnect to the MeshSat node chosen last (MESHSAT-1239): at start here, and after any
@@ -668,6 +514,95 @@ public final class GatewayController: @unchecked Sendable {
             }
             await group.next()
             group.cancelAll()
+        }
+    }
+
+    // MARK: The phone's position (GatewayService.startLocationUpdates, locationListener)
+
+    private func startLocationUpdates() {
+        keep(
+            Task { [self] in
+                for await fix in location.phoneLocation.subscribe() {
+                    guard let fix else { continue }
+                    // Stored under the special node id 0, as Android does.
+                    try? await db.nodePositions.insert(
+                        NodePosition(
+                            timestamp: fix.timeMs, nodeId: 0, nodeName: "Phone", latitude: fix.latitude, longitude: fix.longitude,
+                            altitude: Int(fix.altitude)))
+                }
+            })
+        location.start()
+    }
+
+    // MARK: Passes (GatewayService.initPassScheduler, startTleRefresh)
+
+    private func initPassScheduler() {
+        // Offline first: the last download or the snapshot shipped in the app, never the network.
+        let fetcher = TleFetcher(store: db.tleCache, http: UrlSessionTleHttp())
+        tleFetcher = fetcher
+        keep(
+            Task { [self] in
+                var lastAttemptMs: Int64 = 0
+                while !Task.isCancelled {
+                    let now = clock.nowMs()
+                    if now - lastAttemptMs >= Self.tleRefreshEveryMs, await fetcher.isCacheStale() {
+                        lastAttemptMs = now
+                        _ = await fetcher.refreshFromNetwork()
+                    }
+                    await clock.sleep(ms: 3_600_000)
+                }
+            })
+        let cache = PassCache()
+        let scheduler = PassScheduler(
+            passProvider: { [self] in cache.current(nowMs: clock.nowMs()) },
+            // Gated so the 5-second poll tick does nothing when no modem is there (MESHSAT-499).
+            signalPoller: { [self] in
+                if await driver.state == .connected { _ = await driver.pollSignal() }
+            },
+            // Through the delivery queue, never straight to the modem (MESHSAT-1249): what waits
+            // for the satellite goes now.
+            burstFlusher: { [self] in
+                if await driver.state == .connected { await dispatcher?.drainNow(channelId: "iridium_0", reason: "a pass began") }
+            },
+            clock: clock)
+        // The predictions themselves: recomputed every five minutes while a position is known,
+        // and only what has not ended yet reaches the scheduler; the chart gets three hours back.
+        keep(
+            Task { [self] in
+                while !Task.isCancelled {
+                    if let loc = location.phoneLocation.value {
+                        let set = await fetcher.localTles()
+                        let nowSec = Double(clock.nowMs()) / 1000
+                        let observer = Observer(latDeg: loc.latitude, lonDeg: loc.longitude, altKm: loc.altitude / 1000)
+                        let all = PassPredictor.predictAllPasses(
+                            set.tles, observer: observer, start: UnixSeconds(nowSec - 3 * 3600), end: UnixSeconds(nowSec + 6 * 3600),
+                            now: UnixSeconds(nowSec))
+                        Self.log.info("Pass prediction: \(set.tles.count) TLEs (\(set.source)), \(all.count) passes")
+                        cache.replace(all, atMs: clock.nowMs())
+                        passes.send(all)
+                    }
+                    await clock.sleep(ms: Self.passCacheTtlMs)
+                }
+            })
+        scheduler.start()
+        passScheduler = scheduler
+    }
+
+    /// The cached predictions the scheduler reads: those that have not ended, from the last
+    /// computation, so SGP4 does not run every 30 s (MESHSAT-498).
+    private final class PassCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var passes: [PassPrediction] = []
+        func replace(_ p: [PassPrediction], atMs: Int64) {
+            lock.lock()
+            passes = p
+            lock.unlock()
+        }
+        func current(nowMs: Int64) -> [PassPrediction] {
+            lock.lock()
+            defer { lock.unlock() }
+            let nowSec = Double(nowMs) / 1000
+            return passes.filter { $0.los.value >= nowSec }
         }
     }
 
