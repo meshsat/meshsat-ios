@@ -72,7 +72,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | A satellite message in, picked up by the app | **Not built yet** |
 | Reconnecting to the node and taking its modem back after an app restart | **Not built yet** |
 | Pass prediction with no internet | **Not built yet** |
-| The phone connected to the Hub as a bridge | **Not built yet** |
+| The phone connected to the Hub as a bridge | Verified 25 September 2026 on an iPhone 11 Pro Max: provisioned by QR code, birth signature verified by the Hub, a ping answered in 0.1 s |
 | SOS: hold to send, the text composers, cancel, and the all-clear after it | **Not built yet** |
 | SOS by satellite to the Hub | **Not built yet** |
 | Contact cards swapped by QR code | **Not built yet** |
@@ -86,7 +86,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 
 | Kind | Device | Connection | Status |
 |---|---|---|---|
-| Phone | any iPhone that runs iOS 17 | | No test phone yet |
+| Phone | iPhone 11 Pro Max, iOS 27 | | Main test phone |
 | MeshSat node | v0: XIAO ESP32-S3, Wio-SX1262, RockBLOCK 9603 | Bluetooth LE | Not tested with this app |
 | MeshSat node | v1: LILYGO T-Beam Supreme, RockBLOCK 9603 | Bluetooth LE | Not tested with this app |
 | Meshtastic radio | any Meshtastic device | Bluetooth LE | Not tested with this app |
