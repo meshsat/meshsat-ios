@@ -468,6 +468,7 @@ public final class HubReporter: @unchecked Sendable {
         let cmd = HubCommand.fromJson(json)
         Self.log.info("Hub command: \(cmd.cmd) (\(cmd.requestId))")
         if cmd.cmd == "ping" {
+            Self.log.info("Hub ping: answering on \(topics.bridgeCmdResponse(config.bridgeId))")
             await publishCommandResponse(CommandResponse(requestId: cmd.requestId, cmd: "ping", status: "ok"))
             return
         }

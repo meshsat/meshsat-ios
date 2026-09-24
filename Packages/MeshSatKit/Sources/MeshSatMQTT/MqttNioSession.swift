@@ -139,6 +139,7 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
                 case .success(let info):
                     var payload = info.payload
                     let bytes = payload.readBytes(length: payload.readableBytes) ?? []
+                    if !info.topicName.contains("/tak/") { Self.log.info("MQTT received \(info.topicName) (\(bytes.count) bytes)") }
                     inbound.send(MQTTInbound(topic: info.topicName, payload: bytes))
                 case .failure(let error):
                     Self.log.warning("MQTT receive failed: \(error)")
