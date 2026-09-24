@@ -25,6 +25,10 @@ public final class GatewayModel {
     public private(set) var nodes: [MeshtasticProtocol.MeshNodeInfo] = []
     /// How our radio heard the last over-the-air packet from each node (SNR, RSSI, hops), by node number.
     public private(set) var linkSignals: [UInt32: MeshtasticProtocol.MeshLinkSignal] = [:]
+    /// Who each node reported hearing (NeighborInfo), by node number.
+    public private(set) var neighborReports: [UInt32: MeshtasticProtocol.NeighborReport] = [:]
+    /// The Bluetooth signal of the node link, dBm, 0 when unknown.
+    public private(set) var bluetoothRssi = 0
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
     public private(set) var modemSignal = 0
@@ -110,6 +114,14 @@ public final class GatewayModel {
         tasks.append(
             Task { [weak self] in
                 for await map in central.radio.linkSignals.subscribe() { self?.linkSignals = map }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await map in central.radio.neighborReports.subscribe() { self?.neighborReports = map }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await rssi in central.rssi.subscribe() { self?.bluetoothRssi = rssi }
             })
         tasks.append(
             Task { [weak self] in

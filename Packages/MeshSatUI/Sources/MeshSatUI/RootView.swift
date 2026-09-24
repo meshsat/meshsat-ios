@@ -115,42 +115,8 @@ public struct RootView: View {
     private func destination(_ route: Route) -> some View {
         if case .chat(let peer) = route {
             ConversationChatView(peer: peer)
-        } else if route == .sos {
-            SubScreen("SOS", onBack: { router.back() }, content: { SosScreen() })
-        } else if route == .rules {
-            SubScreen("Routing rules", onBack: { router.back() }, content: { RulesScreen() })
-        } else if route == .interfaces {
-            SubScreen("Links", onBack: { router.back() }, content: { InterfacesScreen() })
-        } else if route == .audit {
-            SubScreen("Audit log", onBack: { router.back() }, content: { AuditScreen() })
-        } else if route == .decrypt {
-            SubScreen("Encrypt or decrypt text", onBack: { router.back() }, content: { DecryptScreen() })
-        } else if route == .credentials {
-            SubScreen("Certificates and keys", onBack: { router.back() }, content: { CredentialsScreen() })
-        } else if route == .deliveries {
-            SubScreen("Message queue", onBack: { router.back() }, content: { DeliveryScreen() })
-        } else if route == .setupAdvanced {
-            SubScreen("Advanced", onBack: { router.back() }, content: { AdvancedScreen() })
-        } else if route == .about {
-            SubScreen("About", onBack: { router.back() }, content: { AboutScreen() })
-        } else if route == .passes {
-            SubScreen(Route.passes.subScreenTitle ?? "Satellite passes", onBack: { router.back() }, content: { PassesScreen() })
-        } else if route == .setupSection(.safety) {
-            SubScreen(SetupSection.safety.title, onBack: { router.back() }, content: { SettingsSafetySection() })
-        } else if route == .setupSection(.satellite) {
-            SubScreen(SetupSection.satellite.title, onBack: { router.back() }, content: { SettingsSatelliteSection() })
-        } else if route == .setupSection(.hub) {
-            SubScreen(SetupSection.hub.title, onBack: { router.back() }, content: { SettingsHubSection() })
-        } else if route == .setupSection(.messaging) {
-            SubScreen(SetupSection.messaging.title, onBack: { router.back() }, content: { SettingsMessagingSection() })
-        } else if route == .setupSection(.sms) {
-            SubScreen(SetupSection.sms.title, onBack: { router.back() }, content: { SettingsSmsSection() })
-        } else if route == .setupSection(.diagnostics) {
-            SubScreen(SetupSection.diagnostics.title, onBack: { router.back() }, content: { SettingsDiagnosticsSection() })
-        } else if route == .setupSection(.node) {
-            SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
-        } else if route == .setupSection(.maps) {
-            SubScreen(SetupSection.maps.title, onBack: { router.back() }, content: { SettingsMapsSection() })
+        } else if let screen = Self.subScreen(for: route) {
+            SubScreen(screen.title, onBack: { router.back() }, content: { screen.body })
         } else if let title = route.subScreenTitle {
             SubScreen(
                 title,
