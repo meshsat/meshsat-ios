@@ -69,35 +69,24 @@ public enum Route: Hashable, Sendable {
         }
     }
 
+    private static let fixedRoutes: [String: Route] = {
+        let all: [Route] = [
+            .home, .messages, .map, .people, .setup, .setupAdvanced, .passes, .radioConfig, .rules,
+            .interfaces, .deliveries, .topology, .geofence, .audit, .credentials, .decrypt, .about, .sos,
+        ]
+        return Dictionary(uniqueKeysWithValues: all.map { ($0.string, $0) })
+    }()
+
     public init?(string: String) {
-        switch string {
-        case "home": self = .home
-        case "messages": self = .messages
-        case "map": self = .map
-        case "people": self = .people
-        case "setup": self = .setup
-        case "setup/advanced": self = .setupAdvanced
-        case "passes": self = .passes
-        case "radio-config": self = .radioConfig
-        case "rules": self = .rules
-        case "interfaces": self = .interfaces
-        case "deliveries": self = .deliveries
-        case "topology": self = .topology
-        case "geofence": self = .geofence
-        case "audit": self = .audit
-        case "credentials": self = .credentials
-        case "decrypt": self = .decrypt
-        case "about": self = .about
-        case "sos": self = .sos
-        default:
-            if string.hasPrefix("chat/") {
-                let raw = String(string.dropFirst(5))
-                self = .chat(peer: raw.removingPercentEncoding ?? raw)
-            } else if string.hasPrefix("setup/"), let s = SetupSection(rawValue: String(string.dropFirst(6))) {
-                self = .setupSection(s)
-            } else {
-                return nil
-            }
+        if let fixed = Self.fixedRoutes[string] {
+            self = fixed
+        } else if string.hasPrefix("chat/") {
+            let raw = String(string.dropFirst(5))
+            self = .chat(peer: raw.removingPercentEncoding ?? raw)
+        } else if string.hasPrefix("setup/"), let s = SetupSection(rawValue: String(string.dropFirst(6))) {
+            self = .setupSection(s)
+        } else {
+            return nil
         }
     }
 

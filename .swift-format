@@ -15,7 +15,7 @@
     "NeverForceUnwrap": false,
     "NeverUseForceTry": false,
     "NeverUseImplicitlyUnwrappedOptionals": false,
-    "NoAccessLevelOnExtensionDeclaration": true,
+    "NoAccessLevelOnExtensionDeclaration": false,
     "NoBlockComments": false,
     "OrderedImports": true,
     "UseEarlyExits": false,

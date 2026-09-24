@@ -2,7 +2,7 @@
 // on a 1.25 scale over a 16 pt body. The Android app ships the five TTFs in res/font and the
 // app target here ships the same files (UIAppFonts); their PostScript names are the ones below.
 // A "bold" request uses the SemiBold file, and Plex Mono's semibold and bold use the Medium
-// file, as in Type.kt. Never call .bold() or .fontWeight() on these fonts: iOS would
+// file, as in Type.kt. Never apply a bold or a font-weight modifier on these fonts: iOS would
 // synthesise a bold that Android never shows (a SwiftLint rule enforces this).
 import SwiftUI
 
@@ -77,8 +77,11 @@ struct MSTextModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .font(mono ? MSFont.mono(style.size, style.weight, relativeTo: style.relativeTo)
-                       : MSFont.sans(style.size, style.weight, relativeTo: style.relativeTo))
+            .font(
+                mono
+                    ? MSFont.mono(style.size, style.weight, relativeTo: style.relativeTo)
+                    : MSFont.sans(style.size, style.weight, relativeTo: style.relativeTo)
+            )
             .lineSpacing(style.extraLineSpacing)
             .foregroundStyle(color)
     }

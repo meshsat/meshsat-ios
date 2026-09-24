@@ -15,14 +15,22 @@ public struct SetupScreen: View {
                 Text("Setup").msText(.headlineMedium).padding(MSSpace.screen)
 
                 GroupTitle("Get connected")
-                NavRow(icon: MSIcon.bluetooth, tint: MSColors.mesh, title: "Your MeshSat node",
-                       detail: "Not connected", dot: MSColors.textMuted) { router.navigate(.setupSection(.node)) }
-                NavRow(icon: MSIcon.transportSatellite, tint: MSColors.iridium, title: "Satellite",
-                       detail: "No modem", dot: MSColors.textMuted) { router.navigate(.setupSection(.satellite)) }
-                NavRow(icon: MSIcon.cloud, tint: MSColors.hub, title: "Hub",
-                       detail: "Not set up", dot: MSColors.textMuted) { router.navigate(.setupSection(.hub)) }
-                NavRow(icon: MSIcon.sms, tint: MSColors.sms, title: "SMS",
-                       detail: "Through the Messages app", dot: MSColors.textMuted) { router.navigate(.setupSection(.sms)) }
+                NavRow(
+                    icon: MSIcon.bluetooth, tint: MSColors.mesh, title: "Your MeshSat node",
+                    detail: "Not connected", dot: MSColors.textMuted
+                ) { router.navigate(.setupSection(.node)) }
+                NavRow(
+                    icon: MSIcon.transportSatellite, tint: MSColors.iridium, title: "Satellite",
+                    detail: "No modem", dot: MSColors.textMuted
+                ) { router.navigate(.setupSection(.satellite)) }
+                NavRow(
+                    icon: MSIcon.cloud, tint: MSColors.hub, title: "Hub",
+                    detail: "Not set up", dot: MSColors.textMuted
+                ) { router.navigate(.setupSection(.hub)) }
+                NavRow(
+                    icon: MSIcon.sms, tint: MSColors.sms, title: "SMS",
+                    detail: "Through the Messages app", dot: MSColors.textMuted
+                ) { router.navigate(.setupSection(.sms)) }
 
                 GroupTitle("Using MeshSat")
                 NavRow(icon: MSIcon.healthAndSafety, title: "Safety", detail: "SOS, check-in timer, zones") {

@@ -59,9 +59,11 @@ public struct RootView: View {
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
         if let title = route.subScreenTitle {
-            SubScreen(title, onBack: { router.back() }) {
-                ScreenPlaceholder(title: title, mirrors: "ui/screens (route \(route.string))")
-            }
+            SubScreen(
+                title,
+                onBack: { router.back() },
+                content: { ScreenPlaceholder(title: title, mirrors: "ui/screens (route \(route.string))") }
+            )
         } else {
             ScreenPlaceholder(title: route.string, mirrors: "ui/screens (route \(route.string))")
         }

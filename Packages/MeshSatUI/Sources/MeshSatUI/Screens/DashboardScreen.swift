@@ -21,23 +21,31 @@ public struct DashboardScreen: View {
                 }
                 .padding(4)
                 VStack(spacing: 0) {
-                    TransportLane(icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
-                                  metric: "0/5", detail: "No modem. Connect your node.", state: .off) {
+                    TransportLane(
+                        icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
+                        metric: "0/5", detail: "No modem. Connect your node.", state: .off
+                    ) {
                         router.navigate(.setupSection(.satellite))
                     }
                     MSDivider()
-                    TransportLane(icon: MSIcon.transportMesh, color: MSColors.mesh, name: "Mesh",
-                                  metric: "0 nodes", detail: "Not connected.", state: .off) {
+                    TransportLane(
+                        icon: MSIcon.transportMesh, color: MSColors.mesh, name: "Mesh",
+                        metric: "0 nodes", detail: "Not connected.", state: .off
+                    ) {
                         router.navigate(.setupSection(.node))
                     }
                     MSDivider()
-                    TransportLane(icon: MSIcon.sms, color: MSColors.sms, name: "SMS",
-                                  metric: "0 today", detail: "Through the Messages app.", state: .off) {
+                    TransportLane(
+                        icon: MSIcon.sms, color: MSColors.sms, name: "SMS",
+                        metric: "0 today", detail: "Through the Messages app.", state: .off
+                    ) {
                         router.navigate(.setupSection(.sms))
                     }
                     MSDivider()
-                    TransportLane(icon: MSIcon.cloud, color: MSColors.hub, name: "Hub",
-                                  metric: "", detail: "Not set up.", state: .off) {
+                    TransportLane(
+                        icon: MSIcon.cloud, color: MSColors.hub, name: "Hub",
+                        metric: "", detail: "Not set up.", state: .off
+                    ) {
                         router.navigate(.setupSection(.hub))
                     }
                 }
@@ -55,14 +63,17 @@ struct HomeHeader: View {
         HStack(spacing: 0) {
             BrandLockup().frame(height: 26)
             Spacer(minLength: 0)
-            Button { nightMode.toggle() } label: {
+            Button {
+                nightMode.toggle()
+            } label: {
                 MSIcon.nightsStay.resizable().scaledToFit().frame(width: 24, height: 24)
                     .foregroundStyle(MSColors.textSecondary)
                     .frame(width: MSSpace.touch, height: MSSpace.touch)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Night mode")
-            Button {} label: {
+            Button {
+            } label: {
                 MSIcon.swapVert.resizable().scaledToFit().frame(width: 24, height: 24)
                     .foregroundStyle(MSColors.textSecondary)
                     .frame(width: MSSpace.touch, height: MSSpace.touch)
@@ -113,8 +124,10 @@ public struct TransportLane: View {
     let state: LaneState
     let action: () -> Void
 
-    public init(icon: Image, color: Color, name: String, metric: String, detail: String, state: LaneState,
-                action: @escaping () -> Void) {
+    public init(
+        icon: Image, color: Color, name: String, metric: String, detail: String, state: LaneState,
+        action: @escaping () -> Void
+    ) {
         self.icon = icon
         self.color = color
         self.name = name
