@@ -20,12 +20,14 @@ public struct HubReporterConfig: Sendable, Equatable {
     public var clientCertPem: String
     public var clientKeyPem: String
     public var caCertPem: String
+    /// The bundle's mqtt_topic_prefix: "meshsat", or "meshsat/{tenant}" for a customer tenant.
+    public var topicPrefix: String
 
     public init(
         hubUrl: String, bridgeId: String, callsign: String = "", username: String = "", password: String = "", certPin: String = "",
         certPinBackup: String = "", healthIntervalSec: Int = 30, enabled: Bool = true, clientCertPem: String = "",
         clientKeyPem: String = "",
-        caCertPem: String = ""
+        caCertPem: String = "", topicPrefix: String = HubTopics.platformPrefix
     ) {
         self.hubUrl = hubUrl
         self.bridgeId = bridgeId
@@ -39,6 +41,7 @@ public struct HubReporterConfig: Sendable, Equatable {
         self.clientCertPem = clientCertPem
         self.clientKeyPem = clientKeyPem
         self.caCertPem = caCertPem
+        self.topicPrefix = topicPrefix
     }
 
     /// The MQTT client id: "meshsat-ios-" and the last 12 characters of the bridge id.
@@ -70,6 +73,8 @@ public final class HubReporter: @unchecked Sendable {
     public enum State: Sendable, Equatable { case disconnected, connecting, connected, error }
 
     public let config: HubReporterConfig
+    /// The topics under this bridge's tenant namespace.
+    var topics: HubTopics { HubTopics(prefix: config.topicPrefix) }
     public var bridgeId: String { config.bridgeId }
     public let state = StateBroadcast<State>(.disconnected)
     /// Why the last connection attempt failed, in the library's words, or empty (MESHSAT-749).
@@ -177,7 +182,7 @@ public final class HubReporter: @unchecked Sendable {
         let s = makeSession(config)
         Self.log.info("Connecting to \(config.hubUrl) as \(config.clientId) (cert=\(!config.clientCertPem.isEmpty))")
         let will = MQTTWill(
-            topic: HubTopics.bridgeDeath(config.bridgeId),
+            topic: topics.bridgeDeath(config.bridgeId),
             payload: Array(BridgeDeath(bridgeId: config.bridgeId, reason: "lwt").toJson().text().utf8),
             qos: Self.qosAtLeastOnce, retain: false)
         do {
@@ -246,7 +251,7 @@ public final class HubReporter: @unchecked Sendable {
         if let s, await s.isConnected {
             for deviceId in gone.devices { await publishDeviceDeath(deviceId, reason: "bridge_shutdown", on: s) }
             try? await s.publish(
-                topic: HubTopics.bridgeDeath(config.bridgeId), payload: Array(BridgeDeath(bridgeId: config.bridgeId).toJson().text().utf8),
+                topic: topics.bridgeDeath(config.bridgeId), payload: Array(BridgeDeath(bridgeId: config.bridgeId).toJson().text().utf8),
                 qos: Self.qosAtLeastOnce, retain: false)
         }
         await s?.disconnect()
@@ -277,7 +282,7 @@ public final class HubReporter: @unchecked Sendable {
         decoded.put("timestamp", HubProtocol.isoTimestamp())
         do {
             try await s.publish(
-                topic: HubTopics.deviceMODecoded(HubTopics.segment(deviceId)), payload: Array(decoded.text().utf8),
+                topic: topics.deviceMODecoded(deviceId), payload: Array(decoded.text().utf8),
                 qos: Self.qosAtLeastOnce, retain: false)
             return true
         } catch {
@@ -293,7 +298,7 @@ public final class HubReporter: @unchecked Sendable {
         deviceId: String, id: String, text: String, sos: Bool, type: String, lat: Double?, lon: Double?, asMessage: Bool = true
     ) async -> Bool {
         guard let s = currentSession(), await s.isConnected else { return false }
-        let device = HubTopics.segment(deviceId)
+        let device = deviceId
         let now = HubProtocol.isoTimestamp()
         var decoded = JSONBody()
         decoded.put("id", id)
@@ -321,10 +326,10 @@ public final class HubReporter: @unchecked Sendable {
         do {
             if asMessage {
                 try await s.publish(
-                    topic: HubTopics.deviceMODecoded(device), payload: Array(decoded.text().utf8), qos: Self.qosAtLeastOnce, retain: false)
+                    topic: topics.deviceMODecoded(device), payload: Array(decoded.text().utf8), qos: Self.qosAtLeastOnce, retain: false)
             }
             try await s.publish(
-                topic: HubTopics.deviceSOS(device), payload: Array(event.text().utf8), qos: Self.qosAtLeastOnce, retain: false)
+                topic: topics.deviceSOS(device), payload: Array(event.text().utf8), qos: Self.qosAtLeastOnce, retain: false)
             return true
         } catch {
             Self.log.warning("SOS publish to the Hub failed: \(error)")
@@ -334,7 +339,7 @@ public final class HubReporter: @unchecked Sendable {
 
     public func publishDeviceBirth(_ birth: DeviceBirth) async {
         trackDevice(birth.deviceId, active: true)
-        await publish(HubTopics.deviceBirth(config.bridgeId, birth.deviceId), qos: Self.qosAtLeastOnce, retain: false, birth.toJson())
+        await publish(topics.deviceBirth(config.bridgeId, birth.deviceId), qos: Self.qosAtLeastOnce, retain: false, birth.toJson())
     }
 
     public func publishDeviceDeath(_ deviceId: String, reason: String = "offline") async {
@@ -346,27 +351,27 @@ public final class HubReporter: @unchecked Sendable {
     private func publishDeviceDeath(_ deviceId: String, reason: String, on s: any MQTTSession) async {
         let death = DeviceDeath(deviceId: deviceId, bridgeId: config.bridgeId, reason: reason)
         try? await s.publish(
-            topic: HubTopics.deviceDeath(config.bridgeId, deviceId), payload: Array(death.toJson().text().utf8), qos: Self.qosAtLeastOnce,
+            topic: topics.deviceDeath(config.bridgeId, deviceId), payload: Array(death.toJson().text().utf8), qos: Self.qosAtLeastOnce,
             retain: false)
     }
 
     public func publishDevicePosition(_ deviceId: String, _ position: DevicePosition) async {
-        await publish(HubTopics.devicePosition(deviceId), qos: Self.qosAtLeastOnce, retain: true, position.toJson())
+        await publish(topics.devicePosition(deviceId), qos: Self.qosAtLeastOnce, retain: true, position.toJson())
     }
 
     public func publishDeviceTelemetry(_ deviceId: String, _ telemetry: DeviceTelemetry) async {
-        await publish(HubTopics.deviceTelemetry(deviceId), qos: Self.qosAtLeastOnce, retain: true, telemetry.toJson())
+        await publish(topics.deviceTelemetry(deviceId), qos: Self.qosAtLeastOnce, retain: true, telemetry.toJson())
     }
 
     public func publishCommandResponse(_ response: CommandResponse) async {
-        await publish(HubTopics.bridgeCmdResponse(config.bridgeId), qos: Self.qosAtLeastOnce, retain: false, response.toJson())
+        await publish(topics.bridgeCmdResponse(config.bridgeId), qos: Self.qosAtLeastOnce, retain: false, response.toJson())
     }
 
     /// A QoS 1 publish on the health topic, timed; throws when not connected.
     public func ping() async throws -> Int64 {
         guard let s = currentSession() else { throw HubError.notConnected }
         let start = clock.nowMs()
-        try await s.publish(topic: HubTopics.bridgeHealth(config.bridgeId), payload: Array("{\"ping\":true}".utf8), qos: 1, retain: false)
+        try await s.publish(topic: topics.bridgeHealth(config.bridgeId), payload: Array("{\"ping\":true}".utf8), qos: 1, retain: false)
         return clock.nowMs() - start
     }
 
@@ -377,7 +382,9 @@ public final class HubReporter: @unchecked Sendable {
     private func subscribeAndAnnounce(_ s: any MQTTSession) async {
         do {
             try await s.subscribe(
-                [HubTopics.bridgeCmd(config.bridgeId), HubTopics.takBroadcast, HubTopics.bridgeMOAck(config.bridgeId)],
+                [topics.bridgeCmd(config.bridgeId)] + (topics.mayReceiveTakBroadcast ? [HubTopics.takBroadcast] : []) + [
+                    topics.bridgeMOAck(config.bridgeId)
+                ],
                 qos: Self.qosAtLeastOnce)
         } catch {
             Self.log.warning("Hub subscribe failed: \(error)")
@@ -398,7 +405,7 @@ public final class HubReporter: @unchecked Sendable {
             Self.log.info("Birth \(signed ? "signed" : "unsigned"): \(config.bridgeId)")
         }
         try? await s.publish(
-            topic: HubTopics.bridgeBirth(config.bridgeId), payload: Array(json.text().utf8), qos: Self.qosAtLeastOnce, retain: true)
+            topic: topics.bridgeBirth(config.bridgeId), payload: Array(json.text().utf8), qos: Self.qosAtLeastOnce, retain: true)
         Self.log.info("Published bridge birth: \(config.bridgeId)")
     }
 
@@ -435,7 +442,7 @@ public final class HubReporter: @unchecked Sendable {
             diskPct: host.diskPct(),
             interfaces: host.interfaceHealth())
         try? await s.publish(
-            topic: HubTopics.bridgeHealth(config.bridgeId), payload: Array(health.toJson().text().utf8), qos: Self.qosFireAndForget,
+            topic: topics.bridgeHealth(config.bridgeId), payload: Array(health.toJson().text().utf8), qos: Self.qosFireAndForget,
             retain: false)
     }
 

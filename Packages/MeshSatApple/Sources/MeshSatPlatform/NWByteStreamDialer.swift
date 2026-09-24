@@ -1,9 +1,10 @@
 // MeshSatNet.ByteStreamDialer on Network.framework: the TCP (and TLS) client connections of the
 // Reticulum TCP interface (Android: java.net.Socket and an SSLSocketFactory). The Hub-issued
-// client certificate for mTLS is not yet applied: Network.framework needs a SecIdentity built
-// from the PEM pair, the same gap as MqttNioSession on iOS (MESHSAT-1324); a CA PEM in the
-// options is likewise not yet pinned, the system roots are trusted.
+// client certificate is presented as the TLS local identity, from the Keychain as the MQTT
+// session does (MESHSAT-1324); the server is checked against the system roots, and the bundle's
+// CA, which signs bridge certificates, is never made a server trust root.
 import Foundation
+import MeshSatMQTT
 import MeshSatNet
 import Network
 
@@ -16,7 +17,23 @@ public struct NWByteStreamDialer: ByteStreamDialer {
         tcp.noDelay = true
         tcp.enableKeepalive = true
         tcp.connectionTimeout = Int(timeoutSeconds)
-        let params = tls != nil ? NWParameters(tls: NWProtocolTLS.Options(), tcp: tcp) : NWParameters(tls: nil, tcp: tcp)
+        let params: NWParameters
+        if let tls {
+            let options = NWProtocolTLS.Options()
+            sec_protocol_options_set_min_tls_protocol_version(options.securityProtocolOptions, .TLSv12)
+            if tls.hasClientIdentity {
+                let identity: SecIdentity
+                do {
+                    identity = try KeychainClientIdentity.make(certPem: tls.clientCertPem, keyPem: tls.clientKeyPem)
+                } catch {
+                    throw ByteStreamError.refused("client certificate: \(error)")
+                }
+                if let sec = sec_identity_create(identity) { sec_protocol_options_set_local_identity(options.securityProtocolOptions, sec) }
+            }
+            params = NWParameters(tls: options, tcp: tcp)
+        } else {
+            params = NWParameters(tls: nil, tcp: tcp)
+        }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: p, using: params)
         let stream = NWByteStream(connection: connection)
         try await stream.open()

@@ -11,6 +11,8 @@ import NIOCore
 
 #if canImport(NIOSSL)
 import NIOSSL
+#elseif canImport(Security)
+import Security
 #endif
 
 public final class MqttNioSession: MQTTSession, @unchecked Sendable {
@@ -83,10 +85,18 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
             }
             tls = .niossl(conf)
             #else
-            // The phone: Network.framework TLS with the system roots. A client identity needs
-            // the PEM pair imported as a SecIdentity, which the store does not do yet.
-            if endpoint.hasClientCertificate { Self.log.warning("mTLS client certificate not applied on this platform yet") }
-            tls = .ts(TSTLSConfiguration())
+            // The phone: Network.framework TLS with the system roots, and the client certificate
+            // as a SecIdentity from the Keychain (the Hub's broker drops a bridge without one).
+            var identity: SecIdentity?
+            if endpoint.hasClientCertificate {
+                do {
+                    identity = try KeychainClientIdentity.make(certPem: endpoint.clientCertPem, keyPem: endpoint.clientKeyPem)
+                    Self.log.info("mTLS configured from the Keychain")
+                } catch {
+                    throw SessionError.tls("client certificate: \(error)")
+                }
+            }
+            tls = .ts(TSTLSConfiguration(minimumTLSVersion: .tlsV12, clientIdentity: identity))
             #endif
             if !endpoint.certPins.isEmpty {
                 // mqtt-nio offers no hook in the handshake for an SPKI check; pins are recorded,

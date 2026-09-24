@@ -40,25 +40,46 @@ public enum HubProtocol {
     }
 }
 
-public enum HubTopics {
-    public static func bridgeBirth(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/birth" }
-    public static func bridgeDeath(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/death" }
-    public static func bridgeHealth(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/health" }
-    public static func bridgeCmd(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/cmd" }
-    public static func bridgeCmdResponse(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/cmd/response" }
+/// The Hub's topics under the tenant's namespace (MESHSAT-1324): the provisioning bundle's
+/// `mqtt_topic_prefix`, "meshsat" for the platform tenant and "meshsat/{tenant}" for a
+/// customer, used exactly as given (hubmqtt Namespace()). The broker confines a bridge to
+/// `{prefix}/bridge/{bid}/#` and `{prefix}/+/...` device topics, so a wrong prefix is refused
+/// on every publish. Every id in a segment is percent-encoded: NATS drops the connection on a
+/// raw "+" in a publish (an SMS sender's number).
+public struct HubTopics: Sendable, Equatable {
+    public static let platformPrefix = "meshsat"
+    public let prefix: String
+
+    public init(prefix: String = HubTopics.platformPrefix) {
+        let p = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        self.prefix = p.isEmpty ? Self.platformPrefix : p
+    }
+
+    private func bridge(_ bridgeId: String) -> String { "\(prefix)/bridge/\(Self.segment(bridgeId))" }
+    private func device(_ deviceId: String) -> String { "\(prefix)/\(Self.segment(deviceId))" }
+
+    public func bridgeBirth(_ bridgeId: String) -> String { bridge(bridgeId) + "/birth" }
+    public func bridgeDeath(_ bridgeId: String) -> String { bridge(bridgeId) + "/death" }
+    public func bridgeHealth(_ bridgeId: String) -> String { bridge(bridgeId) + "/health" }
+    public func bridgeCmd(_ bridgeId: String) -> String { bridge(bridgeId) + "/cmd" }
+    public func bridgeCmdResponse(_ bridgeId: String) -> String { bridge(bridgeId) + "/cmd/response" }
     /// The Hub's receipt for an MO from one of this bridge's modems (MESHSAT-1246).
-    public static func bridgeMOAck(_ bridgeId: String) -> String { "meshsat/bridge/\(bridgeId)/mo/ack" }
-    public static func deviceBirth(_ bridgeId: String, _ deviceId: String) -> String {
-        "meshsat/bridge/\(bridgeId)/device/\(deviceId)/birth"
+    public func bridgeMOAck(_ bridgeId: String) -> String { bridge(bridgeId) + "/mo/ack" }
+    public func deviceBirth(_ bridgeId: String, _ deviceId: String) -> String {
+        bridge(bridgeId) + "/device/\(Self.segment(deviceId))/birth"
     }
-    public static func deviceDeath(_ bridgeId: String, _ deviceId: String) -> String {
-        "meshsat/bridge/\(bridgeId)/device/\(deviceId)/death"
+    public func deviceDeath(_ bridgeId: String, _ deviceId: String) -> String {
+        bridge(bridgeId) + "/device/\(Self.segment(deviceId))/death"
     }
-    public static func devicePosition(_ deviceId: String) -> String { "meshsat/\(deviceId)/position" }
-    public static func deviceTelemetry(_ deviceId: String) -> String { "meshsat/\(deviceId)/telemetry" }
-    public static func deviceSOS(_ deviceId: String) -> String { "meshsat/\(deviceId)/sos" }
-    public static func deviceMODecoded(_ deviceId: String) -> String { "meshsat/\(deviceId)/mo/decoded" }
+    public func devicePosition(_ deviceId: String) -> String { device(deviceId) + "/position" }
+    public func deviceTelemetry(_ deviceId: String) -> String { device(deviceId) + "/telemetry" }
+    public func deviceSOS(_ deviceId: String) -> String { device(deviceId) + "/sos" }
+    public func deviceMODecoded(_ deviceId: String) -> String { device(deviceId) + "/mo/decoded" }
+
+    /// The operator's TAK picture: never under the prefix, and granted only to bridges of the
+    /// platform tenant (a customer gets TAK from its own hosted TAK server).
     public static let takBroadcast = "meshsat/broadcast/tak/cot/in"
+    public var mayReceiveTakBroadcast: Bool { prefix == Self.platformPrefix }
 
     /// A topic segment as the Hub writes it: + # / % percent-encoded (hubmqtt.EncodeSegment).
     public static func segment(_ id: String) -> String {
@@ -142,9 +163,44 @@ public struct JSONBody: Sendable, Equatable {
 
     /// A double as Go's json.Marshal and Android's canonical writer spell it: an integral value
     /// without a fraction, otherwise the shortest round-trip form.
-    static func number(_ d: Double) -> String {
+    ///
+    /// Go writes the shortest digits in plain decimal for 1e-6 <= |d| < 1e21 and in exponent form
+    /// outside it, with no leading zero in the exponent ("1e-7", "1e+21"); Swift's own text for
+    /// the same doubles is "1e-07" and "1e-06". The Hub re-marshals a birth with Go to check its
+    /// signature, so the digits come from Swift (shortest round-trip, as Go) and the layout is Go's.
+    public static func number(_ d: Double) -> String {
         if d.isFinite, d == d.rounded(), abs(d) < 1e15 { return String(Int64(d)) }
-        return "\(d)"
+        guard d.isFinite else { return "null" }
+        let a = abs(d)
+        var text = "\(a)"
+        var exp = 0
+        if let e = text.firstIndex(where: { $0 == "e" || $0 == "E" }) {
+            exp = Int(text[text.index(after: e)...]) ?? 0
+            text = String(text[..<e])
+        }
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        var digits = String(parts[0]) + (parts.count > 1 ? String(parts[1]) : "")
+        var point = parts[0].count + exp
+        while digits.count > 1, digits.first == "0" {
+            digits.removeFirst()
+            point -= 1
+        }
+        while digits.count > 1, digits.last == "0" { digits.removeLast() }
+        let out: String
+        if a < 1e-6 || a >= 1e21 {
+            let e = point - 1
+            let head: String = String(digits.prefix(1))
+            let tail: String = digits.count > 1 ? "." + String(digits.dropFirst()) : ""
+            let sign: String = e < 0 ? "-" : "+"
+            out = head + tail + "e" + sign + String(abs(e))
+        } else if point <= 0 {
+            out = "0." + String(repeating: "0", count: -point) + digits
+        } else if point >= digits.count {
+            out = digits + String(repeating: "0", count: point - digits.count)
+        } else {
+            out = String(digits.prefix(point)) + "." + String(digits.dropFirst(point))
+        }
+        return (d < 0 ? "-" : "") + out
     }
 
     static func escape(_ s: String) -> String {
@@ -158,6 +214,13 @@ public struct JSONBody: Sendable, Equatable {
             case "\t": out += "\\t"
             case "\u{08}": out += "\\b"
             case "\u{0C}": out += "\\f"
+            // Go's encoding/json escapes these for HTML safety, and the Hub re-marshals the birth
+            // with it to check the signature, so the canonical text must too.
+            case "<": out += "\\u003c"
+            case ">": out += "\\u003e"
+            case "&": out += "\\u0026"
+            case "\u{2028}": out += "\\u2028"
+            case "\u{2029}": out += "\\u2029"
             default:
                 if c.value < 0x20 { out += String(format: "\\u%04x", c.value) } else { out.unicodeScalars.append(c) }
             }

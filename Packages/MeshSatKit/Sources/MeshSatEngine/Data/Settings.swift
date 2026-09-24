@@ -97,6 +97,8 @@ public enum SettingsKey {
     public static let hubBridgeId = Setting("hub_bridge_id", default: "")
     public static let hubCallsign = Setting("hub_callsign", default: "")
     public static let hubUsername = Setting("hub_username", default: "")
+    /// The provisioning bundle's mqtt_topic_prefix (MESHSAT-1324): "meshsat" or "meshsat/{tenant}".
+    public static let hubTopicPrefix = Setting("hub_topic_prefix", default: "meshsat")
     /// Seconds, as a string.
     public static let hubHealthInterval = Setting("hub_health_interval", default: "30")
     // Hub relay client (MESHSAT-1157): on by default whenever the Hub is configured.

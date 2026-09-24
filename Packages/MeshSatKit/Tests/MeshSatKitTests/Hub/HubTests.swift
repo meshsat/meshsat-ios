@@ -19,12 +19,14 @@ final class HubProtocolTests: XCTestCase {
     }
 
     func testTopics() {
-        XCTAssertEqual(HubTopics.bridgeBirth("pi-01"), "meshsat/bridge/pi-01/birth")
-        XCTAssertEqual(HubTopics.bridgeCmdResponse("pi-01"), "meshsat/bridge/pi-01/cmd/response")
-        XCTAssertEqual(HubTopics.bridgeMOAck("pi-01"), "meshsat/bridge/pi-01/mo/ack")
-        XCTAssertEqual(HubTopics.deviceBirth("pi-01", "mesh-abc"), "meshsat/bridge/pi-01/device/mesh-abc/birth")
-        XCTAssertEqual(HubTopics.deviceSOS("dev-01"), "meshsat/dev-01/sos")
-        XCTAssertEqual(HubTopics.deviceMODecoded(HubTopics.segment("+31600000000")), "meshsat/%2B31600000000/mo/decoded")
+        let t = HubTopics()
+        XCTAssertEqual(t.bridgeBirth("pi-01"), "meshsat/bridge/pi-01/birth")
+        XCTAssertEqual(t.bridgeCmdResponse("pi-01"), "meshsat/bridge/pi-01/cmd/response")
+        XCTAssertEqual(t.bridgeMOAck("pi-01"), "meshsat/bridge/pi-01/mo/ack")
+        XCTAssertEqual(t.deviceBirth("pi-01", "mesh-abc"), "meshsat/bridge/pi-01/device/mesh-abc/birth")
+        XCTAssertEqual(t.deviceSOS("dev-01"), "meshsat/dev-01/sos")
+        XCTAssertEqual(t.deviceMODecoded("+31600000000"), "meshsat/%2B31600000000/mo/decoded")
+        XCTAssertTrue(t.mayReceiveTakBroadcast)
         XCTAssertEqual(HubTopics.segment("a/b#c+%"), "a%2Fb%23c%2B%25")
     }
 
@@ -307,5 +309,36 @@ final class HubReporterTests: XCTestCase {
         XCTAssertEqual(session.published.last?.topic, "meshsat/300434067943980/sos")
         XCTAssertFalse(session.published.last?.payload.contains("\"lat\"") ?? true)
         await reporter.stop()
+    }
+
+    /// The Hub checks a birth's signature over Go's re-marshalling of it (birthverify.go). The
+    /// expected text is Go 1.24's json.Marshal of this map, produced on the runner: sorted keys,
+    /// < > & and U+2028 escaped, 100.0 as 100, 1e-7 and 0.000001 in Go's spelling.
+    func testCanonicalJsonIsByteForByteWhatGoMarshals() throws {
+        // Fixtures/birth-input.json and birth-canonical-go.json (the latter written by Go 1.24).
+        let fixtures = { (name: String) in Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures")! }
+        let input = try String(contentsOf: fixtures("birth-input"), encoding: .utf8)
+        let go = try String(contentsOf: fixtures("birth-canonical-go"), encoding: .utf8)
+        var body = JSONBody.parse(Data(input.utf8))!
+        body.remove("signature")
+        XCTAssertEqual(body.text(sortedKeys: true), go)
+    }
+
+    func testNumbersInGosSpelling() {
+        XCTAssertEqual(JSONBody.number(1e-7), "1e-7")
+        XCTAssertEqual(JSONBody.number(0.000001), "0.000001")
+        XCTAssertEqual(JSONBody.number(1.5e21), "1.5e+21")
+        XCTAssertEqual(JSONBody.number(123456789012345678.0), "123456789012345680")
+        XCTAssertEqual(JSONBody.number(-0.25), "-0.25")
+        XCTAssertEqual(JSONBody.number(52.370216), "52.370216")
+    }
+
+    func testACustomerTenantsTopicsHangOffItsPrefix() {
+        let t = HubTopics(prefix: "meshsat/acme")
+        XCTAssertEqual(t.bridgeCmd("b-1"), "meshsat/acme/bridge/b-1/cmd")
+        XCTAssertEqual(t.devicePosition("+31612345678"), "meshsat/acme/%2B31612345678/position")
+        XCTAssertFalse(t.mayReceiveTakBroadcast)
+        XCTAssertEqual(HubTopics(prefix: "").prefix, "meshsat")
+        XCTAssertEqual(HubTopics(prefix: "meshsat/acme/").prefix, "meshsat/acme")
     }
 }

@@ -37,6 +37,8 @@ public enum ProvisionImporter {
         public var caCertPem = ""
         public var certExpiry = ""
         public var reticulumTcp = ""
+        /// "meshsat", or "meshsat/{tenant}" for a customer tenant; every topic hangs off it.
+        public var topicPrefix = HubTopics.platformPrefix
         public init() {}
     }
 
@@ -181,6 +183,7 @@ public enum ProvisionImporter {
         b.caCertPem = str("ca")
         b.certExpiry = str("cert_exp")
         b.reticulumTcp = str("ret_tcp")
+        b.topicPrefix = str("mqtt_topic_prefix", HubTopics.platformPrefix)
         return b
     }
 
