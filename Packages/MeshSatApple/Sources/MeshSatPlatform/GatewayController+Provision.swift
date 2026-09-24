@@ -22,6 +22,7 @@ extension GatewayController {
         settings.set(SettingsKey.hubUrl, bundle.mqttUrl)
         settings.set(SettingsKey.hubBridgeId, bundle.bridgeId)
         settings.set(SettingsKey.hubUsername, bundle.username)
+        settings.set(SettingsKey.hubTopicPrefix, bundle.topicPrefix)
         settings.setHubPassword(bundle.password)
         settings.set(SettingsKey.hubEnabled, true)
         if !bundle.clientCertPem.isEmpty { settings.set(SettingsKey.hubClientCertPem, bundle.clientCertPem) }

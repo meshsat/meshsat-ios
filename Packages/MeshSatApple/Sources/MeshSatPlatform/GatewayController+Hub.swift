@@ -39,7 +39,8 @@ extension GatewayController {
             password: settings.hubPassword, certPin: settings.mqttCertPin, certPinBackup: settings.mqttCertPinBackup,
             healthIntervalSec: Int(settings.get(SettingsKey.hubHealthInterval)) ?? 30,
             clientCertPem: settings.get(SettingsKey.hubClientCertPem),
-            clientKeyPem: settings.hubClientKeyPem, caCertPem: settings.get(SettingsKey.hubCaCertPem))
+            clientKeyPem: settings.hubClientKeyPem, caCertPem: settings.get(SettingsKey.hubCaCertPem),
+            topicPrefix: settings.get(SettingsKey.hubTopicPrefix))
         let reporter = HubReporter(config: config, host: HubHost(gateway: self), makeSession: Self.makeHubSession, clock: clock)
         reporter.setCommandCallback { [self] cmd in Task { await handleHubCommand(cmd) } }
         // TAK CoT broadcast: positions into the store for the map, from the XML's attributes
