@@ -1,0 +1,1 @@
+meshsat,mesh,meshtastic,satellite,iridium,lora,off-grid,emergency,sos,reticulum

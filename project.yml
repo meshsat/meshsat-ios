@@ -1,0 +1,131 @@
+# XcodeGen project definition. `xcodegen generate` writes MeshSat.xcodeproj, which is
+# not committed. Edit this file, never the generated project.
+name: MeshSat
+options:
+  bundleIdPrefix: net.meshsat
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.3"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  groupSortPosition: top
+
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+
+packages:
+  MeshSatKit:
+    path: Packages/MeshSatKit
+  MeshSatApple:
+    path: Packages/MeshSatApple
+  MeshSatUI:
+    path: Packages/MeshSatUI
+
+targets:
+  MeshSat:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/MeshSat
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - package: MeshSatUI
+        product: MeshSatUI
+      - package: MeshSatApple
+        product: MeshSatApple
+      - package: MeshSatKit
+        product: MeshSatEngine
+    info:
+      path: App/MeshSat/Info.plist
+      properties:
+        CFBundleDisplayName: MeshSat
+        CFBundleName: MeshSat
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UIAppFonts:
+          - plex_sans_regular.ttf
+          - plex_sans_medium.ttf
+          - plex_sans_semibold.ttf
+          - plex_mono_regular.ttf
+          - plex_mono_medium.ttf
+        NSBluetoothAlwaysUsageDescription: MeshSat talks to your MeshSat node or Meshtastic radio over Bluetooth, also while the app is in the background, so messages keep flowing.
+        NSLocationWhenInUseUsageDescription: Your position goes on the map, into satellite pass prediction, into zones and into an SOS.
+        NSLocationAlwaysAndWhenInUseUsageDescription: With the gateway running in the background, MeshSat keeps reporting your position to the Hub, watches zones and the check-in timer, and can send an SOS with a fix.
+        NSCameraUsageDescription: The camera reads the Hub's provisioning QR code and contact cards from other phones.
+        NSLocalNetworkUsageDescription: Reticulum peers and a KISS TNC on your local network.
+        UIBackgroundModes:
+          - bluetooth-central
+          - bluetooth-peripheral
+          - location
+          - processing
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - net.meshsat.ios.hubsync
+          - net.meshsat.ios.refresh
+        CFBundleURLTypes:
+          - CFBundleURLName: net.meshsat.ios.provision
+            CFBundleURLSchemes:
+              - meshsat
+        ITSAppUsesNonExemptEncryption: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.meshsat.ios
+        PRODUCT_NAME: MeshSat
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "6.0"
+        ENABLE_PREVIEWS: YES
+    scheme:
+      testTargets:
+        - MeshSatTests
+      gatherCoverageData: true
+
+  MeshSatTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: App/MeshSatTests
+    dependencies:
+      - target: MeshSat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.meshsat.ios.tests
+
+  MeshSatUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: App/MeshSatUITests
+    dependencies:
+      - target: MeshSat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.meshsat.ios.uitests
+
+schemes:
+  MeshSat:
+    build:
+      targets:
+        MeshSat: all
+        MeshSatTests: [test]
+        MeshSatUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - MeshSatTests
+    archive:
+      config: Release

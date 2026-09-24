@@ -1,0 +1,15 @@
+#include "Version.xcconfig"
+
+SWIFT_VERSION = 6.0
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+TARGETED_DEVICE_FAMILY = 1
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_TREAT_WARNINGS_AS_ERRORS = NO
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+DEAD_CODE_STRIPPING = YES
+
+// Signing is off until the certificates exist (MESHSAT-1331). CI builds with
+// CODE_SIGNING_ALLOWED=NO; a developer sets DEVELOPMENT_TEAM in Xcode's
+// Signing tab or in a local Config/Local.xcconfig that is not committed.
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Automatic

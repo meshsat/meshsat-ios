@@ -1,0 +1,70 @@
+MeshSat iOS
+Copyright 2026 - Elli & Kyriakos
+
+This product is licensed under the GNU General Public License v3.0.
+See the LICENSE file for the full text.
+
+================================================================================
+WHY GPLv3
+================================================================================
+
+The application incorporates the Meshtastic protobuf definitions vendored under
+Vendor/protos/meshtastic/, which are licensed GPL-3.0. Because those definitions
+are compiled into the shipped binary, the application as a whole is distributed
+under GPL-3.0. This is the same reason MeshSat Android is GPL-3.0.
+
+================================================================================
+VENDORED SOURCES
+================================================================================
+
+Meshtastic protobuf definitions
+  Location: Vendor/protos/meshtastic/
+  Upstream: https://github.com/meshtastic/protobufs
+  Licence:  GPL-3.0
+
+TAK protobuf definitions
+  Location: Vendor/protos/takproto/
+  Licence:  NEEDS VERIFICATION, carried over unchanged from MeshSat Android.
+            Confirm the upstream source and its licence terms before the first
+            release, and record the result here.
+
+IBM Plex Sans and IBM Plex Mono
+  Location: App/MeshSat/Resources/Fonts/
+  Upstream: https://github.com/IBM/plex
+  Licence:  SIL Open Font License 1.1, Copyright 2017 IBM Corp.,
+            Reserved Font Name "Plex"
+
+Material Icons (imported by scripts/import-material-icons.sh)
+  Upstream: https://github.com/google/material-design-icons
+  Licence:  Apache-2.0
+
+================================================================================
+THIRD-PARTY DEPENDENCIES (Swift packages)
+================================================================================
+
+Apache License 2.0
+  apple/swift-protobuf
+  apple/swift-crypto
+  apple/swift-certificates
+  apple/swift-log
+  apple/swift-nio and swift-nio-ssl (through mqtt-nio)
+  swift-server-community/mqtt-nio
+
+MIT License
+  groue/GRDB.swift
+  jpsim/Yams
+  microsoft/onnxruntime (onnxruntime-objc)
+
+================================================================================
+BUNDLED DATA
+================================================================================
+
+Bundled ML assets (codebook_v1.bin, corpus_index.bin, encoder.onnx, vocab.txt),
+once added, are produced by sidecar/msvqsc/train.py in the MeshSat Bridge
+repository (github.com/meshsat/meshsat, GPL-3.0). encoder.onnx and vocab.txt
+derive from sentence-transformers/all-MiniLM-L6-v2 (Apache-2.0); codebook_v1.bin
+and corpus_index.bin are trained by that script. Details in
+THIRD_PARTY_NOTICES.md.
+
+Orbit data (Packages/MeshSatKit/Sources/MeshSatSatellite/Resources/tle/) is a
+snapshot of the public Iridium NEXT element sets from CelesTrak.

@@ -1,0 +1,49 @@
+name: Hardware Issue
+description: A radio, node or modem that does not work with MeshSat iOS
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: "## Hardware Issue"
+  - type: input
+    id: version
+    attributes:
+      label: App Version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: iPhone model and iOS version
+      placeholder: "iPhone 13, iOS 17.6"
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      options:
+        - MeshSat node v0 (XIAO ESP32-S3 + RockBLOCK 9603)
+        - MeshSat node v1 (T-Beam Supreme + RockBLOCK 9603)
+        - Other Meshtastic radio (say which below)
+        - KISS TNC over TCP
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Radio or node firmware version
+      placeholder: "meshsat-firmware 2.8.0.xxxxxxx, or Meshtastic 2.x"
+  - type: textarea
+    id: description
+    attributes:
+      label: What happens?
+      placeholder: What you did, what the app showed, what the hardware did
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell
