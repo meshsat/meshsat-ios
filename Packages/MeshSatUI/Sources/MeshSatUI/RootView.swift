@@ -9,10 +9,12 @@ import SwiftUI
 public struct RootView: View {
     @State private var router = Router()
     @State private var model: GatewayModel
+    @State private var messages: MessagesModel
     @State private var nightMode = false
 
     public init(gateway: GatewayController) {
         _model = State(initialValue: GatewayModel(gateway: gateway))
+        _messages = State(initialValue: MessagesModel(gateway: gateway))
     }
 
     /// What the strip shows, from the gateway: the mesh and satellite states and counts.
@@ -62,11 +64,13 @@ public struct RootView: View {
                 ProvisionLinkDialog(url: link) { model.provisionLinkHandled() }
             }
             ProvisionClaimHost()
+            SmsComposerHost()
             if let toast = model.toast { MSToast(toast) }
         }
         .background(MSColors.bg.ignoresSafeArea())
         .environment(router)
         .environment(model)
+        .environment(messages)
         .nightMode(nightMode)
         .preferredColorScheme(.dark)
     }
@@ -79,7 +83,7 @@ public struct RootView: View {
     private func root(for tab: Tab) -> some View {
         switch tab {
         case .home: DashboardScreen(nightMode: $nightMode)
-        case .messages: ScreenPlaceholder(title: "Messages", mirrors: "ui/screens/MessagesScreen.kt")
+        case .messages: MessagesScreen()
         case .map: Color.clear
         case .people: ScreenPlaceholder(title: "People", mirrors: "ui/screens/PeersScreen.kt")
         case .setup: SetupScreen()
@@ -88,7 +92,9 @@ public struct RootView: View {
 
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
-        if route == .setupSection(.node) {
+        if case .chat(let peer) = route {
+            ConversationChatView(peer: peer)
+        } else if route == .setupSection(.node) {
             SubScreen(SetupSection.node.title, onBack: { router.back() }, content: { SettingsNodeSection() })
         } else if let title = route.subScreenTitle {
             SubScreen(

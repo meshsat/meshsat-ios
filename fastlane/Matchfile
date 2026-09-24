@@ -1,0 +1,10 @@
+# fastlane match: the App Store signing certificate and profile for MeshSat, kept encrypted in a
+# private GitLab repo (products/meshsat/meshsat-ios-certificates, never mirrored). The repo URL
+# with its token and the encryption password are not here: MATCH_GIT_URL and MATCH_PASSWORD come
+# from OpenBao secret/ci-no/apps/meshsat-ios/match (MESHSAT-1331).
+storage_mode("git")
+git_branch("main")
+type("appstore")
+app_identifier(["net.meshsat.ios"])
+team_id("4CXPKM8L4V")
+readonly(false)

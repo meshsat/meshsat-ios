@@ -32,6 +32,16 @@ public enum MSIcon {
     public static var fence: Image { asset("outlined_fence", fallback: "square.grid.3x3") }
     public static var nightsStay: Image { asset("outlined_nights_stay", fallback: "moon") }
     public static var swapVert: Image { asset("outlined_swap_vert", fallback: "arrow.up.arrow.down") }
+    public static var search: Image { asset("outlined_search", fallback: "magnifyingglass") }
+    public static var clear: Image { asset("outlined_clear", fallback: "xmark") }
+    public static var lockOpen: Image { asset("outlined_lock_open", fallback: "lock.open") }
+    public static var send: Image { asset("outlined_send", fallback: "paperplane.fill") }
+    public static var arrowBack: Image { asset("outlined_arrow_back", fallback: "arrow.left") }
+    public static var contentCopy: Image { asset("outlined_content_copy", fallback: "doc.on.doc") }
+    public static var helpOutline: Image { asset("outlined_help_outline", fallback: "questionmark.circle") }
+    public static var errorOutline: Image { asset("outlined_error_outline", fallback: "exclamationmark.circle") }
+    public static var done: Image { asset("outlined_done", fallback: "checkmark") }
+    public static var doneAll: Image { asset("outlined_done_all", fallback: "checkmark.circle.fill") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {

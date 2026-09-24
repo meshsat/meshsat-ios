@@ -25,6 +25,8 @@ public final class GatewayModel {
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
     public private(set) var modemSignal = 0
+    /// The IMEI of the modem connected now, else the last one this phone talked to.
+    public private(set) var modemImei = ""
     public private(set) var interfaces: [String: InterfaceStatus] = [:]
     public private(set) var lastError = ""
     public private(set) var passes: [PassPrediction] = []
@@ -79,9 +81,16 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await b in gateway.nodeBattery.subscribe() { self?.nodeBattery = b }
             })
+        modemImei = gateway.settings.get(SettingsKey.lastModemImei)
         tasks.append(
             Task { [weak self] in
-                for await s in driver.stateChanges.subscribe() { self?.modemState = s }
+                for await s in driver.stateChanges.subscribe() {
+                    self?.modemState = s
+                    if s == .connected {
+                        let imei = await driver.modemInfo.imei
+                        if !imei.isEmpty { self?.modemImei = imei }
+                    }
+                }
             })
         tasks.append(
             Task { [weak self] in
@@ -103,6 +112,12 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await fix in gateway.location.phoneLocation.subscribe() { self?.phoneFix = fix }
             })
+        observeApp()
+    }
+
+    /// The app-level broadcasts: the provisioning claim and the pending deep link.
+    private func observeApp() {
+        let gateway = self.gateway
         tasks.append(
             Task { [weak self] in
                 for await s in gateway.provisionClaim.state.subscribe() { self?.provisionState = s }
@@ -141,6 +156,15 @@ public final class GatewayModel {
             if !Task.isCancelled { self?.toast = nil }
         }
     }
+
+    // MARK: Messages (GatewayService.ACTION_SEND_MESH / ACTION_SEND_IRIDIUM / ACTION_SEND_SMS)
+
+    public func sendMesh(_ text: String, to peer: String) {
+        if let num = Peers.nodeNum(peer) { gateway.sendMeshMessage(text, to: num) } else { gateway.sendMeshMessage(text) }
+    }
+
+    public func queueIridium(_ text: String, recipient: String) { gateway.queueIridiumMessage(text, recipient: recipient) }
+    public func queueSms(_ text: String, to phone: String) { gateway.queueSmsMessage(text, recipient: phone) }
 
     public func startScan() {
         scanResults.removeAll()

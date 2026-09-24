@@ -87,6 +87,42 @@ final class SosEnvAdapter: SosEnv, @unchecked Sendable {
 
 extension GatewayController {
     static let sosNotificationId = "net.meshsat.ios.sos"
+    /// The forwardedTo marks of an SMS the phone sent (sms/SmsStatusReceiver.kt).
+    public static let smsSending = "sms:sending"
+    public static let smsSent = "sms:sent"
+    public static let smsDelivered = "sms:delivered"
+    public static let smsFailed = "sms:failed"
+
+    /// An SMS the user wrote in a chat: stored as a message and parked on sms_0 for the Messages
+    /// composer (GatewayService.ACTION_SEND_SMS; iOS has no SMS API).
+    public func queueSmsMessage(_ text: String, recipient: String) {
+        Task { [self] in
+            guard let disp = dispatcher else { return }
+            let msgId = try? await db.messages.insert(
+                MessageRecord(
+                    timestamp: clock.nowMs(), transport: "sms", direction: "tx", sender: "self", recipient: recipient, text: text,
+                    forwarded: true,
+                    forwardedTo: Self.smsSending))
+            _ = await disp.enqueueDirect(
+                destInterface: "sms_0", payload: Array(text.utf8), textPreview: text,
+                msgRef: msgId.map { "msg:\($0)" } ?? "sms:\(clock.nowMs())",
+                priority: 1, recipient: recipient)
+        }
+    }
+
+    /// The deliveries the person still has to send from the Messages composer.
+    public func observeSmsAwaitingUser() -> AsyncStream<[MessageDelivery]> {
+        let observation = db.deliveries.observeByChannelAndStatus("sms_0", Dispatcher.awaitingUser)
+        return AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await rows in observation { continuation.yield(rows) }
+                } catch {}
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 
     /// The SOS controller, made once the dispatcher exists (Android makes it in onCreate).
     func initSos() {
@@ -117,7 +153,14 @@ extension GatewayController {
     /// The composer lane reports what the person did with a parked SMS.
     public func smsComposerFinished(deliveryId: Int64, sent: Bool) {
         guard let disp = dispatcher else { return }
-        Task { if sent { await disp.userSent(deliveryId: deliveryId) } else { await disp.userDeclined(deliveryId: deliveryId) } }
+        Task { [self] in
+            if sent { await disp.userSent(deliveryId: deliveryId) } else { await disp.userDeclined(deliveryId: deliveryId) }
+            if let del = try? await db.deliveries.getById(deliveryId), del.msgRef.hasPrefix("msg:"),
+                let msgId = Int64(del.msgRef.dropFirst(4))
+            {
+                try? await db.messages.setForwardedTo(id: msgId, sent ? Self.smsSent : Self.smsFailed)
+            }
+        }
     }
 
     private func showSosNotification(_ n: (run: SosRun, statuses: [SosRouteStatus])?) async {
