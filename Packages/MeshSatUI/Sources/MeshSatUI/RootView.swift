@@ -36,15 +36,21 @@ public struct RootView: View {
     }
 
     public var body: some View {
+        // Night mode is a colour effect, and SwiftUI cannot apply one through the UIKit-backed
+        // page TabView and NavigationStacks (it silently draws nothing red, seen on the phone
+        // 24 Sep 2026). So the effect goes on every leaf that is SwiftUI: the strip, the banner,
+        // each screen and destination, the map, the bottom bar and the overlays. Sheets from
+        // UIKit (the Messages composer, the contact picker) stay as they are.
         VStack(spacing: 0) {
-            StatusStrip(model: strip)
-            SosBanner { router.navigate(.sos) }
+            StatusStrip(model: strip).nightMode(nightMode)
+            SosBanner { router.navigate(.sos) }.nightMode(nightMode)
             ZStack {
                 TabView(selection: $router.selectedTab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
                         NavigationStack(path: pathBinding(tab)) {
                             root(for: tab)
-                                .navigationDestination(for: Route.self) { route in destination(route) }
+                                .nightMode(nightMode)
+                                .navigationDestination(for: Route.self) { route in destination(route).nightMode(nightMode) }
                         }
                         .toolbar(.hidden, for: .navigationBar)
                         .tag(tab)
@@ -54,25 +60,28 @@ public struct RootView: View {
                 .toolbar(.hidden, for: .tabBar)
                 .scrollDisabled(true)
                 MapPlaceholder()
+                    .nightMode(nightMode)
                     .opacity(router.selectedTab == .map ? 1 : 0)
                     .allowsHitTesting(router.selectedTab == .map)
             }
-            MSNavigationBar(selected: router.selectedTab) { router.selectTab($0) }
+            MSNavigationBar(selected: router.selectedTab) { router.selectTab($0) }.nightMode(nightMode)
         }
         .overlay {
             // MainActivity's ProvisionLinkDialog and ProvisionClaimHost: over every screen.
-            if let link = model.provisionLink {
-                ProvisionLinkDialog(url: link) { model.provisionLinkHandled() }
+            ZStack {
+                if let link = model.provisionLink {
+                    ProvisionLinkDialog(url: link) { model.provisionLinkHandled() }
+                }
+                ProvisionClaimHost()
+                if let toast = model.toast { MSToast(toast) }
             }
-            ProvisionClaimHost()
+            .nightMode(nightMode)
             SmsComposerHost()
-            if let toast = model.toast { MSToast(toast) }
         }
         .background(MSColors.bg.ignoresSafeArea())
         .environment(router)
         .environment(model)
         .environment(messages)
-        .nightMode(nightMode)
         .preferredColorScheme(.dark)
     }
 
