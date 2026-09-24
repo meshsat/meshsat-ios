@@ -2,4 +2,4 @@
 // MARKETING_VERSION is the public version (CFBundleShortVersionString, git tag vX.Y.Z).
 // CURRENT_PROJECT_VERSION is the build number (CFBundleVersion); it only ever goes up.
 MARKETING_VERSION = 0.1.0
-CURRENT_PROJECT_VERSION = 1
+CURRENT_PROJECT_VERSION = 2
