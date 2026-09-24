@@ -210,6 +210,9 @@ public actor IridiumATDriver {
         let start = clock.nowMs()
         while link === forLink, !Task.isCancelled {
             let resp = (try? await sendAT("AT&K0")) ?? ""
+            // The actor is re-entered across that await: a detach in between has cleared the
+            // flag, and a probe from the old link must not set it again.
+            guard link === forLink, !Task.isCancelled else { return false }
             if resp.contains("OK") || resp.contains("ERROR") {
                 modemSilent = false
                 return link === forLink
