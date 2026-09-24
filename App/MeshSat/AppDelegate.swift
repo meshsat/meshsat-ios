@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     let gateway: GatewayController
 
     override init() {
+        // First, so every line the gateway writes can be read off the phone (MESHSAT-1324).
+        AppLog.bootstrap()
         let settings = SettingsRepository(secure: SecureKeyStore())
         let db: AppDatabase
         do {

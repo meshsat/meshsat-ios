@@ -455,7 +455,14 @@ public final class HubReporter: @unchecked Sendable {
             handleMoAck(payload)
             return
         }
-        guard topic.hasSuffix("/cmd"), let json = JSONBody.parse(Data(payload.utf8)) else { return }
+        guard topic.hasSuffix("/cmd") else {
+            Self.log.info("Hub message on \(topic) ignored (\(payload.utf8.count) bytes)")
+            return
+        }
+        guard let json = JSONBody.parse(Data(payload.utf8)) else {
+            Self.log.warning("Hub command not JSON on \(topic): \(payload.prefix(200))")
+            return
+        }
         let cmd = HubCommand.fromJson(json)
         Self.log.info("Hub command: \(cmd.cmd) (\(cmd.requestId))")
         if cmd.cmd == "ping" {
@@ -538,11 +545,12 @@ public final class HubReporter: @unchecked Sendable {
 
     private func publish(_ topic: String, qos: Int, retain: Bool, _ body: JSONBody) async {
         guard let s = currentSession(), await s.isConnected else {
-            Self.log.debug("Hub not connected, dropping publish to \(topic)")
+            Self.log.warning("Hub not connected, dropping publish to \(topic)")
             return
         }
         do {
             try await s.publish(topic: topic, payload: Array(body.text().utf8), qos: qos, retain: retain)
+            if topic.hasSuffix("/cmd/response") { Self.log.info("Hub command answered on \(topic)") }
         } catch {
             Self.log.warning("Hub publish to \(topic) failed: \(error)")
         }

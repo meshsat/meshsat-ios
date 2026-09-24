@@ -6,6 +6,7 @@
 import MeshSatEngine
 import MeshSatHub
 import MeshSatMeshtastic
+import MeshSatPlatform
 import MeshSatWire
 import SwiftUI
 
@@ -500,6 +501,9 @@ public struct SettingsDiagnosticsSection: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: MSSpace.screen) {
+                SectionCard("App log") {
+                    AppLogCard()
+                }
                 SectionCard("Link health") {
                     ForEach(["mesh_0", "iridium_0", "sms_0", "hub_0"], id: \.self) { id in
                         let status = model.interfaces[id]
@@ -567,5 +571,34 @@ public struct SettingsDiagnosticsSection: View {
                 }
             }
         }
+    }
+}
+
+/// The app's recent log lines (MESHSAT-1324), newest last, to read or share when something on
+/// the phone does not do what it should. The lines carry no secrets.
+struct AppLogCard: View {
+    @State private var lines: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("What the app did most recently. Share it when reporting a problem.").msText(.bodySmall, color: MSColors.textMuted)
+            ScrollView {
+                Text(lines.suffix(200).joined(separator: "\n"))
+                    .msText(.labelSmall, mono: true, color: MSColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(height: 240)
+            .padding(8)
+            .background(MSColors.surfaceLight, in: RoundedRectangle(cornerRadius: 4))
+            HStack(spacing: 8) {
+                MSOutlinedButton("Refresh") { lines = AppLog.shared.recent() }
+                ShareLink(item: AppLog.shared.recent().joined(separator: "\n")) {
+                    Text("Share the log").msText(.bodySmall, color: MSColors.offWhite).padding(.horizontal, 24)
+                        .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
+                }
+            }
+        }
+        .onAppear { lines = AppLog.shared.recent() }
     }
 }
