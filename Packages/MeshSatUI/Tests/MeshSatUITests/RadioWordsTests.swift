@@ -28,3 +28,11 @@ final class RadioWordsTests: XCTestCase {
         XCTAssertNil(RadioWords.presetDetails(42))
     }
 }
+
+final class AprsIsPasscodeTests: XCTestCase {
+    func testTheWellKnownHash() {
+        // aprs.fi's published examples for the standard algorithm.
+        XCTAssertEqual(AprsIsPasscode.calculate("N0CALL"), "13023")
+        XCTAssertEqual(AprsIsPasscode.calculate("n0call-7"), "13023")
+    }
+}
