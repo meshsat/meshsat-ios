@@ -51,6 +51,7 @@ let package = Package(
                 .product(name: "MeshSatHub", package: "MeshSatKit"),
                 .product(name: "MeshSatSatellite", package: "MeshSatKit"),
                 .product(name: "MeshSatMeshtastic", package: "MeshSatKit"),
+                .product(name: "MeshSatMQTT", package: "MeshSatKit"),
                 .product(name: "MeshSatNet", package: "MeshSatKit"),
                 .product(name: "MeshSatWire", package: "MeshSatKit"),
                 .product(name: "Logging", package: "swift-log"),
