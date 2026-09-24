@@ -1,1 +1,1 @@
-Build 3: Setup sections for the satellite modem, the Hub (scan its QR code, test the connection), Messaging (encryption key, compression), Safety (check-in timer settings), SMS and Diagnostics. Night mode fixed, SOS card and banner.
+Build 4: Satellite passes: the sky chart with the passes, the modem's signal and its sessions, window and surroundings presets, the pass list, orbit data update. Home shows the next three hours.

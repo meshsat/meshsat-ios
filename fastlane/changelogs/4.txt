@@ -1,0 +1,1 @@
+Build 4: Satellite passes: the sky chart with the passes, the modem's signal and its sessions, window and surroundings presets, the pass list, orbit data update. Home shows the next three hours.
