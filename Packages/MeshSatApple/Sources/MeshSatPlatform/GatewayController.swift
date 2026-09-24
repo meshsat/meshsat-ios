@@ -68,6 +68,8 @@ public final class GatewayController: @unchecked Sendable {
     /// The signed audit log and its Ed25519 key (engine/SigningService.kt).
     public internal(set) var signingService: SigningService?
     public let creditTracker: CreditTracker
+    /// Zones and their alerts (engine/GeofenceMonitor.kt); zones live until the app restarts.
+    public let geofenceMonitor = GeofenceMonitor()
     public let location = LocationProvider()
     private var hubReporterValue: HubReporter?
     /// The Hub client, whenever it is made or dropped; the settings screen subscribes here.
