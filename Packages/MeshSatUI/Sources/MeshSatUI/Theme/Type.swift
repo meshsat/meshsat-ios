@@ -51,6 +51,10 @@ public struct MSTextStyle: Sendable, Equatable {
         self.relativeTo = relativeTo
     }
 
+    /// The same style in another weight: Android's `fontWeight = FontWeight.SemiBold` on a typography
+    /// style. Bold and semiBold both map to the SemiBold file (IBM Plex ships no bold here).
+    public func weight(_ w: MSFont.Weight) -> MSTextStyle { MSTextStyle(size, lineHeight, w, relativeTo: relativeTo) }
+
     public static let displaySmall = MSTextStyle(32, 40, .semiBold, relativeTo: .largeTitle)
     public static let headlineLarge = MSTextStyle(28, 34, .semiBold, relativeTo: .title)
     public static let headlineMedium = MSTextStyle(22, 28, .semiBold, relativeTo: .title2)

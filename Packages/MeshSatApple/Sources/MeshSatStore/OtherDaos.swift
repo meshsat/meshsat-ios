@@ -80,6 +80,16 @@ public struct SignalDao: Sendable {
         }
     }
 
+    /// The readings of a source since a moment, oldest first (SignalDao.getSince).
+    /// One-shot read of the readings since `since` (the passes screen's signal history).
+    public func fetchSince(source: String, since: Int64) async throws -> [SignalRecord] {
+        try await db.read { db in
+            try SignalRecord.fetchAll(
+                db, sql: "SELECT * FROM signal_history WHERE source = ? AND timestamp >= ? ORDER BY timestamp ASC",
+                arguments: [source, since])
+        }
+    }
+
     public func getRecent(source: String, limit: Int = 360) -> AsyncValueObservation<[SignalRecord]> {
         ValueObservation.tracking { db in
             try SignalRecord.fetchAll(
