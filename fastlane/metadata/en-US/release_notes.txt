@@ -1,1 +1,1 @@
-Build 8: Routing rules: which messages pass from one link to another, with the rule editor, and the deliveries and queue those rules fill.
+Build 9: Links: every way the phone sends and receives, with its state, a switch, what it can carry, backup links and a health score.

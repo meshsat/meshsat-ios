@@ -1,0 +1,1 @@
+Build 9: Links: every way the phone sends and receives, with its state, a switch, what it can carry, backup links and a health score.
