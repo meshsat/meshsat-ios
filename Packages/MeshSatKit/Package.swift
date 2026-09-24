@@ -48,6 +48,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         .package(url: "https://github.com/swift-server-community/mqtt-nio.git", from: "2.10.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.60.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.25.0"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
     ],
     targets: [
@@ -110,6 +112,8 @@ let package = Package(
             dependencies: [
                 "MeshSatNet",
                 .product(name: "MQTTNIO", package: "mqtt-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl", condition: .when(platforms: [.linux, .macOS])),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
