@@ -1,15 +1,14 @@
 # =============================================================================
 # MeshSat iOS CI/CD Pipeline
 # =============================================================================
-# The GitLab runners are Linux, so this pipeline builds and tests everything
-# that has no Apple dependency (Packages/MeshSatKit) in the official Swift
-# image. The app itself is built in two places:
-#   - GitHub Actions on the public mirror (.github/workflows/ios.yml), free
-#     macOS runners, on every mirrored push to main and every v* tag;
-#   - the `macos`-tagged runner (a rented Mac, MESHSAT-1332) once it exists.
-#     The macos stage only appears when the project variable MACOS_RUNNER is
-#     "1": a job tagged for a runner that does not exist sits pending until the
-#     pipeline timeout and blocks the release stage behind it.
+# The Linux runners build and test everything that has no Apple dependency
+# (Packages/MeshSatKit) in the official Swift image. The app itself is built
+# on the `macos`-tagged runner (a rented Mac, MESHSAT-1332). The macos stage
+# only appears when the project variable MACOS_RUNNER is "1": a job tagged for
+# a runner that does not exist sits pending until the pipeline timeout and
+# blocks the release stage behind it. GitHub is a push mirror and the public
+# release page only; its Actions lane was removed on 24 Sep 2026 (owner ruling)
+# once the Mac was green, so there is one CI and one set of failure mails.
 # - Push to main: validate, lint, Linux tests (+ macOS build where available)
 # - Tag push (v*): the above, then GitLab release, GitHub release notes and the
 #   meshsat.net changelog trigger. Release artefacts come from the macOS lanes.
@@ -208,7 +207,7 @@ create-github-release:
 
       ${NOTES}
 
-      Unsigned builds for sideloading and the simulator are attached by the GitHub Actions workflow when it finishes."
+      Unsigned builds for sideloading and the simulator are attached by the macOS build job of this pipeline."
       EXISTING=$(curl -s -H "Authorization: token ${GHCR_TOKEN}" -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${CI_COMMIT_TAG}")
       EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')

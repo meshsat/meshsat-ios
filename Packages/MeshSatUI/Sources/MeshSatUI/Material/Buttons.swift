@@ -8,7 +8,7 @@ public struct MSFilledButton: View {
     let fullWidth: Bool
     let action: () -> Void
 
-    public init(_ title: String, container: Color = MSColors.primary, fullWidth: Bool = true, action: @escaping () -> Void) {
+    public init(_ title: String, container: Color = MSColors.signalOrange, fullWidth: Bool = true, action: @escaping () -> Void) {
         self.title = title
         self.container = container
         self.fullWidth = fullWidth
