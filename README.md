@@ -68,7 +68,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | | State |
 |---|---|
 | Mesh through a MeshSat node over Bluetooth | Node link verified 25 September 2026 on an iPhone 11 Pro Max with a T-Beam Supreme (v1) node: connected over Bluetooth LE, 2 nodes heard, signal read; a message across the mesh from this app is not verified yet |
-| Satellite messages out through the node, landing at the Hub | **Not built yet** |
+| Satellite messages out through the node, landing at the Hub | Verified 25 September 2026 on an iPhone 11 Pro Max with the T-Beam Supreme node under open sky: "25-sep-2026 1806 test from iPhone" went out as MOMSN 248 after two no-service retries and the Hub confirmed it within 4 s |
 | A satellite message in, picked up by the app | **Not built yet** |
 | Reconnecting to the node and taking its modem back after an app restart | Verified 25 September 2026: after every restart the app found the node by itself, claimed its Iridium pipe and the RockBLOCK 9603 answered within 30 s |
 | Pass prediction with no internet | **Not built yet** |
@@ -88,7 +88,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 |---|---|---|---|
 | Phone | iPhone 11 Pro Max, iOS 27 | | Main test phone |
 | MeshSat node | v0: XIAO ESP32-S3, Wio-SX1262, RockBLOCK 9603 | Bluetooth LE | Not tested with this app |
-| MeshSat node | v1: LILYGO T-Beam Supreme, RockBLOCK 9603 | Bluetooth LE | Tested 25 September 2026: node link and the modem over the node's pipe; a satellite message not yet |
+| MeshSat node | v1: LILYGO T-Beam Supreme, RockBLOCK 9603 | Bluetooth LE | Tested 25 September 2026: node link, the modem over the node's pipe, a satellite message out to the Hub (MOMSN 248) |
 | Meshtastic radio | any Meshtastic device | Bluetooth LE | Not tested with this app |
 | APRS | any KISS TNC reachable over TCP, for example Direwolf | KISS over TCP | Not tested with this app |
 
