@@ -69,7 +69,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 |---|---|
 | Mesh through a MeshSat node over Bluetooth | Node link verified 25 September 2026 on an iPhone 11 Pro Max with a T-Beam Supreme (v1) node: connected over Bluetooth LE, 2 nodes heard, signal read; a message across the mesh from this app is not verified yet |
 | Satellite messages out through the node, landing at the Hub | Verified 25 September 2026 on an iPhone 11 Pro Max with the T-Beam Supreme node under open sky: "25-sep-2026 1806 test from iPhone" went out as MOMSN 248 after two no-service retries and the Hub confirmed it within 4 s |
-| A satellite message in, picked up by the app | **Not built yet** |
+| A satellite message in, picked up by the app | Verified 25 September 2026: "25-sep-2026 1805 == test from rock7" (35 bytes), queued at Rock7 at 16:05 UTC, came down in the 16:14 session and was stored by the app 3 s later |
 | Reconnecting to the node and taking its modem back after an app restart | Verified 25 September 2026: after every restart the app found the node by itself, claimed its Iridium pipe and the RockBLOCK 9603 answered within 30 s |
 | Pass prediction with no internet | **Not built yet** |
 | The phone connected to the Hub as a bridge | Verified 25 September 2026 on an iPhone 11 Pro Max: provisioned by QR code, birth signature verified by the Hub, a ping answered in 0.1 s |
