@@ -93,21 +93,35 @@ extension GatewayController {
     public static let smsFailed = "sms:failed"
 
     /// An SMS the user wrote in a chat: stored as a message and parked on sms_0 for the Messages
-    /// composer (GatewayService.ACTION_SEND_SMS; iOS has no SMS API).
+    /// composer (GatewayService.sendSmsMessage; iOS has no SMS API). The body is what Android's
+    /// SmsSender would send: compressed and encrypted per the settings and the recipient's key.
     public func queueSmsMessage(_ text: String, recipient: String) {
         touchDeadMan()
         Task { [self] in
             guard let disp = dispatcher else { return }
+            let wire = await smsWireBody(text, recipient: recipient)
             let msgId = try? await db.messages.insert(
                 MessageRecord(
                     timestamp: clock.nowMs(), transport: "sms", direction: "tx", sender: "self", recipient: recipient, text: text,
-                    forwarded: true,
-                    forwardedTo: Self.smsSending))
+                    encrypted: wire.encrypted, forwarded: true, forwardedTo: Self.smsSending))
             _ = await disp.enqueueDirect(
-                destInterface: "sms_0", payload: Array(text.utf8), textPreview: text,
+                destInterface: "sms_0", payload: Array(wire.body.utf8), textPreview: text,
                 msgRef: msgId.map { "msg:\($0)" } ?? "sms:\(clock.nowMs())",
                 priority: 1, recipient: recipient)
         }
+    }
+
+    /// sendSmsMessage's key resolution (per recipient, then the Hub wildcard sms:*, then the
+    /// global key when encryption is on) and compression mode, through SmsWire.
+    func smsWireBody(_ text: String, recipient: String) async -> SmsWire.Encoded {
+        let convKey = (try? await db.conversationKeys.getBySender(recipient))?.hexKey ?? ""
+        let wildcardKey = (try? await db.conversationKeys.getBySender("*"))?.hexKey ?? ""
+        let globalKey = settings.get(SettingsKey.encryptionEnabled) ? settings.encryptionKey : ""
+        let key = [convKey, wildcardKey, globalKey].first { !$0.isEmpty }
+        let mode = settings.get(SettingsKey.compressSms)
+        return SmsWire.encode(
+            text, encryptionKey: key, smaz2: mode == "smaz2" || (key != nil && mode != "msvqsc"),
+            msvqscEncoder: mode == "msvqsc" ? msvqsc.state.encoder : nil, msvqscStages: msvqscStages)
     }
 
     /// The deliveries the person still has to send from the Messages composer.
