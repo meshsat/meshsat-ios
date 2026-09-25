@@ -1,1 +1,1 @@
-Build 20: every screen scrolls; the map is dark like Android's; the Home lanes, the node-unreachable banner, the Material icons, buttons and text fields, Setup and Diagnostics now match MeshSat Android; the Reticulum, APRS and TAK settings show their saved values.
+Build 21: a Hub receipt that outruns the satellite session still gives the second tick; the keyboard leaves with a tab switch; disabled buttons look disabled; a certificate's expiry is coloured; the Reticulum, APRS and TAK settings show their saved values.
