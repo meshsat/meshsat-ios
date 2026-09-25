@@ -171,11 +171,16 @@ platform :ios do
     UI.user_error!("no build") if build.nil?
     # deliver cannot create the App Review details of a first version; they are made here once,
     # and App Store Connect will not make them without the contact phone
-    # (metadata/review_information/phone_number.txt). Until then the text metadata waits too:
+    # (REVIEW_PHONE in the environment). Until then the text metadata waits too:
     # deliver reads the review details before it writes any text.
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
     review = File.join(__dir__, "metadata", "review_information")
-    read = ->(name) { path = File.join(review, "#{name}.txt"); File.exist?(path) ? File.read(path).strip : nil }
+    read = lambda do |name|
+      # The phone comes from the environment only (REVIEW_PHONE), never from a file in git.
+      next ENV["REVIEW_PHONE"] if name == "phone_number"
+      path = File.join(review, "#{name}.txt")
+      File.exist?(path) ? File.read(path).strip : nil
+    end
     have_review = begin
       version.fetch_app_store_review_detail
       true
