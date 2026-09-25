@@ -128,6 +128,11 @@ public struct NodePositionDao: Sendable {
         }
     }
 
+    /// The newest stored position of any node (NodePositionDao.getLatest on Android).
+    public func latest() async throws -> NodePosition? {
+        try await db.read { db in try NodePosition.fetchOne(db, sql: "SELECT * FROM node_positions ORDER BY timestamp DESC LIMIT 1") }
+    }
+
     /// Latest position per node.
     public func getLatestPerNode() -> AsyncValueObservation<[NodePosition]> {
         ValueObservation.tracking { db in

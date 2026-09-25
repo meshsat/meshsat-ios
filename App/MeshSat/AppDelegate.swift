@@ -13,6 +13,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     override init() {
         // First, so every line the gateway writes can be read off the phone (MESHSAT-1324).
         AppLog.bootstrap()
+        // A crash lands in a file now and in the telemetry table on the next launch (MESHSAT-494).
+        CrashCapture.install(
+            versionName: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0",
+            versionCode: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
+            deviceModel: UIDevice.current.model, osVersion: "iOS " + UIDevice.current.systemVersion)
         let settings = SettingsRepository(secure: SecureKeyStore())
         let db: AppDatabase
         do {

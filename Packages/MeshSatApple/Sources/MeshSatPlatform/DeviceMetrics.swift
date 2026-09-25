@@ -2,6 +2,7 @@
 // getMemoryUsage, getDiskUsage on Android): battery from UIDevice, memory from the process
 // info, disk from the file system, the model identifier from uname.
 import Foundation
+import MeshSatEngine
 
 #if canImport(UIKit)
 import UIKit
@@ -37,6 +38,49 @@ enum DeviceMetrics {
             total > 0
         else { return 0 }
         return (total - free) / total * 100
+    }
+
+    /// "iOS 27.0", as Android reports Build.VERSION.RELEASE.
+    static func osVersion() -> String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        #if os(iOS)
+        return "iOS \(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        #else
+        return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+        #endif
+    }
+
+    /// The process's memory footprint, the figure Xcode's gauge shows (TelemetryLogger.recordHeap
+    /// on Android samples the Dalvik and native heaps).
+    static func heapSample() -> (message: String, detail: [String: TelemetryValue]) {
+        let total = Int64(ProcessInfo.processInfo.physicalMemory)
+        var footprint: Int64 = 0
+        var resident: Int64 = 0
+        #if canImport(Darwin)
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size) / 4
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        if result == KERN_SUCCESS {
+            footprint = Int64(info.phys_footprint)
+            resident = Int64(info.resident_size)
+        }
+        #endif
+        #if os(iOS)
+        let available = Int64(os_proc_available_memory())
+        #else
+        let available: Int64 = 0
+        #endif
+        return (
+            "Footprint \(footprint / 1_048_576)/\(total / 1_048_576) MB, \(available / 1_048_576) MB left for the app",
+            [
+                "physFootprint": .int(footprint), "residentSize": .int(resident), "physicalMemory": .int(total),
+                "availableToApp": .int(available),
+            ]
+        )
     }
 
     /// "iPhone15,2", as Android reports Build.MODEL.

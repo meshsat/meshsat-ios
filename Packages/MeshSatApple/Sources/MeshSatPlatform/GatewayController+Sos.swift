@@ -95,6 +95,7 @@ extension GatewayController {
     /// An SMS the user wrote in a chat: stored as a message and parked on sms_0 for the Messages
     /// composer (GatewayService.ACTION_SEND_SMS; iOS has no SMS API).
     public func queueSmsMessage(_ text: String, recipient: String) {
+        touchDeadMan()
         Task { [self] in
             guard let disp = dispatcher else { return }
             let msgId = try? await db.messages.insert(

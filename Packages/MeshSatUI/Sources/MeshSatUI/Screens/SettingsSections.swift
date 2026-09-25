@@ -398,6 +398,7 @@ public struct SettingsMessagingSection: View {
 // MARK: Safety
 
 public struct SettingsSafetySection: View {
+    @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
 
     @Environment(Router.self) private var router
@@ -413,7 +414,15 @@ public struct SettingsSafetySection: View {
             VStack(spacing: MSSpace.screen) {
                 SosSettingsCard()
                 SectionCard("Check-in timer (dead man's switch)") {
-                    SettingRow("Enabled") { MSSwitch(isOn: settings.binding(SettingsKey.deadmanEnabled), label: "Check-in timer enabled") }
+                    SettingRow("Enabled") {
+                        MSSwitch(
+                            isOn: Binding(
+                                get: { settings.bool(SettingsKey.deadmanEnabled) },
+                                set: {
+                                    settings.set(SettingsKey.deadmanEnabled, $0)
+                                    model.gateway.applyDeadManSettings()
+                                }), label: "Check-in timer enabled")
+                    }
                     if settings.bool(SettingsKey.deadmanEnabled) {
                         Text("Timeout (triggers SOS if no activity)").msText(.bodySmall, color: MSColors.textMuted)
                         let timeouts = [("30", "30 min"), ("60", "1 hour"), ("120", "2 hours"), ("240", "4 hours"), ("480", "8 hours")]
@@ -421,6 +430,7 @@ public struct SettingsSafetySection: View {
                             let on = settings.string(SettingsKey.deadmanTimeoutMin) == value
                             Button {
                                 settings.set(SettingsKey.deadmanTimeoutMin, value)
+                                model.gateway.applyDeadManSettings()
                             } label: {
                                 HStack {
                                     Text(label).msText(.bodySmall)
@@ -436,8 +446,16 @@ public struct SettingsSafetySection: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        Text("The timer itself lands with the background work (MESHSAT-1328); the setting is kept for it.").msText(
-                            .bodySmall, color: MSColors.amber)
+                        if model.deadManTriggered {
+                            Button {
+                                model.gateway.touchDeadMan()
+                                model.refreshDeadMan()
+                            } label: {
+                                Text("TRIGGERED \u{2014} SOS was sent. Tap to reset.").msText(.bodySmall, color: MSColors.red)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     Text("Automatically sends SOS if no user activity (message send, button press) within the timeout period.")
                         .msText(.bodySmall, color: MSColors.textMuted)
@@ -446,6 +464,7 @@ public struct SettingsSafetySection: View {
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+        .onAppear { model.refreshDeadMan() }
     }
 }
 

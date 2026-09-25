@@ -70,6 +70,9 @@ public final class GatewayModel {
     public private(set) var provisionLink: String?
     /// The SOS in progress or the last one, and where each of its routes stands (MESHSAT-1249).
     public private(set) var sosRun: SosRun?
+    /// The dead man's switch has fired and waits for a check-in (SettingsScreen's TRIGGERED row).
+    public private(set) var deadManTriggered = false
+    public func refreshDeadMan() { deadManTriggered = gateway.deadManSwitch?.isTriggered ?? false }
     public private(set) var sosStatuses: [SosRouteStatus] = []
     /// The settings an SOS reads: contacts, the name, the callsign, the last modem, the paired node.
     public private(set) var sosContacts: [EmergencyContact] = []
