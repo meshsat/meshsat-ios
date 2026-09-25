@@ -410,7 +410,9 @@ public final class GatewayController: @unchecked Sendable {
             // The session's MOMSN, for the Hub's receipt (MESHSAT-1246).
             let imei = await driver.modemInfo.imei
             if deliveryId > 0 && !imei.isEmpty && result.moMsn >= 0 {
-                try? await db.deliveries.setSatRef(id: deliveryId, "\(imei):\(result.moMsn)")
+                let ref = "\(imei):\(result.moMsn)"
+                try? await db.deliveries.setSatRef(id: deliveryId, ref)
+                await claimEarlyHubReceipt(ref: ref)
             }
             return nil
         }

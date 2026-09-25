@@ -97,7 +97,11 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
         // arrives even when its notification does not.
         if link.hasStatus { refreshStatus() } else { owner.send(.phone) }
         let answer = await awaitOwner(timeoutMs: timeoutMs)
-        Self.log.info("Iridium pipe: claim answered \(answer.map { "\($0)" } ?? "nothing within \(timeoutMs / 1000) s")")
+        // On a timeout, say what STATUS last read: "none" means the node never registered the
+        // TX subscription (another central may hold the pipe), a stale "phone" means the
+        // notification was lost (25 Sep 2026, twelve claims in a row answered nothing).
+        let said = answer.map { "\($0)" } ?? "nothing within \(timeoutMs / 1000) s, STATUS last read \(String(describing: owner.value))"
+        Self.log.info("Iridium pipe: claim answered \(said)")
         return answer == .phone
     }
 

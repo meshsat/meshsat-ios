@@ -104,12 +104,55 @@ extension GatewayController {
     /// and the chat message shows delivered.
     func onHubReceipt(imei: String, momsn: Int) async {
         let ref = "\(imei):\(momsn)"
+        guard let rows = try? await db.deliveries.getBySatRef(ref), !rows.isEmpty else {
+            // Rock7 tells the Hub as soon as the gateway has the MO, while the modem is still
+            // closing the session on this side: on 25 Sep 2026 the receipt for MOMSN 248 came
+            // 4 s before the delivery got its reference, and the message never got its second
+            // tick. Keep the receipt; the send path claims it when the reference is written.
+            Self.earlyReceipts.remember(ref)
+            Self.log.info("The Hub has MOMSN \(momsn) before the phone finished its session; kept")
+            return
+        }
+        await confirmDeliveries(rows, ref: ref, momsn: momsn)
+    }
+
+    /// The send path, right after the delivery got its satellite reference: a receipt that
+    /// arrived early is applied now.
+    func claimEarlyHubReceipt(ref: String) async {
+        guard Self.earlyReceipts.take(ref) else { return }
         guard let rows = try? await db.deliveries.getBySatRef(ref), !rows.isEmpty else { return }
+        let momsn = Int(ref.split(separator: ":").last ?? "") ?? -1
+        await confirmDeliveries(rows, ref: ref, momsn: momsn)
+    }
+
+    private func confirmDeliveries(_ rows: [MessageDelivery], ref: String, momsn: Int) async {
         _ = try? await db.deliveries.markAckedBySatRef(ref)
         for del in rows where del.msgRef.hasPrefix("msg:") {
             if let msgId = Int64(del.msgRef.dropFirst(4)) { try? await db.messages.setForwardedTo(id: msgId, Self.iridiumDelivered) }
         }
         Self.log.info("The Hub has MOMSN \(momsn): \(rows.count) delivery(ies) confirmed")
+    }
+
+    /// Receipts that outran the session, kept for an hour.
+    private static let earlyReceipts = EarlyReceipts()
+
+    final class EarlyReceipts: @unchecked Sendable {
+        private let lock = NSLock()
+        private var refs: [String: Date] = [:]
+
+        func remember(_ ref: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            let cutoff = Date().addingTimeInterval(-3600)
+            refs = refs.filter { $0.value > cutoff }
+            refs[ref] = Date()
+        }
+
+        func take(_ ref: String) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return refs.removeValue(forKey: ref) != nil
+        }
     }
 
     /// Commands from the Hub (GatewayService.handleHubCommand). Each is answered.
