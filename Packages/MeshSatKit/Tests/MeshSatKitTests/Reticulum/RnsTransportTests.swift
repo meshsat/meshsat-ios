@@ -7,8 +7,10 @@ import XCTest
 @testable import MeshSatCrypto
 @testable import MeshSatReticulum
 
+// Up to 10 s: on the shared CI runner, four test processes side by side, a link proof once took
+// longer than the 3 s this allowed (pipeline 56379, 25 Sep 2026). A passing test returns at once.
 private func waitUntil(_ test: @escaping () -> Bool) async {
-    for _ in 0..<300 {
+    for _ in 0..<1000 {
         if test() { return }
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
