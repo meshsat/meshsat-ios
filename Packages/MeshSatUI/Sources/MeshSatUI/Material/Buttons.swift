@@ -9,6 +9,7 @@ public struct MSFilledButton: View {
     let action: () -> Void
 
     let labelColor: Color
+    @Environment(\.isEnabled) private var isEnabled
 
     public init(
         _ title: String, container: Color = MSColors.signalOrange, labelColor: Color = MSColors.ink, fullWidth: Bool = true,
@@ -22,12 +23,14 @@ public struct MSFilledButton: View {
     }
 
     public var body: some View {
+        // Material's disabled Button: the container at 12 percent and the label at 38 percent
+        // of the on-surface colour (Android greys Encrypt/Decrypt/Paste without a key).
         Button(action: action) {
             Text(title)
-                .msText(.bodySmall, color: labelColor)
+                .msText(.bodySmall, color: isEnabled ? labelColor : MSColors.textPrimary.opacity(0.38))
                 .padding(.horizontal, 24)
                 .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 40)
-                .background(container, in: Capsule())
+                .background(isEnabled ? container : MSColors.textPrimary.opacity(0.12), in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(MSPressedStyle())
