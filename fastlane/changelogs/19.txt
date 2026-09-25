@@ -1,0 +1,1 @@
+Build 19: the Hub connection works again (build 18 pinned the broker to the wrong certificate authority), and a clean run no longer records an empty crash.
