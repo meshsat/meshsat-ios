@@ -13,6 +13,7 @@ final class SafetyParts: @unchecked Sendable {
         var deadMan: DeadManSwitch?
         var burst: BurstQueue?
         var telemetry: TelemetryLogger?
+        var healthScorer: HealthScorer?
     }
     private let lock = NSLock()
     private var value = State()

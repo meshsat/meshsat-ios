@@ -518,10 +518,18 @@ public struct SettingsDiagnosticsSection: View {
     @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
     @State private var confirmRestart = false
+    @State private var scores: [String: HealthScore] = [:]
+    @State private var burstPending = 0
+    @State private var telemetry: [TelemetryEntry] = []
+    @State private var configJson = ""
+    @State private var configYaml = ""
+    @State private var importPreview: (text: String, diff: DiffResult)?
+    @State private var importError = ""
 
     public init() {}
 
     private var dismissRestart: () -> Void { { confirmRestart = false } }
+    private var dismissImport: () -> Void { { importPreview = nil } }
 
     public var body: some View {
         ScrollView {
@@ -530,8 +538,9 @@ public struct SettingsDiagnosticsSection: View {
                     AppLogCard()
                 }
                 SectionCard("Link health") {
-                    ForEach(["mesh_0", "iridium_0", "sms_0", "hub_0"], id: \.self) { id in
+                    ForEach(["mesh_0", "iridium_0", "sms_0", "hub_0", "mqtt_0", "aprs_0"], id: \.self) { id in
                         let status = model.interfaces[id]
+                        let score = scores[id]
                         HStack {
                             Text(Words.channel(id)).msText(.bodySmall, color: Words.channelColor(id))
                             Spacer(minLength: 8)
@@ -541,19 +550,96 @@ public struct SettingsDiagnosticsSection: View {
                                     color: status.map {
                                         Words.deliveryColor($0.state == .online ? "sent" : ($0.state == .error ? "failed" : "queued"))
                                     } ?? MSColors.textMuted)
+                            Text(score.map { "score: \($0.score)/100" } ?? "score: --")
+                                .msText(.bodySmall, color: Self.scoreColor(score?.score))
+                                .frame(width: 96, alignment: .trailing)
                         }
                         .padding(8)
                         .background(MSColors.surface, in: RoundedRectangle(cornerRadius: MSRadius.control, style: .continuous))
                     }
-                    Text("The health score (signal, success rate, latency, cost over 24 h) lands with the HealthScorer port.").msText(
-                        .bodySmall, color: MSColors.textMuted)
+                    Text(
+                        "Health = Signal(0.3) + SuccessRate(0.3) + Latency(0.2) + Cost(0.2). "
+                            + "Scores update in real-time based on 24h delivery history."
+                    )
+                    .msText(.bodySmall, color: MSColors.textMuted)
+                }
+                SectionCard("Batch queue") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("\(burstPending) waiting for the next pass").msText(.bodyMedium)
+                            Text("Small messages packed into one satellite session when a pass begins, or now.")
+                                .msText(.bodySmall, color: MSColors.textMuted)
+                        }
+                        Spacer(minLength: 8)
+                        MSOutlinedButton("Flush now") {
+                            Task {
+                                let n = await model.gateway.flushBurstNow()
+                                model.showToast(n > 0 ? "Batch of \(n) queued for the satellite" : "Nothing waiting")
+                                burstPending = model.gateway.burstPending
+                            }
+                        }
+                        .frame(width: 120)
+                    }
                 }
                 SectionCard("Crash reports") {
                     SettingRow("Enable local telemetry") {
                         MSSwitch(isOn: settings.binding(SettingsKey.telemetryEnabled), label: "Enable local telemetry")
                     }
-                    Text("Captures crashes and health heartbeats locally on this phone. Nothing is sent externally.").msText(
-                        .bodySmall, color: MSColors.textMuted)
+                    Text("Captures crashes, heap samples and health heartbeats locally on this phone. Nothing is sent externally.")
+                        .msText(.bodySmall, color: MSColors.textMuted)
+                    if telemetry.isEmpty {
+                        Text("No entries yet.").msText(.bodySmall, color: MSColors.textMuted)
+                    } else {
+                        ForEach(Array(telemetry.prefix(20).enumerated()), id: \.offset) { _, e in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(Words.clock(e.timestamp, "HH:mm:ss")).msText(.labelSmall, mono: true, color: MSColors.textMuted)
+                                Text(e.type).msText(
+                                    .labelSmall, mono: true, color: e.severity == "fatal" ? MSColors.red : MSColors.textSecondary
+                                )
+                                .frame(width: 44, alignment: .leading)
+                                Text(e.message).msText(.labelSmall, color: MSColors.textSecondary).lineLimit(2)
+                            }
+                        }
+                        ShareLink(
+                            item: telemetry.map {
+                                "\(Words.clock($0.timestamp, "HH:mm:ss")) \($0.type) \($0.severity) \($0.tag): \($0.message) \($0.detail)"
+                            }.joined(separator: "\n")
+                        ) {
+                            Text("Share the telemetry").msText(.bodySmall, color: MSColors.offWhite).padding(.horizontal, 24)
+                                .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
+                        }
+                    }
+                }
+                SectionCard("Configuration") {
+                    Text("The routing rules, object groups and failover groups as one document, in the same format as the Bridge.")
+                        .msText(.bodySmall, color: MSColors.textMuted)
+                    HStack(spacing: 8) {
+                        ShareLink(item: configJson, subject: Text("MeshSat configuration")) {
+                            Text("Export JSON").msText(.bodySmall, color: MSColors.offWhite)
+                                .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
+                        }
+                        ShareLink(item: configYaml, subject: Text("MeshSat configuration")) {
+                            Text("Export YAML").msText(.bodySmall, color: MSColors.offWhite)
+                                .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
+                        }
+                    }
+                    MSOutlinedButton("Import from the clipboard") {
+                        let text = UIPasteboard.general.string ?? ""
+                        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            importError = "The clipboard is empty."
+                            return
+                        }
+                        Task {
+                            switch await model.gateway.previewConfiguration(text) {
+                            case .success(let diff):
+                                importError = ""
+                                importPreview = (text, diff)
+                            case .failure(let e):
+                                importError = e.description
+                            }
+                        }
+                    }
+                    if !importError.isEmpty { Text(importError).msText(.bodySmall, color: MSColors.red) }
                 }
                 SectionCard("Background service") {
                     HStack {
@@ -581,6 +667,7 @@ public struct SettingsDiagnosticsSection: View {
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+        .task { await refresh() }
         .overlay {
             if confirmRestart {
                 MSAlertDialog("Restart Service?", onDismiss: dismissRestart) {
@@ -595,12 +682,53 @@ public struct SettingsDiagnosticsSection: View {
                     }
                 }
             }
+            if let preview = importPreview {
+                MSAlertDialog("Replace the configuration?", onDismiss: dismissImport) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Everything stored is replaced by the document on the clipboard.").msText(.bodyMedium)
+                        Text(Self.diffLine("Rules", preview.diff.accessRules)).msText(.bodySmall, color: MSColors.textSecondary)
+                        Text(Self.diffLine("Object groups", preview.diff.objectGroups)).msText(.bodySmall, color: MSColors.textSecondary)
+                        Text(Self.diffLine("Failover groups", preview.diff.failoverGroups)).msText(
+                            .bodySmall, color: MSColors.textSecondary)
+                    }
+                } buttons: {
+                    MSTextButton("Cancel") { importPreview = nil }
+                    MSFilledButton("Import", container: MSColors.red, fullWidth: false) {
+                        importPreview = nil
+                        Task {
+                            switch await model.gateway.importConfiguration(preview.text) {
+                            case .success(let counts):
+                                model.showToast("Imported \(counts["access_rules"] ?? 0) rules, \(counts["object_groups"] ?? 0) groups")
+                                await refresh()
+                            case .failure(let e):
+                                importError = e.description
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private func refresh() async {
+        let list = await model.gateway.healthScores()
+        scores = Dictionary(uniqueKeysWithValues: list.map { ($0.interfaceId, $0) })
+        burstPending = model.gateway.burstPending
+        telemetry = await model.gateway.recentTelemetry()
+        configJson = await model.gateway.exportConfiguration(yaml: false)
+        configYaml = await model.gateway.exportConfiguration(yaml: true)
+    }
+
+    static func scoreColor(_ score: Int?) -> Color {
+        guard let score else { return MSColors.textMuted }
+        return score >= 70 ? MSColors.green : (score >= 40 ? MSColors.amber : MSColors.red)
+    }
+
+    static func diffLine(_ what: String, _ d: DiffCounts) -> String {
+        "\(what): \(d.add) added, \(d.change) kept or changed, \(d.remove) removed"
     }
 }
 
-/// The app's recent log lines (MESHSAT-1324), newest last, to read or share when something on
-/// the phone does not do what it should. The lines carry no secrets.
 struct AppLogCard: View {
     @State private var lines: [String] = []
 

@@ -240,6 +240,7 @@ public final class GatewayController: @unchecked Sendable {
         initInterfaceManager()
         initDispatcher()
         initBurstQueue()
+        initHealthScorer()
         initDeadMan()
         initMsvqsc()
         initMqtt()
