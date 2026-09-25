@@ -1,1 +1,1 @@
-Build 17: build 16 with the App Store validation fix. APRS (KISS and APRS-IS), TAK CoT to and from the Hub, the check-in timer, release telemetry with crash capture, MSVQ-SC with the bundled model, smaz2, HeMB bonding, Reed-Solomon FEC, background sync windows.
+Build 18: the Diagnostics screen shows link health scores, the batch queue, the telemetry table and configuration export and import; the device MQTT transport; text messages in the same wire format as MeshSat Android.

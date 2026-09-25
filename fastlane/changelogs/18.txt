@@ -1,0 +1,1 @@
+Build 18: the Diagnostics screen shows link health scores, the batch queue, the telemetry table and configuration export and import; the device MQTT transport; text messages in the same wire format as MeshSat Android.
