@@ -58,7 +58,11 @@ final class GatewayHelpersTests: XCTestCase {
         try await gateway.db.conversationKeys.upsert(ConversationKey(sender: "+31600000000", hexKey: convKey))
         let conv = await gateway.smsWireBody("hi there", recipient: "+31600000000")
         XCTAssertEqual(SmsWire.decode(conv.body, keys: [convKey]).text, "hi there")
-        XCTAssertEqual(SmsWire.decode(conv.body, keys: [key]).text, conv.body, "the global key does not open it")
+        // The global key does not open it: never the text (what is shown is the body as received,
+        // or a printable smaz2 misread of the ciphertext, on both apps: MESHSAT-1343).
+        let withGlobal = SmsWire.decode(conv.body, keys: [key])
+        XCTAssertFalse(withGlobal.wasEncrypted)
+        XCTAssertNotEqual(withGlobal.text, "hi there")
     }
 
     func testConfigurationExportOnAnEmptyStore() async throws {
