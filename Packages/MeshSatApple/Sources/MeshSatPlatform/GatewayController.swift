@@ -13,6 +13,7 @@ import Logging
 import MeshSatBLE
 import MeshSatCrypto
 import MeshSatEngine
+import MeshSatHemb
 import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatNet
@@ -105,6 +106,7 @@ public final class GatewayController: @unchecked Sendable {
         var mesh: RnsMeshtasticBleInterface?
         var iridium: RnsIridiumInterface?
         var identity: Identity?
+        var hemb: HembReassemblyBuffer?
     }
     private var rnsPartsValue = RnsParts()
     var rnsParts: RnsParts {

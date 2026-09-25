@@ -52,6 +52,7 @@ let package = Package(
                 .product(name: "MeshSatAprs", package: "MeshSatKit"),
                 .product(name: "MeshSatTak", package: "MeshSatKit"),
                 .product(name: "MeshSatMsvqsc", package: "MeshSatKit"),
+                .product(name: "MeshSatHemb", package: "MeshSatKit"),
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
                 .product(name: "MeshSatReticulum", package: "MeshSatKit"),
                 .product(name: "MeshSatCrypto", package: "MeshSatKit"),

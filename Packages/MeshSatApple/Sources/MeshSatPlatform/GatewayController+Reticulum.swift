@@ -6,6 +6,7 @@
 import Foundation
 import MeshSatCrypto
 import MeshSatEngine
+import MeshSatHemb
 import MeshSatHub
 import MeshSatNet
 import MeshSatReticulum
@@ -108,9 +109,12 @@ extension GatewayController {
                 interfaceManager.recordActivity(sourceInterface)
             }
         }
+        // HeMB inbound: one reassembly buffer across every bearer (GatewayService's hembReassembly).
+        let hembReassembly = HembReassemblyBuffer(
+            deliverFn: { payload in Self.log.info("hemb: DECODED payload \(payload.count)B") }, now: { [clock] in clock.nowMs() })
         node.hembCallback = { sourceInterface, frame in
-            // HembReassemblyBuffer lands with the HeMB port; until then the frame is seen, not decoded.
-            Self.log.info("hemb: received HeMB frame via \(sourceInterface) (\(frame.count)B), reassembly not ported yet")
+            Self.log.info("hemb: received HeMB frame via \(sourceInterface) (\(frame.count)B)")
+            hembReassembly.addFrame(frame)
         }
         keep(
             Task {
@@ -118,7 +122,10 @@ extension GatewayController {
                 await iridium.start()
             })
         node.start()
-        updateRnsParts { $0.node = node }
+        updateRnsParts {
+            $0.node = node
+            $0.hemb = hembReassembly
+        }
         Self.log.info("Reticulum Transport Node started: \(identity.destHashHex) (\(rnsInterfaces().count) interfaces)")
     }
 
