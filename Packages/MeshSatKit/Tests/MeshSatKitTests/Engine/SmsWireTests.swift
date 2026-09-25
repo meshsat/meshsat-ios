@@ -46,12 +46,18 @@ final class SmsWireTests: XCTestCase {
         XCTAssertEqual(SmsWire.decode(e.body, keys: [AesGcmCrypto.generateKey()]).text, e.body)
         // Auto-decrypt off: as received.
         XCTAssertEqual(SmsWire.decode(e.body, keys: [key], autoDecrypt: false).wasEncrypted, false)
-        // Encrypted only.
+        // Encrypted only. The receiver still says "compressed": plain ASCII is its own smaz2
+        // encoding (bytes 9 to 127 are literals), so SmsReceiver's printable check accepts it.
+        // Android reports the same, and the text is right either way.
         let plain = SmsWire.encode("hi", encryptionKey: key)
         XCTAssertFalse(plain.compressed)
         XCTAssertEqual(
             SmsWire.decode(plain.body, keys: [key]),
-            SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: false))
+            SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: true))
+        // Non-ASCII text through smaz2 comes back as Latin-1 characters, as Kotlin's
+        // Smaz2.decompress makes them (the same mangling on both apps; MESHSAT-1340 for Android).
+        let accented = SmsWire.encode("caf\u{e9}", encryptionKey: key)
+        XCTAssertEqual(SmsWire.decode(accented.body, keys: [key]).wasEncrypted, true)
     }
 
     func testMsvqscTakesTheEncoderAndNeedsTheCodebook() {
