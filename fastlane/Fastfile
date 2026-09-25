@@ -12,6 +12,20 @@ PROJECT = "MeshSat.xcodeproj"
 SCHEME = "MeshSat"
 SIMULATOR = "iPhone 16"
 
+# The App Store Connect REST API with the key fastlane already loaded, for the endpoints
+# Spaceship has no model for (price schedules, availability, submissions).
+def asc_rest(method, path, body = nil)
+  require "net/http"
+  require "json"
+  uri = URI("https://api.appstoreconnect.apple.com/#{path}")
+  req = { post: Net::HTTP::Post, patch: Net::HTTP::Patch, get: Net::HTTP::Get }.fetch(method).new(uri)
+  req["Authorization"] = "Bearer #{Spaceship::ConnectAPI.token.text}"
+  req["Content-Type"] = "application/json"
+  req.body = body.to_json if body
+  res = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
+  [res.code.to_i, (JSON.parse(res.body) rescue {})]
+end
+
 def marketing_version
   File.read("../Config/Version.xcconfig")[/^MARKETING_VERSION\s*=\s*([\d.]+)/, 1]
 end
@@ -142,6 +156,157 @@ platform :ios do
        "-configuration Release -destination 'generic/platform=iOS' -derivedDataPath build-uitest " \
        "-allowProvisioningUpdates=NO 2>&1 | grep -E 'error:|warning: .*provision|BUILD (SUCCEEDED|FAILED)' | sort -u")
     sh("cd ../build-uitest/Build/Products/Release-iphoneos && ls -d *.app && tar czf ../../../../uitest-apps.tgz MeshSat.app MeshSatUITests-Runner.app")
+  end
+
+  # The App Store listing without submitting it: text from fastlane/metadata, the real-phone
+  # screenshots from fastlane/screenshots (6.5 inch, 1242 x 2688), the pending version renamed to
+  # the marketing version and given the newest processed build, the category, the age rating and
+  # the content-rights answer. App privacy and the trader details are web-only in App Store
+  # Connect. BUILD_NUMBER picks the build (default: the newest valid one).
+  desc "Upload the App Store listing and attach a build; does not submit"
+  lane :store_listing do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    build = ENV["BUILD_NUMBER"] ? Spaceship::ConnectAPI::Build.all(app_id: app.id, build_number: ENV["BUILD_NUMBER"]).first : Spaceship::ConnectAPI::Build.all(app_id: app.id, sort: "-uploadedDate", limit: 1).first
+    UI.user_error!("no build") if build.nil?
+    # deliver cannot create the App Review details of a first version; they are made here once,
+    # and App Store Connect will not make them without the contact phone
+    # (metadata/review_information/phone_number.txt). Until then the text metadata waits too:
+    # deliver reads the review details before it writes any text.
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    review = File.join(__dir__, "metadata", "review_information")
+    read = ->(name) { path = File.join(review, "#{name}.txt"); File.exist?(path) ? File.read(path).strip : nil }
+    have_review = begin
+      version.fetch_app_store_review_detail
+      true
+    rescue RuntimeError
+      if read.call("phone_number").to_s.empty?
+        UI.important("No review contact phone yet: text metadata and review details wait")
+        false
+      else
+        version.create_app_store_review_detail(attributes: {
+          contactFirstName: read.call("first_name"), contactLastName: read.call("last_name"),
+          contactEmail: read.call("email_address"), contactPhone: read.call("phone_number"),
+          notes: read.call("notes"), demoAccountRequired: false
+        })
+        UI.message("App Review details created")
+        true
+      end
+    end
+    deliver(
+      app_identifier: "net.meshsat.ios", app_version: marketing_version, skip_binary_upload: true,
+      build_number: build.version, metadata_path: "./fastlane/metadata", screenshots_path: "./fastlane/screenshots",
+      skip_metadata: !have_review, overwrite_screenshots: true, force: true, submit_for_review: false,
+      run_precheck_before_submit: false, primary_category: "UTILITIES", secondary_category: "NAVIGATION",
+      ignore_language_directory_validation: true
+    )
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    version.select_build(build_id: build.id)
+    unless have_review
+      # deliver's text upload waits for the review details; write the same text directly.
+      meta = ->(name) { path = File.join(__dir__, "metadata", "en-US", "#{name}.txt"); File.exist?(path) ? File.read(path).strip : nil }
+      loc = version.get_app_store_version_localizations.find { |l| l.locale == "en-US" }
+      loc.update(attributes: {
+        description: meta.call("description"), keywords: meta.call("keywords"), promotionalText: meta.call("promotional_text"),
+        supportUrl: meta.call("support_url"), marketingUrl: meta.call("marketing_url")
+      }.compact)
+      info = app.fetch_edit_app_info
+      info.get_app_info_localizations.find { |l| l.locale == "en-US" }.update(attributes: {
+        name: meta.call("name"), subtitle: meta.call("subtitle"), privacyPolicyUrl: meta.call("privacy_url")
+      }.compact)
+      version.update(attributes: { copyright: File.read(File.join(__dir__, "metadata", "copyright.txt")).strip }) if File.exist?(File.join(__dir__, "metadata", "copyright.txt"))
+      info.update_categories(category_id_map: { primary_category_id: "UTILITIES", secondary_category_id: "NAVIGATION" })
+    end
+    # Messaging between people on the mesh, nothing else on Apple's list; no web view, no ads.
+    info = app.fetch_edit_app_info
+    info.fetch_age_rating_declaration.update(attributes: {
+      alcoholTobaccoOrDrugUseOrReferences: "NONE", contests: "NONE", gamblingSimulated: "NONE",
+      horrorOrFearThemes: "NONE", matureOrSuggestiveThemes: "NONE", medicalOrTreatmentInformation: "NONE",
+      profanityOrCrudeHumor: "NONE", sexualContentGraphicAndNudity: "NONE", sexualContentOrNudity: "NONE",
+      violenceCartoonOrFantasy: "NONE", violenceRealistic: "NONE", violenceRealisticProlongedGraphicOrSadistic: "NONE",
+      gunsOrOtherWeapons: "NONE", gambling: false, unrestrictedWebAccess: false, lootBox: false,
+      messagingAndChat: true, userGeneratedContent: false, advertising: false, healthOrWellnessTopics: false,
+      parentalControls: false, ageAssurance: false
+    })
+    # OpenStreetMap tiles are third-party content, used under the ODbL.
+    app.update(attributes: { contentRightsDeclaration: "USES_THIRD_PARTY_CONTENT" })
+    UI.success("Listing uploaded for #{marketing_version} (#{build.version}); not submitted")
+  end
+
+  # Free, and on sale in every App Store country except mainland China, where Apple needs a
+  # government ICP filing for the app first. EXCLUDE_TERRITORIES (comma separated, ISO 3166
+  # alpha-3) overrides the list. Safe to run again: it only creates what is missing.
+  desc "Make the app free and set the countries it is sold in"
+  lane :store_price_availability do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    exclude = (ENV["EXCLUDE_TERRITORIES"] || "CHN").split(",").map(&:strip)
+    code, body = asc_rest(:get, "v1/appPriceSchedules/#{app.id}/manualPrices?limit=1")
+    if code == 200 && !(body["data"] || []).empty?
+      UI.message("A price is already set")
+    else
+      _, points = asc_rest(:get, "v1/apps/#{app.id}/appPricePoints?filter[territory]=USA&limit=200")
+      free = (points["data"] || []).find { |p| p["attributes"]["customerPrice"].to_f.zero? }
+      UI.user_error!("no free price point") if free.nil?
+      code, body = asc_rest(:post, "v1/appPriceSchedules", {
+        data: { type: "appPriceSchedules", relationships: {
+          app: { data: { type: "apps", id: app.id } },
+          baseTerritory: { data: { type: "territories", id: "USA" } },
+          manualPrices: { data: [{ type: "appPrices", id: "${free}" }] }
+        } },
+        included: [{ type: "appPrices", id: "${free}", attributes: { startDate: nil },
+                     relationships: { appPricePoint: { data: { type: "appPricePoints", id: free["id"] } } } }]
+      })
+      UI.user_error!("price: #{code} #{body.to_s[0, 300]}") unless code == 201
+      UI.success("Price set: free")
+    end
+    code, = asc_rest(:get, "v1/apps/#{app.id}/appAvailabilityV2")
+    if code == 200
+      UI.message("Availability is already set")
+    else
+      _, terr = asc_rest(:get, "v1/territories?limit=200")
+      # Every country goes in the request, the excluded ones as not available.
+      all = (terr["data"] || []).map { |t| t["id"] }
+      ids = all
+      code, body = asc_rest(:post, "v2/appAvailabilities", {
+        data: { type: "appAvailabilities", attributes: { availableInNewTerritories: true }, relationships: {
+          app: { data: { type: "apps", id: app.id } },
+          territoryAvailabilities: { data: ids.map { |t| { type: "territoryAvailabilities", id: "${ta-#{t.downcase}}" } } }
+        } },
+        included: ids.map { |t| { type: "territoryAvailabilities", id: "${ta-#{t.downcase}}", attributes: { available: !exclude.include?(t), releaseDate: nil, preOrderEnabled: false },
+                                   relationships: { territory: { data: { type: "territories", id: t } } } } }
+      })
+      UI.user_error!("availability: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+      UI.success("Available in #{(all - exclude).size} countries (not #{exclude.join(", ")})")
+    end
+  end
+
+  # Sends the pending version to App Review. Release is manual: an approved version waits for a
+  # person to press Release in App Store Connect. Run store_listing first.
+  desc "Submit the pending App Store version for review (manual release)"
+  lane :store_submit do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    version.update(attributes: { releaseType: "MANUAL" })
+    code, body = asc_rest(:post, "v1/reviewSubmissions", {
+      data: { type: "reviewSubmissions", attributes: { platform: "IOS" },
+              relationships: { app: { data: { type: "apps", id: app.id } } } }
+    })
+    UI.user_error!("submission: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+    submission = body["data"]["id"]
+    code, body = asc_rest(:post, "v1/reviewSubmissionItems", {
+      data: { type: "reviewSubmissionItems", relationships: {
+        reviewSubmission: { data: { type: "reviewSubmissions", id: submission } },
+        appStoreVersion: { data: { type: "appStoreVersions", id: version.id } }
+      } }
+    })
+    UI.user_error!("item: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+    code, body = asc_rest(:patch, "v1/reviewSubmissions/#{submission}", {
+      data: { type: "reviewSubmissions", id: submission, attributes: { submitted: true } }
+    })
+    UI.user_error!("submit: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 200
+    UI.success("#{version.version_string} is waiting for App Review (submission #{submission})")
   end
 
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"

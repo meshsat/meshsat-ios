@@ -1,1 +1,1 @@
-Mesh and satellite messaging through a MeshSat node
+Mesh and satellite messaging

@@ -18,4 +18,6 @@ Satellite messaging needs a RockBLOCK modem and Iridium credits from a provider;
 
 Permissions: Bluetooth, for the node; location, for the map, passes, zones and SOS; the camera, for QR codes; notifications.
 
+Privacy: the app has no analytics and no account, and sends nothing to MeshSat. https://meshsat.net/privacy/
+
 Documentation, and a table of what has and has not been verified: https://docs.meshsat.net/ios/
