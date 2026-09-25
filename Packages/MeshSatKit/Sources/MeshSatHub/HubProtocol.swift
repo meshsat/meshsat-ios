@@ -75,6 +75,8 @@ public struct HubTopics: Sendable, Equatable {
     public func deviceTelemetry(_ deviceId: String) -> String { device(deviceId) + "/telemetry" }
     public func deviceSOS(_ deviceId: String) -> String { device(deviceId) + "/sos" }
     public func deviceMODecoded(_ deviceId: String) -> String { device(deviceId) + "/mo/decoded" }
+    /// CoT events out, as the Bridge and Android publish them (tak/TakIntegration.kt).
+    public func takCotOut(_ deviceId: String) -> String { device(deviceId) + "/tak/cot/out" }
 
     /// The operator's TAK picture: never under the prefix, and granted only to bridges of the
     /// platform tenant (a customer gets TAK from its own hosted TAK server).

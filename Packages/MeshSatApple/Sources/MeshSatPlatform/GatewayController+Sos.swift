@@ -75,8 +75,8 @@ final class SosEnvAdapter: SosEnv, @unchecked Sendable {
     }
 
     func tak(lat: Double, lon: Double, alt: Double, reason: String) {
-        // TAK CoT broadcast lands with MESHSAT-1327; the alarm is logged until then.
-        GatewayController.log.warning("TAK: SOS at \(lat), \(lon) (\(reason)) not broadcast, TAK not ported yet")
+        guard let g = gateway else { return }
+        Task { await g.takSendSOS(lat: lat, lon: lon, alt: alt, reason: reason) }
     }
 
     func audit(event: String, detail: String) async {
