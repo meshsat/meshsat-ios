@@ -6,9 +6,10 @@ What it does:
 
 • Mesh: Meshtastic over Bluetooth LE with the official protobufs: text, positions, telemetry, waypoints, node info and traceroute. A reply to a node goes to that node, not to the whole channel.
 • Satellite: Iridium SBD through the node's RockBLOCK 9603, up to 340 bytes out and 270 bytes in. Messages wait in a queue and are retried until they go out. The app opens a satellite session only when there is something to send, when the modem rings or when you check the mailbox, never on a timer, because every session costs a credit. Passes are predicted on the phone, with no internet needed.
-• Text messages: MeshSat opens the Messages composer with the text ready to send. iOS does not let an app send or read text messages by itself.
+• Text messages: MeshSat opens the Messages composer with the text ready to send, in the same wire format as MeshSat Android, compressed and, if you set it up, encrypted, so a MeshSat kit reads it. iOS does not let an app send or read text messages by itself.
 • APRS through a KISS TNC over TCP (Direwolf, for example) or directly to APRS-IS.
 • Hub, optional: the phone reports to a MeshSat Hub over MQTT with a client certificate and takes remote commands. The Hub is open source and can be self-hosted.
+• TAK: positions from the Hub's TAK feed appear on the map, and the phone reports its own position, and an SOS, to the Hub as Cursor on Target events.
 • Reticulum: the phone runs as a Reticulum transport node and relays between its links.
 • Safety: hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent, until you cancel it. A check-in timer and zones drawn on the map.
 • The map works offline down to country level. Night mode turns the whole app red.
