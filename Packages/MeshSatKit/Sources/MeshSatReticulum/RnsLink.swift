@@ -3,7 +3,6 @@
 // HKDF, data is AES-256-GCM (MeshSat, preferred) or AES-256-CBC (Reticulum default).
 import Crypto
 import Foundation
-import _CryptoExtras
 
 public enum RnsLinkState: Sendable, Equatable {
     case pending  // request sent, waiting for proof
@@ -99,8 +98,7 @@ public final class RnsLink: @unchecked Sendable {
             return nonce + Array(sealed.ciphertext) + Array(sealed.tag)
         case .aes256Cbc:
             let iv = (0..<Self.cbcIvSize).map { _ in UInt8.random(in: 0...255) }
-            let ct = try AES._CBC.encrypt(plaintext, using: SymmetricKey(data: sendKey), iv: AES._CBC.IV(ivBytes: iv))
-            return iv + Array(ct)
+            return iv + (try AesCbc.encrypt(plaintext, key: sendKey, iv: iv))
         }
     }
 
@@ -118,8 +116,7 @@ public final class RnsLink: @unchecked Sendable {
         case .aes256Cbc:
             guard data.count > Self.cbcIvSize else { throw LinkError("ciphertext too short") }
             let iv = Array(data[0..<Self.cbcIvSize])
-            let pt = try AES._CBC.decrypt(Array(data[Self.cbcIvSize...]), using: SymmetricKey(data: recvKey), iv: AES._CBC.IV(ivBytes: iv))
-            return Array(pt)
+            return try AesCbc.decrypt(Array(data[Self.cbcIvSize...]), key: recvKey, iv: iv)
         }
     }
 

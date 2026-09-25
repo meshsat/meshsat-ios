@@ -87,10 +87,13 @@ targets:
           - CFBundleURLName: net.meshsat.ios.provision
             CFBundleURLSchemes:
               - meshsat
-        # Export compliance (MESHSAT-1331): on iOS every cipher the app uses (AES-GCM, Ed25519,
-        # X25519, TLS) is Apple's own CryptoKit or Network framework, which is Apple's exemption
-        # for encryption provided by the operating system, so the answer is "no non-exempt
-        # encryption" and App Store Connect stops asking per build. Set to true with a
+        # Export compliance (MESHSAT-1331): on iOS every cipher the app calls (AES-GCM, Ed25519,
+        # X25519, HKDF, TLS) is Apple's own CryptoKit or Network framework, and AES-CBC for a
+        # Reticulum link is CommonCrypto (MeshSatReticulum/AesCbc.swift, 25 Sep 2026), which is
+        # Apple's exemption for encryption provided by the operating system, so the answer is
+        # "no non-exempt encryption" and App Store Connect stops asking per build. swift-crypto
+        # and swift-nio-ssl still compile BoringSSL into the binary as library code the app
+        # never calls on iOS; keep it that way (no _CryptoExtras or NIOSSL call outside #if). Set to true with a
         # ITSEncryptionExportComplianceCode only if that ever changes; true without a code
         # makes the upload fail ("Invalid Export Compliance Code", seen 24 Sep 2026).
         ITSAppUsesNonExemptEncryption: false
