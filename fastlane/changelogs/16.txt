@@ -1,0 +1,1 @@
+Build 16: APRS (KISS and APRS-IS), TAK CoT to and from the Hub, the check-in timer, release telemetry with crash capture, MSVQ-SC with the bundled model, smaz2, HeMB bonding and Reed-Solomon FEC.
