@@ -50,6 +50,9 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     private let manager = CLLocationManager()
     private let lock = NSLock()
     private var started = false
+    private var askedAlways = false
+    /// iOS 17: keeps the process running in the background while location is on (CLBackgroundActivitySession).
+    private var backgroundSession: AnyObject?
 
     override public init() {
         super.init()
@@ -110,6 +113,11 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
             if wanted { beginUpdates() }
+            // Once "while using" is granted, ask for "always": the gateway reports positions,
+            // watches zones and the check-in timer from the background (Android asks the same).
+            #if os(iOS)
+            if manager.authorizationStatus == .authorizedWhenInUse, !askedAlwaysOnce() { manager.requestAlwaysAuthorization() }
+            #endif
         default:
             authorized.send(false)
         }
@@ -121,5 +129,40 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Self.log.warning("Location error: \(error.localizedDescription)")
+    }
+
+    private func askedAlwaysOnce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let was = askedAlways
+        askedAlways = true
+        return was
+    }
+
+    /// The app went to the background: with Always granted, a background activity session
+    /// keeps the app running for its location work (iOS 17).
+    public func beginBackgroundActivity() {
+        #if os(iOS)
+        guard manager.authorizationStatus == .authorizedAlways else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        if backgroundSession == nil, #available(iOS 17.0, *) {
+            backgroundSession = CLBackgroundActivitySession()
+            Self.log.info("Background activity session started")
+        }
+        #endif
+    }
+
+    public func endBackgroundActivity() {
+        #if os(iOS)
+        lock.lock()
+        let session = backgroundSession
+        backgroundSession = nil
+        lock.unlock()
+        if #available(iOS 17.0, *), let s = session as? CLBackgroundActivitySession {
+            s.invalidate()
+            Self.log.info("Background activity session ended")
+        }
+        #endif
     }
 }
