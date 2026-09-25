@@ -67,10 +67,10 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 
 | | State |
 |---|---|
-| Mesh through a MeshSat node over Bluetooth | **Not built yet** |
+| Mesh through a MeshSat node over Bluetooth | Node link verified 25 September 2026 on an iPhone 11 Pro Max with a T-Beam Supreme (v1) node: connected over Bluetooth LE, 2 nodes heard, signal read; a message across the mesh from this app is not verified yet |
 | Satellite messages out through the node, landing at the Hub | **Not built yet** |
 | A satellite message in, picked up by the app | **Not built yet** |
-| Reconnecting to the node and taking its modem back after an app restart | **Not built yet** |
+| Reconnecting to the node and taking its modem back after an app restart | Verified 25 September 2026: after every restart the app found the node by itself, claimed its Iridium pipe and the RockBLOCK 9603 answered within 30 s |
 | Pass prediction with no internet | **Not built yet** |
 | The phone connected to the Hub as a bridge | Verified 25 September 2026 on an iPhone 11 Pro Max: provisioned by QR code, birth signature verified by the Hub, a ping answered in 0.1 s |
 | SOS: hold to send, the text composers, cancel, and the all-clear after it | **Not built yet** |
@@ -88,7 +88,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 |---|---|---|---|
 | Phone | iPhone 11 Pro Max, iOS 27 | | Main test phone |
 | MeshSat node | v0: XIAO ESP32-S3, Wio-SX1262, RockBLOCK 9603 | Bluetooth LE | Not tested with this app |
-| MeshSat node | v1: LILYGO T-Beam Supreme, RockBLOCK 9603 | Bluetooth LE | Not tested with this app |
+| MeshSat node | v1: LILYGO T-Beam Supreme, RockBLOCK 9603 | Bluetooth LE | Tested 25 September 2026: node link and the modem over the node's pipe; a satellite message not yet |
 | Meshtastic radio | any Meshtastic device | Bluetooth LE | Not tested with this app |
 | APRS | any KISS TNC reachable over TCP, for example Direwolf | KISS over TCP | Not tested with this app |
 
