@@ -294,19 +294,28 @@ platform :ios do
     app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
     version.update(attributes: { releaseType: "MANUAL" })
-    code, body = asc_rest(:post, "v1/reviewSubmissions", {
-      data: { type: "reviewSubmissions", attributes: { platform: "IOS" },
-              relationships: { app: { data: { type: "apps", id: app.id } } } }
-    })
-    UI.user_error!("submission: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
-    submission = body["data"]["id"]
-    code, body = asc_rest(:post, "v1/reviewSubmissionItems", {
+    # A refused try leaves a draft submission behind: take it rather than make another.
+    _, drafts = asc_rest(:get, "v1/reviewSubmissions?filter[app]=#{app.id}&filter[platform]=IOS&filter[state]=READY_FOR_REVIEW&include=items")
+    draft = (drafts["data"] || []).first
+    if draft
+      submission = draft["id"]
+      has_item = !(draft.dig("relationships", "items", "data") || []).empty?
+    else
+      code, body = asc_rest(:post, "v1/reviewSubmissions", {
+        data: { type: "reviewSubmissions", attributes: { platform: "IOS" },
+                relationships: { app: { data: { type: "apps", id: app.id } } } }
+      })
+      UI.user_error!("submission: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+      submission = body["data"]["id"]
+      has_item = false
+    end
+    code, body = has_item ? [201, {}] : asc_rest(:post, "v1/reviewSubmissionItems", {
       data: { type: "reviewSubmissionItems", relationships: {
         reviewSubmission: { data: { type: "reviewSubmissions", id: submission } },
         appStoreVersion: { data: { type: "appStoreVersions", id: version.id } }
       } }
     })
-    UI.user_error!("item: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+    UI.user_error!("item: #{code} #{JSON.generate(body["errors"] || [])[0, 3000]}") unless code == 201 # associatedErrors name what is missing
     code, body = asc_rest(:patch, "v1/reviewSubmissions/#{submission}", {
       data: { type: "reviewSubmissions", id: submission, attributes: { submitted: true } }
     })
