@@ -164,6 +164,7 @@ extension GatewayController {
             return nil
         }
         if interfaceId.hasPrefix("aprs") { return await aprsConnect() }
+        if interfaceId.hasPrefix("mqtt") { return mqttConnect() }
         return "\(interfaceId) is not built yet"
     }
 
@@ -171,5 +172,6 @@ extension GatewayController {
         if interfaceId.hasPrefix("mesh") { central.disconnect() }
         if interfaceId == "iridium_0" { iridiumWanted.send(false) }
         if interfaceId.hasPrefix("aprs") { aprsDisconnect() }
+        if interfaceId.hasPrefix("mqtt") { mqttDisconnect() }
     }
 }

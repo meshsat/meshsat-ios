@@ -15,6 +15,7 @@ import MeshSatCrypto
 import MeshSatEngine
 import MeshSatHemb
 import MeshSatHub
+import MeshSatMQTT
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatReticulum
@@ -108,6 +109,7 @@ public final class GatewayController: @unchecked Sendable {
         var identity: Identity?
         var hemb: HembReassemblyBuffer?
         var blePeripheral: RnsBlePeripheralInterface?
+        var mqtt: RnsMqttInterface?
     }
     private var rnsPartsValue = RnsParts()
     var rnsParts: RnsParts {
@@ -130,6 +132,8 @@ public final class GatewayController: @unchecked Sendable {
     // MSVQ-SC and the transform pipeline (MESHSAT-1329): GatewayController+Msvqsc.
     let msvqsc = MsvqscParts()
     let transformPipeline = TransformPipeline()
+    // The device's own MQTT connection, mqtt_0 (MESHSAT-1326): GatewayController+Mqtt.
+    let mqtt = MqttParts()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)
@@ -238,6 +242,7 @@ public final class GatewayController: @unchecked Sendable {
         initBurstQueue()
         initDeadMan()
         initMsvqsc()
+        initMqtt()
         observeTransports()
         reconnectSavedNode()
         observeIridiumPipe()
@@ -268,6 +273,7 @@ public final class GatewayController: @unchecked Sendable {
         stopAprs()
         stopTak()
         stopSafety()
+        stopMqtt()
         sos?.stop()
         setSos(nil, env: nil)
         interfaceManager.stopAll()

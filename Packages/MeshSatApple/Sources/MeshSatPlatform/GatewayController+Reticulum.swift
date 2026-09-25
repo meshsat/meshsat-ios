@@ -70,6 +70,7 @@ extension GatewayController {
         if let iridium = parts.iridium { map[iridium.interfaceId] = iridium }
         if let tcp = parts.tcp { map[tcp.interfaceId] = tcp }
         if let ble = parts.blePeripheral { map[ble.interfaceId] = ble }
+        if let mqtt = parts.mqtt { map[mqtt.interfaceId] = mqtt }
         if let relay = hubRelay { map[relay.interfaceId] = relay }
         return map
     }

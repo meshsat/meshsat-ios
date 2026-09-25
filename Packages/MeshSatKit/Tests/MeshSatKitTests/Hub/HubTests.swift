@@ -175,6 +175,12 @@ final class FakeMQTTSession: MQTTSession, @unchecked Sendable {
     func disconnect() async { locked { connected = false } }
 
     func deliver(_ topic: String, _ text: String) { inbound.send(MQTTInbound(topic: topic, payload: Array(text.utf8))) }
+
+    /// The broker went away: the session reports the drop and is no longer connected.
+    func drop(_ why: String) {
+        locked { connected = false }
+        events.send(.connectionLost(why))
+    }
 }
 
 final class FakeHubHost: HubReporterHost, @unchecked Sendable {
