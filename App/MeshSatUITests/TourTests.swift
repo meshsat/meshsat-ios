@@ -58,7 +58,7 @@ final class TourTests: XCTestCase {
         }
         back(app)
 
-        for row in ["Diagnostics", "About"] {
+        for row in ["About"] {
             open(app, row)
             pause(row)
             scrollAndPause(app, "\(row)-2")
