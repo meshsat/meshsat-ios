@@ -107,6 +107,7 @@ public final class GatewayController: @unchecked Sendable {
         var iridium: RnsIridiumInterface?
         var identity: Identity?
         var hemb: HembReassemblyBuffer?
+        var blePeripheral: RnsBlePeripheralInterface?
     }
     private var rnsPartsValue = RnsParts()
     var rnsParts: RnsParts {
@@ -160,6 +161,7 @@ public final class GatewayController: @unchecked Sendable {
         return lastModemSignalValue
     }
     public private(set) var tleFetcher: TleFetcher?
+    let passCache = PassCache()
     public private(set) var passScheduler: PassScheduler?
     /// The predicted passes for the phone's position, three hours back and six ahead, refreshed
     /// every five minutes while the scheduler runs (MESHSAT-498, MESHSAT-1300).
@@ -577,9 +579,8 @@ public final class GatewayController: @unchecked Sendable {
                     await clock.sleep(ms: 3_600_000)
                 }
             })
-        let cache = PassCache()
         let scheduler = PassScheduler(
-            passProvider: { [self] in cache.current(nowMs: clock.nowMs()) },
+            passProvider: { [self] in passCache.current(nowMs: clock.nowMs()) },
             // Gated so the 5-second poll tick does nothing when no modem is there (MESHSAT-499).
             signalPoller: { [self] in
                 if await driver.state == .connected { _ = await driver.pollSignal() }
@@ -598,17 +599,7 @@ public final class GatewayController: @unchecked Sendable {
         keep(
             Task { [self] in
                 while !Task.isCancelled {
-                    if let loc = location.phoneLocation.value {
-                        let set = await fetcher.localTles()
-                        let nowSec = Double(clock.nowMs()) / 1000
-                        let observer = Observer(latDeg: loc.latitude, lonDeg: loc.longitude, altKm: loc.altitude / 1000)
-                        let all = PassPredictor.predictAllPasses(
-                            set.tles, observer: observer, start: UnixSeconds(nowSec - 3 * 3600), end: UnixSeconds(nowSec + 6 * 3600),
-                            now: UnixSeconds(nowSec))
-                        Self.log.info("Pass prediction: \(set.tles.count) TLEs (\(set.source)), \(all.count) passes")
-                        cache.replace(all, atMs: clock.nowMs())
-                        passes.send(all)
-                    }
+                    await recomputePasses()
                     await clock.sleep(ms: Self.passCacheTtlMs)
                 }
             })
@@ -618,7 +609,7 @@ public final class GatewayController: @unchecked Sendable {
 
     /// The cached predictions the scheduler reads: those that have not ended, from the last
     /// computation, so SGP4 does not run every 30 s (MESHSAT-498).
-    private final class PassCache: @unchecked Sendable {
+    final class PassCache: @unchecked Sendable {
         private let lock = NSLock()
         private var passes: [PassPrediction] = []
         func replace(_ p: [PassPrediction], atMs: Int64) {

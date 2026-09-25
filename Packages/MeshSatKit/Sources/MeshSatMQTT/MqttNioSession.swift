@@ -82,10 +82,21 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
                     throw SessionError.tls("client certificate: \(error)")
                 }
             }
+            if !endpoint.caCertPem.isEmpty {
+                // The bundle's CA is the only root, as Android's createMtlsSSLSocketFactory(caCertPem)
+                // does: the broker must present a chain to it, whatever the system trusts.
+                do {
+                    conf.trustRoots = .certificates(try NIOSSLCertificate.fromPEMBytes(Array(endpoint.caCertPem.utf8)))
+                    Self.log.info("Broker trust pinned to the bundle's CA")
+                } catch {
+                    throw SessionError.tls("CA certificate: \(error)")
+                }
+            }
             tls = .niossl(conf)
             #else
-            // The phone: Network.framework TLS with the system roots, and the client certificate
-            // as a SecIdentity from the Keychain (the Hub's broker drops a bridge without one).
+            // The phone: Network.framework TLS, the client certificate as a SecIdentity from the
+            // Keychain (the Hub's broker drops a bridge without one), and the bundle's CA as the
+            // only trust root when the bundle carries one.
             var identity: SecIdentity?
             if endpoint.hasClientCertificate {
                 do {
@@ -95,12 +106,19 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
                     throw SessionError.tls("client certificate: \(error)")
                 }
             }
-            tls = .ts(TSTLSConfiguration(minimumTLSVersion: .tlsV12, clientIdentity: identity))
+            var roots: [SecCertificate]?
+            if !endpoint.caCertPem.isEmpty {
+                let certs = Self.pemCertificates(endpoint.caCertPem).compactMap { SecCertificateCreateWithData(nil, Data($0) as CFData) }
+                guard !certs.isEmpty else { throw SessionError.tls("CA certificate: no certificate in the PEM") }
+                roots = certs
+                Self.log.info("Broker trust pinned to the bundle's CA (\(certs.count) certificate(s))")
+            }
+            tls = .ts(TSTLSConfiguration(minimumTLSVersion: .tlsV12, trustRoots: roots, clientIdentity: identity))
             #endif
-            if !endpoint.certPins.isEmpty {
-                // mqtt-nio offers no hook in the handshake for an SPKI check; pins are recorded,
-                // not enforced, until it does. mTLS with the system roots is the Hub's main path.
-                Self.log.warning("SPKI pins configured but not enforced by this MQTT client")
+            if !endpoint.certPins.isEmpty, endpoint.caCertPem.isEmpty {
+                // Neither TLS stack offers a hook for an SPKI check in the handshake; the pins
+                // are Android's fallback when no bundle CA exists, and here they are recorded only.
+                Self.log.warning("SPKI pins configured but not enforced by this MQTT client; the bundle's CA is, when present")
             }
         }
         let configuration = MQTTClient.Configuration(
@@ -244,5 +262,23 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
         guard let c = gone.client else { return }
         if c.isActive() { try? await c.disconnect() }
         try? await c.shutdown()
+    }
+
+    /// Every CERTIFICATE block of a PEM text as DER bytes.
+    static func pemCertificates(_ pem: String) -> [[UInt8]] {
+        var out: [[UInt8]] = []
+        var body: String?
+        for line in pem.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("-----BEGIN CERTIFICATE") {
+                body = ""
+            } else if t.hasPrefix("-----END CERTIFICATE") {
+                if let b = body, let der = Data(base64Encoded: b) { out.append([UInt8](der)) }
+                body = nil
+            } else if body != nil {
+                body! += t
+            }
+        }
+        return out
     }
 }

@@ -5,7 +5,9 @@ IPHONEOS_DEPLOYMENT_TARGET = 17.0
 TARGETED_DEVICE_FAMILY = 1
 SWIFT_STRICT_CONCURRENCY = complete
 SWIFT_TREAT_WARNINGS_AS_ERRORS = NO
-ENABLE_USER_SCRIPT_SANDBOXING = YES
+// NO since 25 Sep 2026: the post-build phase that strips the static ONNX Runtime stub deletes
+// inside the app bundle, and the sandbox refuses that ("Operation not permitted").
+ENABLE_USER_SCRIPT_SANDBOXING = NO
 DEAD_CODE_STRIPPING = YES
 
 // Signing is off until the certificates exist (MESHSAT-1331). CI builds with

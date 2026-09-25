@@ -37,6 +37,17 @@ targets:
         product: MeshSatApple
       - package: MeshSatKit
         product: MeshSatEngine
+    postBuildScripts:
+      - name: Strip the static ONNX Runtime stub
+        # onnxruntime.framework in the Swift package is a static library: it links into the
+        # app binary, and the copy the Embed Frameworks phase leaves is a 51 KB stub that App
+        # Store validation rejects (ITMS-90208 on build 16, 25 Sep 2026). Drop it before signing.
+        script: |
+          for f in onnxruntime onnxruntime_extensions; do
+            rm -rf "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/${f}.framework"
+          done
+        shell: /bin/sh
+        basedOnDependencyAnalysis: false
     info:
       path: App/MeshSat/Info.plist
       properties:

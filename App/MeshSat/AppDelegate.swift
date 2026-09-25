@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// The gateway, made with the delegate so it exists before iOS hands back a restored
     /// Bluetooth central; started in didFinishLaunching, as GatewayService.onCreate.
     let gateway: GatewayController
+    /// The background windows and the lifecycle hand-offs (MESHSAT-1328).
+    let background: BackgroundCoordinator
 
     override init() {
         // First, so every line the gateway writes can be read off the phone (MESHSAT-1324).
@@ -32,6 +34,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             }
         }
         gateway = GatewayController(settings: settings, db: db)
+        background = BackgroundCoordinator(gateway: gateway)
         super.init()
     }
 
@@ -40,12 +43,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Before launching finishes, as BGTaskScheduler requires.
+        background.registerTasks()
         gateway.start()
-        // The background task identifiers the BackgroundCoordinator registers (MESHSAT-1319):
-        _ = MeshSatPlatform.hubSyncTaskIdentifier
-        _ = MeshSatPlatform.refreshTaskIdentifier
         return true
     }
+
+    func applicationDidEnterBackground(_ application: UIApplication) { background.appDidEnterBackground() }
+    func applicationWillEnterForeground(_ application: UIApplication) { background.appWillEnterForeground() }
 
     func handle(url: URL) {
         guard url.scheme == MeshSatPlatform.provisionURLScheme, url.host == MeshSatPlatform.provisionURLHost else { return }

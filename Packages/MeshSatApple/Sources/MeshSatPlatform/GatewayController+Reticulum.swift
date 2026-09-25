@@ -4,6 +4,7 @@
 // TCP peer, the Hub relay), and the transport node over them. Locally addressed packets become
 // messages of transport "reticulum"; HeMB frames are logged until the HeMB port lands.
 import Foundation
+import MeshSatBLE
 import MeshSatCrypto
 import MeshSatEngine
 import MeshSatHemb
@@ -68,8 +69,26 @@ extension GatewayController {
         if let mesh = parts.mesh { map[mesh.interfaceId] = mesh }
         if let iridium = parts.iridium { map[iridium.interfaceId] = iridium }
         if let tcp = parts.tcp { map[tcp.interfaceId] = tcp }
+        if let ble = parts.blePeripheral { map[ble.interfaceId] = ble }
         if let relay = hubRelay { map[relay.interfaceId] = relay }
         return map
+    }
+
+    /// The phone as a Reticulum BLE peripheral (RnsBlePeripheralInterface, MESHSAT-269): built
+    /// and advertised on request, as Android keeps the class without wiring it at start.
+    public func startReticulumBlePeripheral() {
+        if rnsParts.blePeripheral != nil { return }
+        let ble = RnsBlePeripheralInterface()
+        ble.setReceiveCallback { [weak self] interfaceId, packet in self?.rnsNode?.onPacketReceived(sourceInterface: interfaceId, packet) }
+        updateRnsParts { $0.blePeripheral = ble }
+        Task { await ble.start() }
+        Self.log.info("Reticulum BLE peripheral started")
+    }
+
+    public func stopReticulumBlePeripheral() {
+        guard let ble = rnsParts.blePeripheral else { return }
+        updateRnsParts { $0.blePeripheral = nil }
+        Task { await ble.stop() }
     }
 
     func initReticulumTransportNode() {
@@ -130,6 +149,7 @@ extension GatewayController {
     }
 
     func stopReticulum() {
+        stopReticulumBlePeripheral()
         let parts = rnsParts
         updateRnsParts { $0 = GatewayController.RnsParts(identity: $0.identity) }
         parts.node?.stop()
