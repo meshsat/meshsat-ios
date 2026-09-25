@@ -55,7 +55,7 @@ final class SmsWireTests: XCTestCase {
             SmsWire.decode(plain.body, keys: [key]),
             SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: true))
         // Non-ASCII text through smaz2 comes back as Latin-1 characters, as Kotlin's
-        // Smaz2.decompress makes them (the same mangling on both apps; MESHSAT-1340 for Android).
+        // Smaz2.decompress makes them (the same mangling on both apps; MESHSAT-1343 for Android).
         let accented = SmsWire.encode("caf\u{e9}", encryptionKey: key)
         XCTAssertEqual(SmsWire.decode(accented.body, keys: [key]).wasEncrypted, true)
     }
