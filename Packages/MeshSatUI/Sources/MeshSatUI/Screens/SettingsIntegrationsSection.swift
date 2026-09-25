@@ -1,25 +1,9 @@
 // Mirrors the "Ham radio (APRS)", "TAK" and "Reticulum" cards of ui/screens/SettingsScreen.kt
-// (SetupSection.Integrations). The APRS and TAK transports themselves are not ported yet
-// (MESHSAT-1327): the settings are kept as Android keeps them, and the links show the state
-// the gateway reports.
+// (SetupSection.Integrations). The APRS transport is GatewayController+Aprs (MESHSAT-1327); TAK
+// is not ported yet: its settings are kept as Android keeps them.
+import MeshSatAprs
 import MeshSatEngine
 import SwiftUI
-
-/// Mirrors aprs/AprsIsPasscode.kt: the APRS-IS passcode of a callsign (the well-known hash).
-enum AprsIsPasscode {
-    static func calculate(_ callsign: String) -> String {
-        let base = callsign.uppercased().split(separator: "-").first.map(String.init) ?? ""
-        var hash: UInt16 = 0x73E2
-        let bytes = Array(base.utf8)
-        var i = 0
-        while i < bytes.count {
-            hash ^= UInt16(bytes[i]) << 8
-            if i + 1 < bytes.count { hash ^= UInt16(bytes[i + 1]) }
-            i += 2
-        }
-        return String(hash & 0x7FFF)
-    }
-}
 
 public struct SettingsIntegrationsSection: View {
     @Environment(GatewayModel.self) private var model

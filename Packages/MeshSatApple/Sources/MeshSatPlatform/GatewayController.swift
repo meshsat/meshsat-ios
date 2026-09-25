@@ -119,6 +119,8 @@ public final class GatewayController: @unchecked Sendable {
     }
     public var rnsNode: RnsTransportNode? { rnsParts.node }
     public var routingIdentity: Identity? { rnsParts.identity }
+    // APRS (MESHSAT-1327): both clients, the tracker and the beacon, in GatewayController+Aprs.
+    let aprs = AprsParts()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)
@@ -233,6 +235,7 @@ public final class GatewayController: @unchecked Sendable {
         initHubRelay()
         initRnsTcp()
         initReticulumTransportNode()
+        initAprs()
         Self.log.info("GatewayController started")
     }
 
@@ -247,6 +250,7 @@ public final class GatewayController: @unchecked Sendable {
         }
         stopHubRelay()
         stopReticulum()
+        stopAprs()
         sos?.stop()
         setSos(nil, env: nil)
         interfaceManager.stopAll()
@@ -387,6 +391,7 @@ public final class GatewayController: @unchecked Sendable {
             return await deliverToHub(
                 payload: payload, textPreview: textPreview, recipient: recipient, deliveryId: deliveryId, sourceBearer: sourceBearer)
         }
+        if interfaceId.hasPrefix("aprs") { return await deliverToAprs(textPreview: textPreview) }
         return "\(interfaceId) is not built yet"
     }
 

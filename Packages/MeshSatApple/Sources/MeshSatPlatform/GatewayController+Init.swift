@@ -29,26 +29,8 @@ extension GatewayController {
         mgr.register(
             InterfaceConfig(id: "tcp_rns_0", channelType: "tcp", autoReconnect: true, initialBackoffMs: 5_000, maxBackoffMs: 60_000))
 
-        mgr.setConnectCallback { [self] interfaceId in
-            if interfaceId.hasPrefix("mesh") {
-                // The address was saved on first connect; the central keeps the last one.
-                central.reconnect()
-                return nil  // async: setOnline comes from the state observer
-            }
-            if interfaceId == "iridium_0" {
-                // The 9603 arrives with the MeshSat node's BLE link; this only allows taking it.
-                iridiumWanted.send(true)
-                // A modem still connected is simply online again: its state will not say
-                // Connected a second time, so nothing else would restart the worker.
-                if await driver.state == .connected { mgr.setOnline("iridium_0") }
-                return nil
-            }
-            return "\(interfaceId) is not built yet"
-        }
-        mgr.setDisconnectCallback { [self] interfaceId in
-            if interfaceId.hasPrefix("mesh") { central.disconnect() }
-            if interfaceId == "iridium_0" { iridiumWanted.send(false) }
-        }
+        mgr.setConnectCallback { [self] interfaceId in await connectInterface(interfaceId) }
+        mgr.setDisconnectCallback { [self] interfaceId in disconnectInterface(interfaceId) }
 
         // BLE state drives the manager
         keep(
@@ -163,5 +145,31 @@ extension GatewayController {
                     Self.log.error("Dispatcher init failed: \(error)")
                 }
             })
+    }
+
+    /// The manager's connect callback: an error, or nil when the transport's own state
+    /// observer will report online.
+    func connectInterface(_ interfaceId: String) async -> String? {
+        if interfaceId.hasPrefix("mesh") {
+            // The address was saved on first connect; the central keeps the last one.
+            central.reconnect()
+            return nil
+        }
+        if interfaceId == "iridium_0" {
+            // The 9603 arrives with the MeshSat node's BLE link; this only allows taking it.
+            iridiumWanted.send(true)
+            // A modem still connected is simply online again: its state will not say
+            // Connected a second time, so nothing else would restart the worker.
+            if await driver.state == .connected { interfaceManager.setOnline("iridium_0") }
+            return nil
+        }
+        if interfaceId.hasPrefix("aprs") { return await aprsConnect() }
+        return "\(interfaceId) is not built yet"
+    }
+
+    func disconnectInterface(_ interfaceId: String) {
+        if interfaceId.hasPrefix("mesh") { central.disconnect() }
+        if interfaceId == "iridium_0" { iridiumWanted.send(false) }
+        if interfaceId.hasPrefix("aprs") { aprsDisconnect() }
     }
 }
