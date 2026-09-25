@@ -27,7 +27,10 @@ public enum CrashCapture {
         let url = pendingFileURL()
         guard let data = try? Data(contentsOf: url) else { return nil }
         try? FileManager.default.removeItem(at: url)
-        return String(decoding: data, as: UTF8.self)
+        // install() leaves an empty, open file behind on every clean run; only a written
+        // record is a crash (an empty "crash" was logged on the phone, 25 Sep 2026).
+        let text = String(decoding: data, as: UTF8.self)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 
     /// Installs the handlers. Call once, from the app delegate's init.
