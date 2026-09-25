@@ -27,7 +27,10 @@ public struct SmsComposerHost: View {
             }
             .sheet(item: $showing) { del in
                 #if canImport(MessageUI)
-                MessageComposer(recipient: del.recipient, body: del.textPreview) { sent in
+                // The payload is the wire body (compressed, encrypted, base64); the preview the typed text.
+                MessageComposer(
+                    recipient: del.recipient, body: del.payload.flatMap { String(data: $0, encoding: .utf8) } ?? del.textPreview
+                ) { sent in
                     showing = nil
                     if let id = del.id { model.gateway.smsComposerFinished(deliveryId: id, sent: sent) }
                     pending.removeAll { $0.id == del.id }
