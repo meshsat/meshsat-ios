@@ -5,6 +5,7 @@
 // file it mirrors.
 import MeshSatPlatform
 import SwiftUI
+import UIKit
 
 public struct RootView: View {
     @State private var router = Router()
@@ -75,7 +76,12 @@ public struct RootView: View {
                     .opacity(router.selectedTab == .map ? 1 : 0)
                     .allowsHitTesting(router.selectedTab == .map)
             }
-            MSNavigationBar(selected: router.selectedTab) { router.selectTab($0) }.nightMode(nightMode)
+            MSNavigationBar(selected: router.selectedTab) { tab in
+                // Compose drops the keyboard when the destination changes; SwiftUI keeps it.
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                router.selectTab(tab)
+            }
+            .nightMode(nightMode)
         }
         .overlay {
             // MainActivity's ProvisionLinkDialog and ProvisionClaimHost: over every screen.
