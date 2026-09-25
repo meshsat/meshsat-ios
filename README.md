@@ -53,12 +53,12 @@ The list below is what the app is being built to do, following MeshSat Android. 
 
 - **Mesh.** Meshtastic over Bluetooth LE with the official protobufs: text, positions, telemetry, waypoints, node info, traceroute and more.
 - **Satellite.** Iridium SBD through the node's RockBLOCK 9603, up to 340 bytes out and 270 bytes in, with a queue, retries, and sessions only when there is something to send, when the modem rings, or when you check the mailbox. Passes are predicted on the phone from orbit data that ships with the app.
-- **Text messages.** The app opens the Messages composer with the text ready, one message per recipient. iOS does not let an app send a text by itself or read incoming texts, so replies arrive in Messages, not in MeshSat.
+- **Text messages.** The app opens the Messages composer with the text ready, one message per recipient, in the same wire format as MeshSat Android: compressed with smaz2 or MSVQ-SC and encrypted per conversation with AES-256-GCM when you set that up, so a MeshSat kit reads it. iOS does not let an app send a text by itself or read incoming texts, so replies arrive in Messages, not in MeshSat.
 - **APRS** through a KISS TNC over TCP or directly to APRS-IS, with smart beaconing and acknowledged messages.
-- **Hub.** MQTT with a client certificate; the phone shows up in the Hub's fleet like a field kit, reports health and positions, and takes remote commands.
-- **TAK.** Positions from the Hub's TAK feed appear on the map. Receive only.
+- **Hub.** MQTT with a client certificate; the phone shows up in the Hub's fleet like a field kit, reports health and positions, and takes remote commands: send a message, flush the queue, update config, rotate keys, restart the transports. Where a field kit cannot be reached directly, the app reaches it through a tunnel via the Hub.
+- **TAK.** Positions from the Hub's TAK feed appear on the map, and the phone reports its own position, and an SOS, to the Hub as Cursor on Target events. There is no ATAK on iOS, so nothing is handed to another app.
 - **Reticulum.** The phone runs as a Reticulum transport node and relays between the mesh, the Iridium modem, MQTT and TCP peers.
-- **Safety.** Hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent. A check-in timer and zones drawn on the map.
+- **Safety.** Hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent. A check-in timer that sends SOS when the phone sees no activity for too long, and zones drawn on the map that record when a node enters or leaves an area.
 - **Offline map** down to country level, and **night mode**, which turns the whole app red.
 
 Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. iOS keeps the app alive for Bluetooth events and, when you allow it, for location updates; the Gateway card in Setup says which mode you are in.
