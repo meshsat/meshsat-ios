@@ -137,6 +137,7 @@ public final class TelemetryLogger: @unchecked Sendable {
 
     /// The crash file the handler wrote on the last run, into the table (when telemetry is on).
     public func recoverPendingCrash(_ text: String) async {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let exception = Self.jsonString(text, "exception")
         let message = Self.jsonString(text, "message")
         let ts = Self.jsonInt(text, "timestamp") ?? now()

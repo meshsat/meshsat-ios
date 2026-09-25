@@ -176,6 +176,11 @@ final class TelemetryLoggerTests: XCTestCase {
         // Disabled: the file's content is dropped.
         let off = logger(FakeStore(), enabled: false)
         await off.recoverPendingCrash(dump)
+        // An empty file (the handler's untouched file from a clean run) is not a crash.
+        let empty = FakeStore()
+        await logger(empty).recoverPendingCrash("")
+        await logger(empty).recoverPendingCrash("  \n")
+        XCTAssertEqual(empty.rows.count, 0)
     }
 
     func testCanonicalJson() {
