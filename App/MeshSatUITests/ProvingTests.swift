@@ -118,6 +118,22 @@ final class ProvingTests: XCTestCase {
         Thread.sleep(forTimeInterval: 5)
     }
 
+    /// The four Advanced sub-screens the tour could not reach, for the parity captures.
+    @MainActor
+    func testAdvancedScreens() throws {
+        try gate("advanced")
+        let app = attach()
+        for row in ["Message queue", "Audit log", "Certificates and keys", "Encrypt or decrypt text"] {
+            openTab(app, "Setup")
+            tap(app, "Advanced")
+            tap(app, row)
+            Thread.sleep(forTimeInterval: 6)
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 4)
+        }
+        openTab(app, "Setup")
+    }
+
     /// The alarm test from the Home SOS card: confirm, then send each text the composer opens.
     @MainActor
     func testAlarm() throws {
