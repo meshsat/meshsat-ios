@@ -84,6 +84,24 @@ platform :ios do
     build_app(project: PROJECT, scheme: SCHEME, export_method: "app-store", output_directory: ".", output_name: "MeshSat-#{marketing_version}.ipa")
   end
 
+  # A development-signed .ipa for the test iPhone over USB (pymobiledevice3 apps install on the
+  # laptop). TestFlight builds cannot be sideloaded; this one can. DEVICE_UDID and DEVICE_NAME
+  # name the phone; match keeps the development certificate and profile next to the App Store ones.
+  desc "Development-signed .ipa for the test phone -> MeshSat-<v>-dev.ipa"
+  lane :device_build do
+    asc_key
+    udid = ENV["DEVICE_UDID"]
+    UI.user_error!("DEVICE_UDID is not set") if udid.nil?
+    register_devices(devices: { (ENV["DEVICE_NAME"] || "MeshSat test iPhone") => udid })
+    match(type: "development", readonly: false, force_for_new_devices: true)
+    update_code_signing_settings(
+      path: PROJECT, targets: [SCHEME], use_automatic_signing: false, team_id: "4CXPKM8L4V",
+      code_sign_identity: "Apple Development", profile_name: ENV["sigh_net.meshsat.ios_development_profile-name"],
+      bundle_identifier: "net.meshsat.ios"
+    )
+    build_app(project: PROJECT, scheme: SCHEME, export_method: "development", output_directory: ".", output_name: "MeshSat-#{marketing_version}-dev.ipa")
+  end
+
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
   lane :beta do
     asc_key
