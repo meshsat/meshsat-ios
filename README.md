@@ -43,7 +43,7 @@ You need iOS 17 or later.
 
 1. **Pair your node.** In Setup, open **Your MeshSat node**, tap **Scan for Meshtastic devices**, then **Connect** next to your node and enter its Bluetooth PIN. A plain Meshtastic radio pairs the same way.
 2. **Satellite.** With **Use the node's modem** on (the default), the app uses the node's RockBLOCK while it is connected. Setup > Satellite shows the modem, with **Poll Signal** and **Check Mailbox**.
-3. **Hub (optional).** Setup > Hub > **Scan the Hub's QR code**, with the QR code from the Hub. That sets the Hub address, credentials and client certificate.
+3. **Hub (optional).** Setup > Hub > **Scan the Hub's QR code**, with the QR code from the Hub. That sets the Hub address, credentials and client certificate. The Camera app works too: point it at the same code and open the `meshsat://` link it shows; MeshSat asks you to confirm before it claims the bridge.
 4. **Emergency contacts.** In Setup > Safety, add the people an SOS goes to by text, then tap **Test the alarm** to see every route work.
 5. **Send something.** In Messages, tap **New message** and pick who it is for: a node, everyone on the mesh, a phone number or the satellite. For a satellite message the compose bar shows the bytes and credits before you send.
 
