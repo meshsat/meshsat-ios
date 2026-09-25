@@ -8,6 +8,9 @@ extension TelemetryDao: TelemetryStore {}
 extension AccessRuleDao: AccessRuleStore {}
 extension ObjectGroupDao: ObjectGroupStore {}
 extension FailoverGroupDao: FailoverGroupStore {}
+extension AccessRuleDao: ConfigRuleStore {}
+extension ObjectGroupDao: ConfigObjectGroupStore {}
+extension FailoverGroupDao: ConfigFailoverStore {}
 extension IridiumCreditDao: IridiumCreditStore {}
 
 /// The health scorer's queries (engine/HealthScorer.kt), over the deliveries and signal tables.
