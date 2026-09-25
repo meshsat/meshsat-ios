@@ -43,9 +43,8 @@ extension GatewayController {
             topicPrefix: settings.get(SettingsKey.hubTopicPrefix))
         let reporter = HubReporter(config: config, host: HubHost(gateway: self), makeSession: Self.makeHubSession, clock: clock)
         reporter.setCommandCallback { [self] cmd in Task { await handleHubCommand(cmd) } }
-        // TAK CoT broadcast: positions into the store for the map, from the XML's attributes
-        // until the TAK module lands (MESHSAT-1327).
-        reporter.setTakCotCallback { [self] xml in Task { await storeTakPosition(xml) } }
+        // TAK CoT from the Hub: the message list and the map (GatewayController+Tak).
+        reporter.setTakCotCallback { [self] xml in Task { await onTakCotInbound(xml) } }
         reporter.setMoAckCallback { [self] imei, momsn in Task { await onHubReceipt(imei: imei, momsn: momsn) } }
         reporter.start()
         setHubReporter(reporter)
@@ -111,22 +110,6 @@ extension GatewayController {
             if let msgId = Int64(del.msgRef.dropFirst(4)) { try? await db.messages.setForwardedTo(id: msgId, Self.iridiumDelivered) }
         }
         Self.log.info("The Hub has MOMSN \(momsn): \(rows.count) delivery(ies) confirmed")
-    }
-
-    /// A position from the Hub's TAK broadcast, read off the CoT attributes.
-    func storeTakPosition(_ xml: String) async {
-        func attr(_ name: String) -> String? {
-            guard let re = try? NSRegularExpression(pattern: "\(name)=\"([^\"]+)\""),
-                let m = re.firstMatch(in: xml, range: NSRange(xml.startIndex..., in: xml)), let r = Range(m.range(at: 1), in: xml)
-            else { return nil }
-            return String(xml[r])
-        }
-        guard let lat = attr("lat").flatMap(Double.init), let lon = attr("lon").flatMap(Double.init), lat != 0, lon != 0 else { return }
-        let sender = attr("callsign") ?? attr("uid") ?? "unknown"
-        let nodeHash = Int64(UInt32(truncatingIfNeeded: sender.hashValue))
-        try? await db.nodePositions.insert(
-            NodePosition(timestamp: clock.nowMs(), nodeId: nodeHash, nodeName: sender, latitude: lat, longitude: lon, altitude: 0))
-        Self.log.info("TAK position stored from Hub: \(sender)")
     }
 
     /// Commands from the Hub (GatewayService.handleHubCommand). Each is answered.

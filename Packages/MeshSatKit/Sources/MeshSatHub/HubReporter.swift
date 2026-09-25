@@ -76,7 +76,7 @@ public final class HubReporter: @unchecked Sendable {
 
     public let config: HubReporterConfig
     /// The topics under this bridge's tenant namespace.
-    var topics: HubTopics { HubTopics(prefix: config.topicPrefix) }
+    public var topics: HubTopics { HubTopics(prefix: config.topicPrefix) }
     public var bridgeId: String { config.bridgeId }
     public let state = StateBroadcast<State>(.disconnected)
     /// Why the last connection attempt failed, in the library's words, or empty (MESHSAT-749).
@@ -544,6 +544,18 @@ public final class HubReporter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return announcedImeis
+    }
+
+    /// Bytes on a topic (MqttTransport.publishRaw on Android): false when not connected or refused.
+    public func publishRaw(topic: String, payload: [UInt8], qos: Int = 1, retain: Bool = false) async -> Bool {
+        guard let s = currentSession(), await s.isConnected else { return false }
+        do {
+            try await s.publish(topic: topic, payload: payload, qos: qos, retain: retain)
+            return true
+        } catch {
+            Self.log.warning("Hub publish to \(topic) failed: \(error)")
+            return false
+        }
     }
 
     private func publish(_ topic: String, qos: Int, retain: Bool, _ body: JSONBody) async {

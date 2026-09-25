@@ -119,8 +119,9 @@ public final class GatewayController: @unchecked Sendable {
     }
     public var rnsNode: RnsTransportNode? { rnsParts.node }
     public var routingIdentity: Identity? { rnsParts.identity }
-    // APRS (MESHSAT-1327): both clients, the tracker and the beacon, in GatewayController+Aprs.
+    // APRS and TAK (MESHSAT-1327): in GatewayController+Aprs and +Tak.
     let aprs = AprsParts()
+    let tak = TakParts()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)
@@ -232,6 +233,7 @@ public final class GatewayController: @unchecked Sendable {
         initPassScheduler()
         observeModemForHub()
         initHubReporter()
+        initTak()
         initHubRelay()
         initRnsTcp()
         initReticulumTransportNode()
@@ -251,6 +253,7 @@ public final class GatewayController: @unchecked Sendable {
         stopHubRelay()
         stopReticulum()
         stopAprs()
+        stopTak()
         sos?.stop()
         setSos(nil, env: nil)
         interfaceManager.stopAll()
@@ -535,6 +538,7 @@ public final class GatewayController: @unchecked Sendable {
                             timestamp: fix.timeMs, nodeId: 0, nodeName: "Phone", latitude: fix.latitude, longitude: fix.longitude,
                             altitude: Int(fix.altitude)))
                     await publishPositionToHub(fix)
+                    await takSendPosition(fix)
                 }
             })
         location.start()
