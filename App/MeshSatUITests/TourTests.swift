@@ -12,6 +12,8 @@ final class TourTests: XCTestCase {
         #if targetEnvironment(simulator)
         throw XCTSkip("The tour is for the phone; on the simulator it only costs seven minutes.")
         #endif
+        // pymobiledevice3 runs the whole bundle: each phone test answers to MESHSAT_PROVE.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MESHSAT_PROVE"] == "tour", "MESHSAT_PROVE=tour runs the tour")
         let app = XCUIApplication()
         // activate() keeps a running app and its node link; launch() first kills it, and on a
         // phone the relaunch is refused while the kill's termination assertions are outstanding.

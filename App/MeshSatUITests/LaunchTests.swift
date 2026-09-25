@@ -3,6 +3,11 @@ import XCTest
 final class LaunchTests: XCTestCase {
     @MainActor
     func testLaunchShowsTheFiveTabs() throws {
+        #if !targetEnvironment(simulator)
+        // On the phone a launch kills the running app and its node link; the proving tests
+        // attach instead. This one is the simulator's.
+        throw XCTSkip("simulator only")
+        #endif
         let app = XCUIApplication()
         app.launch()
         for name in ["Home", "Messages", "Map", "People", "Setup"] {
