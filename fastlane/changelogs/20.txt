@@ -1,0 +1,1 @@
+Build 20: every screen scrolls; the map is dark like Android's; the Home lanes, the node-unreachable banner, the Material icons, buttons and text fields, Setup and Diagnostics now match MeshSat Android; the Reticulum, APRS and TAK settings show their saved values.

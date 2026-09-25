@@ -1,1 +1,1 @@
-Build 19: the Hub connection works again (build 18 pinned the broker to the wrong certificate authority), and a clean run no longer records an empty crash.
+Build 20: every screen scrolls; the map is dark like Android's; the Home lanes, the node-unreachable banner, the Material icons, buttons and text fields, Setup and Diagnostics now match MeshSat Android; the Reticulum, APRS and TAK settings show their saved values.
