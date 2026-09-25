@@ -92,7 +92,9 @@ private struct CredentialCard: View {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        guard let expiry = f.date(from: notAfter) else { return MSColors.textMuted }
+        // The date part only: the Hub's notAfter is a full timestamp, and Android's
+        // SimpleDateFormat reads the leading date and ignores the rest.
+        guard let expiry = f.date(from: String(notAfter.prefix(10))) else { return MSColors.textMuted }
         let daysLeft = Int(expiry.timeIntervalSinceNow / 86_400)
         if daysLeft < 0 { return Self.expired }
         if daysLeft < 30 { return Self.nearExpiry }
