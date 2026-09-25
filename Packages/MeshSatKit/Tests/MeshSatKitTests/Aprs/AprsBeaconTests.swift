@@ -74,7 +74,9 @@ final class AprsBeaconTests: XCTestCase {
     func testCornerPegging() {
         let clock = TestClock()
         clock.now = 1_000_000
-        let beacon = AprsBeacon(now: { clock.now }, sleep: { _ in })
+        // start() runs the 10 s loop; with a no-op sleep it would spin and beacon on its own
+        // between the steps below (CI, 25 Sep 2026), so the loop's sleep parks it for good.
+        let beacon = AprsBeacon(now: { clock.now }, sleep: { _ in try await Task.sleep(nanoseconds: 3_600_000_000_000) })
         let sent = AprsReceived<Double>()
         beacon.setOnBeacon { _, _, _, course, _, _ in sent.add(course) }
         beacon.start()
