@@ -15,6 +15,11 @@ public enum SmsWire {
         public let body: String
         public let compressed: Bool
         public let encrypted: Bool
+        public init(body: String, compressed: Bool, encrypted: Bool) {
+            self.body = body
+            self.compressed = compressed
+            self.encrypted = encrypted
+        }
     }
 
     /// SmsSender.send's steps 0 to 4. `smaz2` and `msvqscEncoder` are exclusive as on Android:
@@ -55,6 +60,12 @@ public enum SmsWire {
         public let rawText: String
         public let wasEncrypted: Bool
         public let wasCompressed: Bool
+        public init(text: String, rawText: String, wasEncrypted: Bool, wasCompressed: Bool) {
+            self.text = text
+            self.rawText = rawText
+            self.wasEncrypted = wasEncrypted
+            self.wasCompressed = wasCompressed
+        }
     }
 
     /// SmsReceiver.processIncoming's steps. `keys` in the order to try (per sender, the Hub

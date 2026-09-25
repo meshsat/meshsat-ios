@@ -41,6 +41,9 @@ extension GatewayController {
     /// CALL-SSID from the settings; the bare callsign for SSID 0 or none.
     func aprsFullCallsign() -> String {
         let callsign = settings.get(SettingsKey.aprsCallsign).trimmingCharacters(in: .whitespaces).uppercased()
+        // No callsign, no lane: Android's initAprs stops on a blank callsign before the SSID
+        // is appended (a test caught "-10" being built from nothing, 25 Sep 2026).
+        guard !callsign.isEmpty else { return "" }
         let ssid = settings.get(SettingsKey.aprsSsid).trimmingCharacters(in: .whitespaces)
         return !ssid.isEmpty && ssid != "0" ? "\(callsign)-\(ssid)" : callsign
     }
