@@ -23,6 +23,9 @@ platform :ios do
       project: PROJECT,
       scheme: SCHEME,
       devices: [SIMULATOR],
+      # The UI tests are in the scheme so the phone tour can be built (uitest_build); on the
+      # simulator they only try to launch the app, which the CI Mac's simulator refuses.
+      only_testing: ["MeshSatTests"],
       xcargs: "CODE_SIGNING_ALLOWED=NO",
       result_bundle: true,
       output_directory: "fastlane/test_output"
