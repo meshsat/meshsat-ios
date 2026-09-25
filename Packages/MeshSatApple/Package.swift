@@ -23,6 +23,8 @@ let package = Package(
         .package(path: "../MeshSatKit"),
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
+        // The sentence encoder of MSVQ-SC (MESHSAT-1329); a binary xcframework, iOS only.
+        .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
     ],
     targets: [
         .target(
@@ -49,6 +51,7 @@ let package = Package(
                 "MeshSatBLE", "MeshSatStore",
                 .product(name: "MeshSatAprs", package: "MeshSatKit"),
                 .product(name: "MeshSatTak", package: "MeshSatKit"),
+                .product(name: "MeshSatMsvqsc", package: "MeshSatKit"),
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
                 .product(name: "MeshSatReticulum", package: "MeshSatKit"),
                 .product(name: "MeshSatCrypto", package: "MeshSatKit"),
@@ -59,6 +62,7 @@ let package = Package(
                 .product(name: "MeshSatNet", package: "MeshSatKit"),
                 .product(name: "MeshSatWire", package: "MeshSatKit"),
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager"),
             ]
         ),
         .testTarget(name: "MeshSatAppleTests", dependencies: ["MeshSatBLE", "MeshSatStore", "MeshSatPlatform"]),
