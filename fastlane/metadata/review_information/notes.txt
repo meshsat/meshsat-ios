@@ -1,0 +1,7 @@
+MeshSat is a gateway app for off-grid messaging. Its mesh and satellite features need a MeshSat node: a small box with a Meshtastic LoRa radio and a RockBLOCK 9603 Iridium modem, reached over Bluetooth LE. Without a node the app still runs: Home shows each route and what it needs, the Satellite passes screen predicts Iridium passes on the phone with no network, the map works offline, and People, Messages and Setup can all be opened. SOS > "Test the alarm" shows the alarm flow without contacting anyone when no route is available.
+
+The app has no account and no login. The optional Hub connection is set up by scanning a QR code from a MeshSat Hub that the user runs; it is not needed to review the app.
+
+Text messages: iOS does not let an app send or read SMS, so MeshSat opens the Messages composer with the text filled in and the user taps Send.
+
+The source code is public (GPL-3.0): https://github.com/meshsat/meshsat-ios. Documentation: https://docs.meshsat.net/ios/. We can send a video of the app working with a node on request.

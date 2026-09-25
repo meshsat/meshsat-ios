@@ -1,0 +1,1 @@
+Send and receive by Meshtastic mesh and Iridium satellite from one iPhone, through a MeshSat node. Works when the mobile network and the internet are gone.
