@@ -409,6 +409,10 @@ public final class Dispatcher: @unchecked Sendable {
         let deliveries: [MessageDelivery]
         do {
             deliveries = try await store.getPending(channel: channelId, now: clock.nowMs(), limit: 10)
+        } catch is CancellationError {
+            // The worker was cancelled mid-query (a link dropped, the gateway stopped): Kotlin's
+            // isActive loop ends quietly here, so does this one.
+            return
         } catch {
             Self.log.error("Failed to fetch pending for \(channelId): \(error)")
             return
