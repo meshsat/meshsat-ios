@@ -19,7 +19,7 @@ public struct SetupScreen: View {
     }
 
     private var hubDetail: String {
-        guard model.hubSetUp else { return "Not set up" }
+        guard model.hubSetUp else { return "Not set up. Scan the Hub's QR code." }
         switch model.interfaces["hub_0"]?.state {
         case .online: return "Connected"
         case .connecting: return "Connecting"
@@ -34,6 +34,24 @@ public struct SetupScreen: View {
         case .connecting: MSColors.amber
         case .error: MSColors.red
         default: MSColors.textMuted
+        }
+    }
+
+    /// SetupScreen.kt: the node row's detail.
+    private var nodeDetail: String {
+        switch model.meshState {
+        case .connected: "Connected"
+        case .connecting, .scanning: "Connecting"
+        case .disconnected: "Not connected. Pair it here."
+        }
+    }
+
+    /// SetupScreen.kt: the satellite row's detail.
+    private var satelliteDetail: String {
+        switch model.modemState {
+        case .connected: "Modem ready, signal \(model.modemSignal) of 5"
+        case .connecting: "Checking the modem"
+        case .disconnected: model.meshState == .connected ? "No modem on this radio" : "Connect your node first"
         }
     }
 
@@ -53,11 +71,11 @@ public struct SetupScreen: View {
                 GroupTitle("Get connected")
                 NavRow(
                     icon: MSIcon.bluetooth, tint: MSColors.mesh, title: "Your MeshSat node",
-                    detail: model.meshStatusText, dot: nodeDot
+                    detail: nodeDetail, dot: nodeDot
                 ) { router.navigate(.setupSection(.node)) }
                 NavRow(
                     icon: MSIcon.transportSatellite, tint: MSColors.iridium, title: "Satellite",
-                    detail: model.modemStatusText, dot: modemDot
+                    detail: satelliteDetail, dot: modemDot
                 ) { router.navigate(.setupSection(.satellite)) }
                 NavRow(
                     icon: MSIcon.cloud, tint: MSColors.hub, title: "Hub",
@@ -86,11 +104,8 @@ public struct SetupScreen: View {
                 }
 
                 GroupTitle("For experts")
-                NavRow(icon: MSIcon.build, title: "Advanced", detail: "Routing rules, links, queue, logs") {
+                NavRow(icon: MSIcon.build, title: "Advanced", detail: "Routing, links, queue, logs, diagnostics") {
                     router.navigate(.setupAdvanced)
-                }
-                NavRow(icon: MSIcon.info, title: "Diagnostics", detail: "Link health, crash reports, the background service") {
-                    router.navigate(.setupSection(.diagnostics))
                 }
                 NavRow(icon: MSIcon.info, title: "About", detail: "MeshSat iOS \(AppVersion.marketing)") {
                     router.navigate(.about)

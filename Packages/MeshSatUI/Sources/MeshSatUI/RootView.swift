@@ -47,21 +47,30 @@ public struct RootView: View {
         VStack(spacing: 0) {
             StatusStrip(model: strip).nightMode(nightMode)
             SosBanner { router.navigate(.sos) }.nightMode(nightMode)
+            NodeLinkBanner { router.selectTab(.setup) }.nightMode(nightMode)
             ZStack {
-                TabView(selection: $router.selectedTab) {
-                    ForEach(Tab.allCases, id: \.self) { tab in
-                        NavigationStack(path: pathBinding(tab)) {
-                            root(for: tab)
-                                .nightMode(nightMode)
-                                .navigationDestination(for: Route.self) { route in destination(route).nightMode(nightMode) }
-                        }
-                        .toolbar(.hidden, for: .navigationBar)
-                        .tag(tab)
+                // One NavigationStack per tab, all alive, the selected one visible: Android's
+                // saveState/restoreState per tab without a UIKit page controller. The page-style
+                // TabView used before stopped every ScrollView inside it from scrolling on the
+                // phone (25 Sep 2026); this is the same pattern the map already uses.
+                ForEach(Tab.allCases, id: \.self) { tab in
+                    let shown = router.selectedTab == tab
+                    NavigationStack(path: pathBinding(tab)) {
+                        root(for: tab)
+                            .nightMode(nightMode)
+                            .toolbar(.hidden, for: .navigationBar)
+                            .navigationDestination(for: Route.self) { route in
+                                // On the destination itself, or iOS 26 still floats its own
+                                // round back button above the SubScreen's "<- Title" row.
+                                destination(route).nightMode(nightMode)
+                                    .toolbar(.hidden, for: .navigationBar)
+                                    .navigationBarBackButtonHidden(true)
+                            }
                     }
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .accessibilityHidden(!shown)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .toolbar(.hidden, for: .tabBar)
-                .scrollDisabled(true)
                 MapScreen(visible: router.selectedTab == .map, nightMode: nightMode)
                     .opacity(router.selectedTab == .map ? 1 : 0)
                     .allowsHitTesting(router.selectedTab == .map)

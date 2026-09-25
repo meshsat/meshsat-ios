@@ -80,8 +80,10 @@ public struct MSOutlinedButton: View {
 
     public var body: some View {
         Button(action: action) {
+            // Material's OutlinedButton: the label in the primary colour, the outline in the
+            // outline colour (Android's ui/screens/*: OutlinedButton with default colours).
             Text(title)
-                .msText(.bodySmall, color: enabled ? MSColors.offWhite : MSColors.textMuted)
+                .msText(.bodySmall, color: enabled ? MSColors.signalOrange : MSColors.textMuted)
                 .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity, minHeight: 40)
                 .overlay(Capsule().stroke(MSColors.border, lineWidth: 1))

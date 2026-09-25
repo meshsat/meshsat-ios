@@ -35,16 +35,23 @@ public struct MSOutlinedTextField<Leading: View, Trailing: View>: View {
         self.trailing = trailing
     }
 
+    /// Material 3's OutlinedTextField (Android's every form): the label sits inside the box
+    /// while the field is empty and unfocused, and floats onto the top border, small and in the
+    /// focus colour, when the field is focused or filled. A placeholder shows only while the
+    /// label floats.
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let label { Text(label).msText(.bodySmall, color: focused ? focusedBorder : MSColors.textMuted) }
+        let floating = focused || !text.isEmpty
+        // Without a label the placeholder is the hint, as before.
+        let hint = label == nil || floating ? placeholder : ""
+        ZStack(alignment: .topLeading) {
             HStack(spacing: 8) {
                 leading()
                 Group {
                     if secure {
-                        SecureField(placeholder, text: $text)
+                        SecureField(hint, text: $text)
                     } else {
-                        TextField(placeholder, text: $text, axis: lineLimit > 1 ? .vertical : .horizontal).lineLimit(1...max(1, lineLimit))
+                        TextField(hint, text: $text, axis: lineLimit > 1 ? .vertical : .horizontal)
+                            .lineLimit(1...max(1, lineLimit))
                     }
                 }
                 .msText(.bodyMedium)
@@ -56,11 +63,28 @@ public struct MSOutlinedTextField<Leading: View, Trailing: View>: View {
                 trailing()
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 48)
+            .frame(minHeight: 56)
             .background(Color.clear)
             .overlay(
                 RoundedRectangle(cornerRadius: MSRadius.control, style: .continuous).stroke(
                     focused ? focusedBorder : MSColors.border, lineWidth: focused ? 2 : 1))
+            if let label {
+                if floating {
+                    Text(label)
+                        .msText(.bodySmall, color: focused ? focusedBorder : MSColors.textMuted)
+                        .padding(.horizontal, 4)
+                        .background(MSColors.bg)
+                        .offset(x: 12, y: -8)
+                } else {
+                    Text(label)
+                        .msText(.bodyMedium, color: MSColors.textMuted)
+                        .padding(.leading, 16)
+                        .frame(minHeight: 56)
+                        .allowsHitTesting(false)
+                }
+            }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
     }
 }
