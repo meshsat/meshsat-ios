@@ -124,6 +124,9 @@ public final class GatewayController: @unchecked Sendable {
     let tak = TakParts()
     // Dead man's switch, burst queue, telemetry: GatewayController+Safety.
     let safety = SafetyParts()
+    // MSVQ-SC and the transform pipeline (MESHSAT-1329): GatewayController+Msvqsc.
+    let msvqsc = MsvqscParts()
+    let transformPipeline = TransformPipeline()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)
@@ -230,6 +233,7 @@ public final class GatewayController: @unchecked Sendable {
         initDispatcher()
         initBurstQueue()
         initDeadMan()
+        initMsvqsc()
         observeTransports()
         reconnectSavedNode()
         observeIridiumPipe()
@@ -379,7 +383,8 @@ public final class GatewayController: @unchecked Sendable {
             // it waits without using up a try (MESHSAT-1243).
             let hold = await driver.sbdixHoldRemainingMs()
             if hold > 0 { return "\(Dispatcher.notNow)\(hold) the satellite modem pauses after a session found no network" }
-            let data = payload.isEmpty ? Array(textPreview.utf8) : payload
+            // A typed message may go as an MSVQ-SC frame (MESHSAT-1329); bytes go as they are.
+            let data = payload.isEmpty ? satelliteBytes(for: textPreview) : payload
             // One message, one frame (MESHSAT-1280).
             if !SatelliteLimits.fits(data.count) { return "\(Dispatcher.never) \(SatelliteLimits.tooLong(data.count))" }
             guard await driver.writeMoBuffer(data) else { return "Could not hand the message to the modem" }
