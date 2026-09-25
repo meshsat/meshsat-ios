@@ -102,6 +102,41 @@ platform :ios do
     build_app(project: PROJECT, scheme: SCHEME, export_method: "development", output_directory: ".", output_name: "MeshSat-#{marketing_version}-dev.ipa")
   end
 
+  # The app and its UI test runner, both development-signed, built for testing on the phone so the
+  # laptop can install them and run the tour (pymobiledevice3 developer dvt xcuitest). The runner
+  # is net.meshsat.ios.uitests.xctrunner, covered by a wildcard App ID net.meshsat.ios.* that this
+  # lane creates once. Output: build-uitest/Build/Products/Release-iphoneos/{MeshSat,MeshSatUITests-Runner}.app
+  desc "Development-signed app + UI test runner for the test phone"
+  lane :uitest_build do
+    asc_key
+    udid = ENV["DEVICE_UDID"]
+    UI.user_error!("DEVICE_UDID is not set") if udid.nil?
+    register_devices(devices: { (ENV["DEVICE_NAME"] || "MeshSat test iPhone") => udid })
+    wildcard = "net.meshsat.ios.*"
+    existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: wildcard }).select { |b| b.identifier == wildcard }
+    if existing.empty?
+      Spaceship::ConnectAPI::BundleId.create(name: "MeshSat iOS test bundles", identifier: wildcard, platform: "IOS")
+      UI.message("Created the wildcard App ID #{wildcard}")
+    end
+    match(type: "development", readonly: false, force_for_new_devices: true, app_identifier: ["net.meshsat.ios", wildcard])
+    update_code_signing_settings(
+      path: PROJECT, targets: [SCHEME], use_automatic_signing: false, team_id: "4CXPKM8L4V",
+      code_sign_identity: "Apple Development", profile_name: ENV["sigh_net.meshsat.ios_development_profile-name"],
+      bundle_identifier: "net.meshsat.ios"
+    )
+    { "MeshSatUITests" => "net.meshsat.ios.uitests", "MeshSatTests" => "net.meshsat.ios.tests" }.each do |target, bundle|
+      update_code_signing_settings(
+        path: PROJECT, targets: [target], use_automatic_signing: false, team_id: "4CXPKM8L4V",
+        code_sign_identity: "Apple Development", profile_name: ENV["sigh_net.meshsat.ios.*_development_profile-name"],
+        bundle_identifier: bundle
+      )
+    end
+    sh("cd .. && rm -rf build-uitest && xcodebuild build-for-testing -project #{PROJECT} -scheme #{SCHEME} " \
+       "-configuration Release -destination 'generic/platform=iOS' -derivedDataPath build-uitest " \
+       "-allowProvisioningUpdates=NO 2>&1 | grep -E 'error:|warning: .*provision|BUILD (SUCCEEDED|FAILED)' | sort -u")
+    sh("cd ../build-uitest/Build/Products/Release-iphoneos && ls -d *.app && tar czf ../../../../uitest-apps.tgz MeshSat.app MeshSatUITests-Runner.app")
+  end
+
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
   lane :beta do
     asc_key
