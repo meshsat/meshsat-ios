@@ -26,6 +26,10 @@ platform :ios do
       # The UI tests are in the scheme so the phone tour can be built (uitest_build); on the
       # simulator they only try to launch the app, which the CI Mac's simulator refuses.
       only_testing: ["MeshSatTests"],
+      # The CI Mac's simulator wedged twice on 25 Sep 2026 ("Busy: Application failed preflight
+      # checks" on every launch, pipelines 56377 and 56381): start each run from a quit, erased device.
+      force_quit_simulator: true,
+      reset_simulator: true,
       xcargs: "CODE_SIGNING_ALLOWED=NO",
       result_bundle: true,
       output_directory: "fastlane/test_output"
