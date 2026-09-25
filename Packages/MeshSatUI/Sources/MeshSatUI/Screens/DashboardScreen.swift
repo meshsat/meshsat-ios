@@ -3,6 +3,8 @@
 // card of four TransportLanes, the Getting started checklist, then the cards in the order set
 // with Arrange (HomeCards.swift).
 import MeshSatEngine
+import MeshSatMeshtastic
+import MeshSatPlatform
 import SwiftUI
 
 public struct DashboardScreen: View {
@@ -15,46 +17,109 @@ public struct DashboardScreen: View {
 
     public init(nightMode: Binding<Bool>) { _nightMode = nightMode }
 
-    private var hubLane: LaneState {
-        guard model.hubSetUp else { return .off }
-        switch model.interfaces["hub_0"]?.state {
-        case .online: return .working
-        case .connecting: return .trying
-        default: return .off
+    // MARK: Lanes, as HomeLanes.kt derives them (one state and one sentence per way out)
+
+    private static let highPassDeg = 40.0
+
+    private var meshUp: Bool { model.meshState == .connected }
+    private var reconnecting: Bool { !meshUp && model.meshPaired }
+    private var bluetoothOffWithNode: Bool { !model.bluetoothOn && model.meshPaired }
+    private var myNum: UInt32 { model.myInfo?.myNodeNum ?? 0 }
+    private var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    private var passLine: String? {
+        let nowSec = nowMs / 1000
+        if let overhead = model.passes.first(where: { $0.isActive && $0.peakElevDeg >= Self.highPassDeg && $0.los.value > Double(nowSec) })
+        {
+            _ = overhead
+            return "A satellite is high overhead now."
         }
+        if let next = model.passes.first(where: { $0.aos.value > Double(nowSec) && $0.peakElevDeg >= Self.highPassDeg }) {
+            return "Next high pass \(Words.inTime(Int64(next.aos.value * 1000), nowMs: nowMs))."
+        }
+        return nil
     }
 
-    private var hubDetail: String {
-        guard model.hubSetUp else { return "Not set up." }
-        switch model.interfaces["hub_0"]?.state {
-        case .online: return "Connected to the Hub."
-        case .connecting: return "Connecting to the Hub."
-        case .error: return "The Hub cannot be reached."
-        default: return "Off."
-        }
+    private var satQueueLine: String {
+        cards.iridiumQueueDepth > 0 ? "\(Words.count(cards.iridiumQueueDepth, "message")) waiting to go out. " : ""
     }
 
-    private var meshLane: LaneState {
-        switch model.meshState {
-        case .connected: .working
-        case .connecting, .scanning: .trying
-        case .disconnected: .off
+    private var satellite: (LaneState, String) {
+        if bluetoothOffWithNode {
+            return (.failed, (satQueueLine + "Bluetooth is off on this phone. Switch it on to reach the node's modem.").trimmed)
         }
-    }
-
-    private var satelliteLane: LaneState {
+        if model.modemLinkBroken {
+            return (.failed, (satQueueLine + "The phone cannot reach the node's modem. Getting the link back.").trimmed)
+        }
         switch model.modemState {
-        case .connected: model.modemSignal > 0 ? .working : .trying
-        case .connecting: .trying
-        case .disconnected: .off
+        case .connected: return (.working, (satQueueLine + (passLine ?? "Modem ready.")).trimmed)
+        case .connecting:
+            return model.modemSilent
+                ? (.failed, "The node's modem does not answer. Check its power and cable.") : (.trying, "Checking the modem.")
+        case .disconnected:
+            if meshUp { return (.off, "This radio has no satellite modem.") }
+            if reconnecting { return (.trying, (satQueueLine + "Reconnecting to your MeshSat node.").trimmed) }
+            return (.off, "Connect a MeshSat node to use its satellite modem.")
         }
     }
 
-    private var headline: (String, String) {
-        switch (model.meshState == .connected, model.modemState == .connected) {
-        case (true, true): ("Mesh and satellite are up.", "Messages can go out both ways.")
-        case (true, false): ("The mesh is up.", "The node's modem is not there yet.")
-        default: ("Nothing can send yet.", "Connect your node in Setup.")
+    private var mesh: (LaneState, String) {
+        if bluetoothOffWithNode { return (.failed, "Bluetooth is off on this phone. Switch it on to reach your node.") }
+        if meshUp {
+            let myName = model.nodes.first(where: { $0.nodeNum == myNum })?.longName ?? ""
+            var line = myName.isEmpty ? "Connected" : "Connected to \(myName)"
+            if model.bluetoothRssi != 0 { line += ", signal \(model.bluetoothRssi) dBm" }
+            line += "."
+            if let b = model.nodeBattery, b.nodeNum == myNum,
+                let text = NodeBattery.describe(level: b.level, voltage: b.voltage, hoursLeft: b.hoursLeft, withVoltage: false)
+            {
+                line += b.level > 100 ? " \(text)." : " Battery \(text)."
+            }
+            return (.working, line)
+        }
+        switch model.meshState {
+        case .connecting, .scanning: return (.trying, "Connecting to your node.")
+        default: return reconnecting ? (.trying, "Reconnecting to your node.") : (.off, "Connect a MeshSat node or a Meshtastic radio.")
+        }
+    }
+
+    private var sms: (LaneState, String) {
+        // The Play edition of Android has no SMS lane; iOS hands texts to Messages.
+        guard model.canSendSms else { return (.off, "This phone cannot send texts.") }
+        if cards.smsQueueDepth > 0 { return (.working, "\(Words.count(cards.smsQueueDepth, "message")) waiting to go out.") }
+        return (.working, "Through the Messages app.")
+    }
+
+    private var hub: (LaneState, String) {
+        guard model.hubSetUp else { return (.off, "Scan the Hub's QR code to connect this phone.") }
+        switch model.interfaces["hub_0"]?.state {
+        case .online: return (.working, "Connected as \(settings.string(SettingsKey.hubBridgeId)).")
+        case .connecting: return (.trying, "Connecting to the Hub.")
+        case .error: return (.failed, "Cannot reach the Hub. It keeps trying by itself.")
+        default: return (.trying, "Not connected. It keeps trying by itself.")
+        }
+    }
+
+    private var headline: (String, String?) {
+        var ways: [String] = []
+        if satellite.0 == .working { ways.append("satellite") }
+        if mesh.0 == .working { ways.append("mesh") }
+        if sms.0 == .working { ways.append("SMS") }
+        if hub.0 == .working { ways.append("the Hub") }
+        let sentence = ways.isEmpty ? "Nothing can send yet." : "Messages can go out by \(Self.joinAnd(ways))."
+        let waiting = cards.iridiumQueueDepth + cards.meshQueueDepth + cards.smsQueueDepth
+        let next: String? =
+            waiting > 0
+            ? "\(Words.count(waiting, "message")) on the way." : (ways.isEmpty ? "Start with your MeshSat node, below." : nil)
+        return (sentence, next)
+    }
+
+    private static func joinAnd(_ parts: [String]) -> String {
+        switch parts.count {
+        case 0: ""
+        case 1: parts[0]
+        case 2: "\(parts[0]) and \(parts[1])"
+        default: parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
         }
     }
 
@@ -64,38 +129,42 @@ public struct DashboardScreen: View {
                 HomeHeader(nightMode: $nightMode) { showReorder = true }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline.0).msText(.headlineSmall)
-                    Text(headline.1).msText(.bodyLarge, color: MSColors.textSecondary)
+                    if let next = headline.1 { Text(next).msText(.bodyLarge, color: MSColors.textSecondary) }
                 }
-                .padding(4)
+                .padding(.horizontal, 4)
                 VStack(spacing: 0) {
+                    let sat = satellite
                     TransportLane(
                         icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
-                        metric: "\(model.modemSignal)/5",
-                        detail: model.modemState == .connected ? "Modem on the node." : "No modem. Connect your node.",
-                        state: satelliteLane
+                        metric: model.modemState == .connected ? "\(model.modemSignal)/5" : nil,
+                        detail: sat.1, state: sat.0, inFlight: cards.iridiumQueueDepth > 0
                     ) {
-                        router.navigate(.setupSection(.node))
+                        router.navigate(model.modemState == .connected ? .passes : .setupSection(.satellite))
                     }
                     MSDivider()
+                    let meshLane = mesh
+                    let others = model.nodes.filter { $0.nodeNum != myNum }.count
                     TransportLane(
                         icon: MSIcon.transportMesh, color: MSColors.mesh, name: "Mesh",
-                        metric: "\(model.nodes.count) nodes",
-                        detail: model.meshState == .connected ? "Connected to your node." : "\(model.meshStatusText).",
-                        state: meshLane
+                        metric: meshUp ? Words.count(others, "node") : nil,
+                        detail: meshLane.1, state: meshLane.0, inFlight: cards.meshQueueDepth > 0
                     ) {
-                        router.navigate(.setupSection(.node))
+                        if meshUp { router.selectTab(.people) } else { router.navigate(.setupSection(.node)) }
                     }
                     MSDivider()
+                    let smsLane = sms
                     TransportLane(
                         icon: MSIcon.sms, color: MSColors.sms, name: "SMS",
-                        metric: "\(cards.smsToday) today", detail: "Through the Messages app.", state: model.canSendSms ? .working : .off
+                        metric: smsLane.0 == .working ? "\(cards.smsToday) today" : nil,
+                        detail: smsLane.1, state: smsLane.0, inFlight: cards.smsQueueDepth > 0
                     ) {
                         router.navigate(.setupSection(.sms))
                     }
                     MSDivider()
+                    let hubLane = hub
                     TransportLane(
                         icon: MSIcon.cloud, color: MSColors.hub, name: "Hub",
-                        metric: model.hubCallsign, detail: hubDetail, state: hubLane
+                        metric: nil, detail: hubLane.1, state: hubLane.0, inFlight: false
                     ) {
                         router.navigate(.setupSection(.hub))
                     }
@@ -213,14 +282,15 @@ public struct TransportLane: View {
     let icon: Image
     let color: Color
     let name: String
-    let metric: String
+    let metric: String?
     let detail: String
     let state: LaneState
+    let inFlight: Bool
     let action: () -> Void
 
     public init(
-        icon: Image, color: Color, name: String, metric: String, detail: String, state: LaneState,
-        action: @escaping () -> Void
+        icon: Image, color: Color, name: String, metric: String?, detail: String, state: LaneState,
+        inFlight: Bool = false, action: @escaping () -> Void
     ) {
         self.icon = icon
         self.color = color
@@ -228,6 +298,7 @@ public struct TransportLane: View {
         self.metric = metric
         self.detail = detail
         self.state = state
+        self.inFlight = inFlight
         self.action = action
     }
 
@@ -249,10 +320,12 @@ public struct TransportLane: View {
                     HStack {
                         Text(name).msText(.titleMedium)
                         Spacer(minLength: 8)
-                        Text(metric).msText(.bodyMedium, mono: true, color: state == .working ? color : MSColors.textSecondary)
+                        if let metric {
+                            Text(metric).msText(.bodyMedium, mono: true, color: state == .working ? color : MSColors.textSecondary)
+                        }
                     }
                     Text(detail).msText(.bodyMedium, color: MSColors.textSecondary).lineLimit(2)
-                    LaneLine(color: color, state: state).frame(height: 10)
+                    LaneLine(color: color, state: state, inFlight: inFlight).frame(height: 10)
                 }
                 Image(systemName: "chevron.right").foregroundStyle(MSColors.textMuted).font(.system(size: 17))
                     .padding(.top, 18)
@@ -269,13 +342,38 @@ public struct TransportLane: View {
 public struct LaneLine: View {
     let color: Color
     let state: LaneState
+    let inFlight: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(color: Color, state: LaneState) {
+    public init(color: Color, state: LaneState, inFlight: Bool = false) {
         self.color = color
         self.state = state
+        self.inFlight = inFlight
     }
 
     public var body: some View {
+        // Lane.kt: a message on its way is an orange dot travelling along the line every 2.4 s;
+        // with Reduce Motion the dot waits at 70 percent instead.
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !inFlight || reduceMotion)) { timeline in
+            let travel =
+                inFlight && !reduceMotion ? timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4 : 0.7
+            line(travel: travel)
+        }
+        .accessibilityLabel(described)
+    }
+
+    private var described: String {
+        let base =
+            switch state {
+            case .working: "working"
+            case .trying: "trying"
+            case .off: "not available"
+            case .failed: "not working"
+            }
+        return base + (inFlight ? ", a message is on its way" : "")
+    }
+
+    private func line(travel: Double) -> some View {
         Canvas { context, size in
             let y = size.height / 2
             switch state {
@@ -297,6 +395,15 @@ public struct LaneLine: View {
                     x += 9
                 }
             }
+            if inFlight {
+                let r: CGFloat = 4.5
+                let cx = r + (size.width - 2 * r) * travel
+                context.fill(Path(ellipseIn: CGRect(x: cx - r, y: y - r, width: 2 * r, height: 2 * r)), with: .color(MSColors.signalOrange))
+            }
         }
     }
+}
+
+extension String {
+    fileprivate var trimmed: String { trimmingCharacters(in: .whitespaces) }
 }

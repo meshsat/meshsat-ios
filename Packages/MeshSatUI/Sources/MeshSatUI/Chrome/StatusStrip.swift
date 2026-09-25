@@ -44,8 +44,10 @@ public struct StatusStrip: View {
     public var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: 14) {
-                item(MSIcon.transportSatellite, tint(model.satellite, MSColors.iridium), text: "\(model.satelliteBars)/5")
-                item(MSIcon.transportMesh, tint(model.mesh, MSColors.mesh), text: "\(model.meshNodes)")
+                item(
+                    MSIcon.transportSatellite, tint(model.satellite, MSColors.iridium),
+                    text: model.satellite == .off ? nil : "\(model.satelliteBars)/5")
+                item(MSIcon.transportMesh, tint(model.mesh, MSColors.mesh), text: model.mesh == .working ? "\(model.meshNodes)" : nil)
                 item(MSIcon.sms, tint(model.sms, MSColors.sms), text: nil)
                 item(MSIcon.cloud, tint(model.hub, MSColors.hub), text: nil)
                 item(MSIcon.myLocation, tint(model.gps, MSColors.green), text: nil)

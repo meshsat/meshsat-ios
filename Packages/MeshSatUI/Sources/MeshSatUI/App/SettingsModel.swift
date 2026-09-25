@@ -105,16 +105,25 @@ public final class SettingsModel {
         SettingsKey.hubEnabled, SettingsKey.hubRelayEnabled, SettingsKey.telemetryEnabled, SettingsKey.startOnBoot,
     ]
 
-    public func string(_ key: Setting<String>) -> String { values[key.key] ?? key.defaultValue }
-    public func bool(_ key: Setting<Bool>) -> Bool { (values[key.key] ?? (key.defaultValue ? "1" : "0")) == "1" }
+    // A key outside the cached lists is read from the store itself: the Reticulum, APRS, TAK and
+    // MQTT sections showed defaults (empty host, switches off) while the gateway ran on the saved
+    // values (phone, 25 Sep 2026).
+    public func string(_ key: Setting<String>) -> String { values[key.key] ?? gateway.settings.get(key) }
+    public func bool(_ key: Setting<Bool>) -> Bool { values[key.key].map { $0 == "1" } ?? gateway.settings.get(key) }
     public func compressMode(_ channel: String) -> String {
         SettingsKey.compress(channel: channel).map { values[$0.key] ?? $0.defaultValue } ?? "off"
     }
     public var encryptionKey: String { values[SecretKey.encryptionKey] ?? "" }
     public var hubPassword: String { values[SecretKey.hubPassword] ?? "" }
 
-    public func set(_ key: Setting<String>, _ value: String) { gateway.settings.set(key, value) }
-    public func set(_ key: Setting<Bool>, _ value: Bool) { gateway.settings.set(key, value) }
+    public func set(_ key: Setting<String>, _ value: String) {
+        gateway.settings.set(key, value)
+        values[key.key] = value
+    }
+    public func set(_ key: Setting<Bool>, _ value: Bool) {
+        gateway.settings.set(key, value)
+        values[key.key] = value ? "1" : "0"
+    }
     public func setCompressMode(_ channel: String, _ mode: String) { gateway.settings.setCompressMode(channel: channel, mode) }
     public func setEncryptionKey(_ key: String) { gateway.settings.setEncryptionKey(key) }
     public func setHubPassword(_ password: String) { gateway.settings.setHubPassword(password) }

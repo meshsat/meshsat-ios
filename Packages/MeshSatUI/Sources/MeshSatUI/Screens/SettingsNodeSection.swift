@@ -34,15 +34,6 @@ public struct SettingsNodeSection: View {
                         }
                     }
                 }
-                SectionCard("Satellite modem on the node") {
-                    ConnectionStatusRow(
-                        label: "Status", connected: model.modemState == .connected, statusText: model.modemStatusText,
-                        color: MSColors.iridium)
-                    Text(
-                        "The RockBLOCK 9603 on a MeshSat node is reached over the same Bluetooth link. The phone takes it while connected."
-                    )
-                    .msText(.bodySmall, color: MSColors.textSecondary)
-                }
             }
             .padding(MSSpace.screen)
         }

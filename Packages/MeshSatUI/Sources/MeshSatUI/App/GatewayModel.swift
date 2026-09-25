@@ -20,7 +20,9 @@ public final class GatewayModel {
     public let gateway: GatewayController
 
     public private(set) var meshState: MeshtasticCentral.State = .disconnected
-    public private(set) var bluetoothOn = false
+    // Android reads the adapter synchronously; CoreBluetooth answers a moment after start, so
+    // Bluetooth counts as on until the central says otherwise (no "Bluetooth is off" flash).
+    public private(set) var bluetoothOn = true
     public private(set) var scanResults: [MeshtasticCentral.DiscoveredNode] = []
     public private(set) var myInfo: MeshtasticProtocol.MyNodeInfo?
     public private(set) var nodes: [MeshtasticProtocol.MeshNodeInfo] = []
@@ -42,6 +44,10 @@ public final class GatewayModel {
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
     public private(set) var modemSignal = 0
+    /// IridiumSpp.linkBroken: writes to the node's pipe do not land (MESHSAT-1270).
+    public private(set) var modemLinkBroken = false
+    /// IridiumSpp.modemSilent: the pipe is ours but the modem answers no AT.
+    public private(set) var modemSilent = false
     /// The IMEI of the modem connected now, else the last one this phone talked to.
     public private(set) var modemImei = ""
     public private(set) var interfaces: [String: InterfaceStatus] = [:]
@@ -160,6 +166,7 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await bars in driver.signalReadings.subscribe() { self?.modemSignal = bars }
             })
+        followModemFlags(driver)
         tasks.append(
             Task { [weak self] in
                 for await states in gateway.interfaceManager.states.subscribe() { self?.interfaces = states }
@@ -224,6 +231,18 @@ public final class GatewayModel {
     }
 
     /// The run and, for the run shown, its deliveries (rememberSosStatuses in SosScreens.kt).
+    /// IridiumSpp.linkBroken and modemSilent, read by the Home lanes and the node banner.
+    private func followModemFlags(_ driver: IridiumATDriver) {
+        tasks.append(
+            Task { [weak self] in
+                for await broken in driver.linkBrokenChanges.subscribe() { self?.modemLinkBroken = broken }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await silent in driver.modemSilentChanges.subscribe() { self?.modemSilent = silent }
+            })
+    }
+
     private func followSos(_ sos: SosController?) {
         sosTasks.forEach { $0.cancel() }
         sosTasks.removeAll()

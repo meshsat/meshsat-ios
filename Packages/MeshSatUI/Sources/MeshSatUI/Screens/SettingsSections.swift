@@ -294,7 +294,10 @@ public struct SettingsMessagingSection: View {
                         text: $keyInput, label: "AES-256-GCM Key (hex)", secure: !showKey, focusedBorder: MSColors.teal,
                         keyboard: .asciiCapable)
                     HStack(spacing: 8) {
-                        MSFilledButton(showKey ? "Hide" : "Show", container: MSColors.surface, labelColor: MSColors.offWhite) {
+                        MSFilledButton(
+                            showKey ? "Hide" : "Show", container: MSColors.surface,
+                            labelColor: keyInput.isEmpty ? MSColors.textMuted : MSColors.offWhite
+                        ) {
                             showKey.toggle()
                         }
                         MSFilledButton("Generate", container: MSColors.amber) {
@@ -308,13 +311,17 @@ public struct SettingsMessagingSection: View {
                         }
                     }
                     HStack(spacing: 8) {
-                        MSFilledButton("Copy", container: MSColors.surface, labelColor: MSColors.offWhite) {
+                        MSFilledButton(
+                            "Copy", container: MSColors.surface, labelColor: keyInput.isEmpty ? MSColors.textMuted : MSColors.offWhite
+                        ) {
                             if !keyInput.isEmpty {
                                 UIPasteboard.general.string = keyInput
                                 model.showToast("Key copied to clipboard")
                             }
                         }
-                        MSFilledButton("Paste", container: MSColors.surface, labelColor: MSColors.offWhite) {
+                        MSFilledButton(
+                            "Paste", container: MSColors.surface, labelColor: keyInput.isEmpty ? MSColors.textMuted : MSColors.offWhite
+                        ) {
                             let clip = UIPasteboard.general.string ?? ""
                             if AesGcmCrypto.isValidHexKey(clip) {
                                 keyInput = clip
@@ -325,7 +332,7 @@ public struct SettingsMessagingSection: View {
                             }
                         }
                         ShareLink(item: keyInput, subject: Text("MeshSat Encryption Key")) {
-                            Text("Share").msText(.bodySmall, color: MSColors.offWhite)
+                            Text("Share").msText(.bodySmall, color: keyInput.isEmpty ? MSColors.textMuted : MSColors.offWhite)
                                 .padding(.horizontal, 24).frame(maxWidth: .infinity, minHeight: 40)
                                 .background(MSColors.surface, in: Capsule())
                         }
@@ -363,12 +370,23 @@ public struct SettingsMessagingSection: View {
                             selected: settings.string(SettingsKey.msvqscStages)
                         ) { settings.set(SettingsKey.msvqscStages, $0) }
                     }
-                    Text("MSVQ-SC itself lands with MESHSAT-1329; until then a message set to it goes out as typed.")
-                        .msText(.bodySmall, color: MSColors.amber)
                 }
                 SectionCard("Quick messages") {
-                    Text("The brevity codes (2 bytes: 0xCA + message ID) land with the canned codebook port.").msText(
-                        .bodySmall, color: MSColors.textMuted)
+                    let entries = CannedCodebook.defaultEntries.sorted { $0.key < $1.key }
+                    Text("\(entries.count) brevity codes loaded").msText(.bodySmall, color: MSColors.textMuted)
+                    ForEach(entries.prefix(10), id: \.key) { entry in
+                        HStack {
+                            Text(entry.value).msText(.bodySmall)
+                            Spacer(minLength: 8)
+                            Text("#\(entry.key)").msText(.bodySmall, mono: true, color: MSColors.textMuted)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    if entries.count > 10 {
+                        Text("... and \(entries.count - 10) more").msText(.bodySmall, color: MSColors.textMuted)
+                    }
+                    Text("Wire format: 2 bytes (0xCA + message ID). Auto-detected on receive.")
+                        .msText(.bodySmall, color: MSColors.textMuted)
                 }
             }
             .padding(MSSpace.screen)
@@ -519,7 +537,6 @@ public struct SettingsDiagnosticsSection: View {
     @Environment(SettingsModel.self) private var settings
     @State private var confirmRestart = false
     @State private var scores: [String: HealthScore] = [:]
-    @State private var burstPending = 0
     @State private var telemetry: [TelemetryEntry] = []
     @State private var configJson = ""
     @State private var configYaml = ""
@@ -534,52 +551,23 @@ public struct SettingsDiagnosticsSection: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: MSSpace.screen) {
-                SectionCard("App log") {
-                    AppLogCard()
-                }
                 SectionCard("Link health") {
-                    ForEach(["mesh_0", "iridium_0", "sms_0", "hub_0", "mqtt_0", "aprs_0"], id: \.self) { id in
-                        let status = model.interfaces[id]
+                    // SettingsScreen.kt lists the three scored interfaces by id, score only.
+                    ForEach(["mesh_0", "iridium_0", "sms_0"], id: \.self) { id in
                         let score = scores[id]
                         HStack {
-                            Text(Words.channel(id)).msText(.bodySmall, color: Words.channelColor(id))
+                            Text(id).msText(.bodySmall, color: Words.channelColor(id))
                             Spacer(minLength: 8)
-                            Text(status.map { Words.linkState($0.state.rawValue) } ?? "--")
-                                .msText(
-                                    .bodySmall,
-                                    color: status.map {
-                                        Words.deliveryColor($0.state == .online ? "sent" : ($0.state == .error ? "failed" : "queued"))
-                                    } ?? MSColors.textMuted)
                             Text(score.map { "score: \($0.score)/100" } ?? "score: --")
                                 .msText(.bodySmall, color: Self.scoreColor(score?.score))
-                                .frame(width: 96, alignment: .trailing)
                         }
-                        .padding(8)
-                        .background(MSColors.surface, in: RoundedRectangle(cornerRadius: MSRadius.control, style: .continuous))
+                        .padding(.vertical, 6)
                     }
                     Text(
                         "Health = Signal(0.3) + SuccessRate(0.3) + Latency(0.2) + Cost(0.2). "
                             + "Scores update in real-time based on 24h delivery history."
                     )
                     .msText(.bodySmall, color: MSColors.textMuted)
-                }
-                SectionCard("Batch queue") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("\(burstPending) waiting for the next pass").msText(.bodyMedium)
-                            Text("Small messages packed into one satellite session when a pass begins, or now.")
-                                .msText(.bodySmall, color: MSColors.textMuted)
-                        }
-                        Spacer(minLength: 8)
-                        MSOutlinedButton("Flush now") {
-                            Task {
-                                let n = await model.gateway.flushBurstNow()
-                                model.showToast(n > 0 ? "Batch of \(n) queued for the satellite" : "Nothing waiting")
-                                burstPending = model.gateway.burstPending
-                            }
-                        }
-                        .frame(width: 120)
-                    }
                 }
                 SectionCard("Crash reports") {
                     SettingRow("Enable local telemetry") {
@@ -609,37 +597,6 @@ public struct SettingsDiagnosticsSection: View {
                                 .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
                         }
                     }
-                }
-                SectionCard("Configuration") {
-                    Text("The routing rules, object groups and failover groups as one document, in the same format as the Bridge.")
-                        .msText(.bodySmall, color: MSColors.textMuted)
-                    HStack(spacing: 8) {
-                        ShareLink(item: configJson, subject: Text("MeshSat configuration")) {
-                            Text("Export JSON").msText(.bodySmall, color: MSColors.offWhite)
-                                .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
-                        }
-                        ShareLink(item: configYaml, subject: Text("MeshSat configuration")) {
-                            Text("Export YAML").msText(.bodySmall, color: MSColors.offWhite)
-                                .frame(maxWidth: .infinity, minHeight: 40).overlay(Capsule().stroke(MSColors.border, lineWidth: 1))
-                        }
-                    }
-                    MSOutlinedButton("Import from the clipboard") {
-                        let text = UIPasteboard.general.string ?? ""
-                        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                            importError = "The clipboard is empty."
-                            return
-                        }
-                        Task {
-                            switch await model.gateway.previewConfiguration(text) {
-                            case .success(let diff):
-                                importError = ""
-                                importPreview = (text, diff)
-                            case .failure(let e):
-                                importError = e.description
-                            }
-                        }
-                    }
-                    if !importError.isEmpty { Text(importError).msText(.bodySmall, color: MSColors.red) }
                 }
                 SectionCard("Background service") {
                     HStack {
@@ -713,7 +670,6 @@ public struct SettingsDiagnosticsSection: View {
     private func refresh() async {
         let list = await model.gateway.healthScores()
         scores = Dictionary(uniqueKeysWithValues: list.map { ($0.interfaceId, $0) })
-        burstPending = model.gateway.burstPending
         telemetry = await model.gateway.recentTelemetry()
         configJson = await model.gateway.exportConfiguration(yaml: false)
         configYaml = await model.gateway.exportConfiguration(yaml: true)

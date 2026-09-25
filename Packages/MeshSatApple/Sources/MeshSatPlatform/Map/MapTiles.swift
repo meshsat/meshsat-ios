@@ -90,7 +90,11 @@ public final class MeshSatTileOverlay: MKTileOverlay, @unchecked Sendable {
     private let detailed: MBTilesReader?
     private let session: URLSession
     private let processed = NSCache<NSString, NSData>()
-    private static let ciContext = CIContext(options: [.cacheIntermediates: false])
+    // No colour management: Android's ColorMatrixColorFilter works on the stored sRGB values, and
+    // Core Image would otherwise apply the matrix in linear light and lighten the result.
+    private static let ciContext = CIContext(options: [
+        .cacheIntermediates: false, .workingColorSpace: NSNull(), .outputColorSpace: NSNull(),
+    ])
 
     init(world: URL?, detailed: URL?, night: Bool) {
         self.detailedPath = detailed?.path
@@ -105,7 +109,10 @@ public final class MeshSatTileOverlay: MKTileOverlay, @unchecked Sendable {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         config.httpAdditionalHeaders = ["User-Agent": "MeshSat-iOS/\(version) (https://meshsat.net)"]
         session = URLSession(configuration: config)
-        super.init(urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+        // No URL template: with one, MapKit fetches the tiles itself and never calls loadTile, so
+        // the dark styling was skipped and the map came up in OpenStreetMap's daylight colours
+        // (phone, 25 Sep 2026). The overlay builds the OSM URL by hand instead.
+        super.init(urlTemplate: nil)
         canReplaceMapContent = true
         tileSize = CGSize(width: 256, height: 256)
         minimumZ = 2
@@ -123,7 +130,11 @@ public final class MeshSatTileOverlay: MKTileOverlay, @unchecked Sendable {
             deliver(Self.styled(raw, night: night), key, result)
             return
         }
-        var request = URLRequest(url: url(forTilePath: path))
+        guard let tileURL = URL(string: "https://tile.openstreetmap.org/\(path.z)/\(path.x)/\(path.y).png") else {
+            deliver(nil, key, result)
+            return
+        }
+        var request = URLRequest(url: tileURL)
         request.cachePolicy = .returnCacheDataElseLoad
         let task = session.dataTask(with: request) { [weak self] data, response, _ in
             guard let self else { return }
@@ -168,7 +179,7 @@ public final class MeshSatTileOverlay: MKTileOverlay, @unchecked Sendable {
     }
 
     /// The dark matrix, then night mode's red-only matrix, then back to PNG.
-    static func styled(_ raw: Data, night: Bool) -> Data? {
+    public static func styled(_ raw: Data, night: Bool) -> Data? {
         guard let input = CIImage(data: raw) else { return nil }
         var image = input
         let dark = CIFilter(name: "CIColorMatrix")!
