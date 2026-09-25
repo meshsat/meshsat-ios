@@ -141,12 +141,12 @@ extension GatewayController {
                 error = "SBDIX failed"
             }
         case "flush_burst":
-            // The burst queue (MESHSAT-1329) is not ported yet; nothing to flush.
-            break
+            await flushBurst()
         case "config_update":
             if let v = payload.int("health_interval") { settings.set(SettingsKey.hubHealthInterval, String(v)) }
             if let v = payload.bool("deadman_enabled") { settings.set(SettingsKey.deadmanEnabled, v) }
             if let v = payload.int("deadman_timeout_min") { settings.set(SettingsKey.deadmanTimeoutMin, String(v)) }
+            applyDeadManSettings()
         case "reboot":
             // iOS cannot restart the app; the gateway restarts its transports instead.
             Self.log.info("Hub reboot command received: restarting the node link")

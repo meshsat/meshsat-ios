@@ -122,6 +122,8 @@ public final class GatewayController: @unchecked Sendable {
     // APRS and TAK (MESHSAT-1327): in GatewayController+Aprs and +Tak.
     let aprs = AprsParts()
     let tak = TakParts()
+    // Dead man's switch, burst queue, telemetry: GatewayController+Safety.
+    let safety = SafetyParts()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)
@@ -223,8 +225,11 @@ public final class GatewayController: @unchecked Sendable {
             Task { [self] in
                 await driver.setMtSink { [self] bytes in await storeIridiumMt(String(decoding: bytes, as: UTF8.self)) }
             })
+        initTelemetry()
         initInterfaceManager()
         initDispatcher()
+        initBurstQueue()
+        initDeadMan()
         observeTransports()
         reconnectSavedNode()
         observeIridiumPipe()
@@ -254,6 +259,7 @@ public final class GatewayController: @unchecked Sendable {
         stopReticulum()
         stopAprs()
         stopTak()
+        stopSafety()
         sos?.stop()
         setSos(nil, env: nil)
         interfaceManager.stopAll()
@@ -285,6 +291,7 @@ public final class GatewayController: @unchecked Sendable {
 
     /// A text for the mesh, from the compose bar.
     public func sendMeshMessage(_ text: String, to: UInt32 = MeshtasticProtocol.broadcastNodeNum, channel: Int = 0) {
+        touchDeadMan()
         guard central.state.value == .connected else { return }
         let outText = OutgoingText.onMesh(text)
         let proto = MeshtasticProtocol.encodeTextMessage(outText, to: to, channel: channel)
@@ -303,6 +310,7 @@ public final class GatewayController: @unchecked Sendable {
     /// delivery queue and retried until it goes out, whether or not the modem is there right
     /// now (MESHSAT-1243). A failed session never drops it.
     public func queueIridiumMessage(_ text: String, recipient: String) {
+        touchDeadMan()
         Task { [self] in
             let msgId =
                 (try? await db.messages.insert(
@@ -572,7 +580,10 @@ public final class GatewayController: @unchecked Sendable {
             // Through the delivery queue, never straight to the modem (MESHSAT-1249): what waits
             // for the satellite goes now.
             burstFlusher: { [self] in
-                if await driver.state == .connected { await dispatcher?.drainNow(channelId: "iridium_0", reason: "a pass began") }
+                if await driver.state == .connected {
+                    await flushBurst()
+                    await dispatcher?.drainNow(channelId: "iridium_0", reason: "a pass began")
+                }
             },
             clock: clock)
         // The predictions themselves: recomputed every five minutes while a position is known,

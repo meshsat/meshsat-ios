@@ -298,7 +298,9 @@ final class HubReporterTests: XCTestCase {
         let session = FakeMQTTSession()
         let reporter = HubReporter(config: config, host: FakeHubHost(), makeSession: { _ in session })
         reporter.start()
-        _ = await waitUntil { reporter.state.value == .connected }
+        // The birth goes out by itself after the connect; waiting for it keeps it out of the
+        // two publishes checked below (it raced them under a loaded parallel run, 25 Sep 2026).
+        _ = await waitUntil { session.published.contains { $0.topic.hasSuffix("/birth") } }
         let ok = await reporter.publishSos(
             deviceId: "300434067943980", id: "sos-1", text: "SOS: flaneur needs help", sos: true, type: "sos", lat: 52.16, lon: 4.51)
         XCTAssertTrue(ok)

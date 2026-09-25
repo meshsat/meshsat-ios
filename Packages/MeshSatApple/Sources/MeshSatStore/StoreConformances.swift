@@ -4,6 +4,7 @@ import MeshSatEngine
 
 extension MessageDeliveryDao: DeliveryStore {}
 extension AuditLogDao: AuditStore {}
+extension TelemetryDao: TelemetryStore {}
 extension AccessRuleDao: AccessRuleStore {}
 extension ObjectGroupDao: ObjectGroupStore {}
 extension FailoverGroupDao: FailoverGroupStore {}
