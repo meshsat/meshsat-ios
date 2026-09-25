@@ -44,4 +44,11 @@ public enum GaloisField256 {
         if a == 0 { return 0 }
         return exp[Int(log[Int(a)]) + 255 - Int(log[Int(b)])]
     }
+
+    /// a to the power n, n >= 0.
+    public static func pow(_ a: UInt8, _ n: Int) -> UInt8 {
+        if n == 0 { return 1 }
+        if a == 0 { return 0 }
+        return exp[(Int(log[Int(a)]) * n) % 255]
+    }
 }

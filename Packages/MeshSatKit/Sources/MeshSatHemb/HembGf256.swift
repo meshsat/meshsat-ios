@@ -37,7 +37,8 @@ public enum HembGf256 {
         return exp[Int(log[Int(a)]) + Int(log[Int(b)])]
     }
 
-    /// Multiplicative inverse; inv(0) is 0 by convention, as in the Kotlin and Go versions.
+    /// Multiplicative inverse. Kotlin throws on zero; here it is 0, and every caller checks for
+    /// a zero pivot first, so the two never diverge on a real matrix.
     @inline(__always)
     public static func inv(_ a: UInt8) -> UInt8 {
         if a == 0 { return 0 }
