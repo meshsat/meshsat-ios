@@ -5,7 +5,11 @@ import XCTest
 // into). It taps navigation only: never a send, an SOS, a delete or a toggle. Run it on the phone
 // with `pymobiledevice3 developer dvt xcuitest net.meshsat.ios.uitests.xctrunner`.
 final class TourTests: XCTestCase {
-    private let dwell: TimeInterval = 5
+    // MESHSAT_DWELL shortens the pause on each screen (a review recording wants 3, a screenshot
+    // audit 5).
+    private var dwell: TimeInterval {
+        TimeInterval(ProcessInfo.processInfo.environment["MESHSAT_DWELL"] ?? "") ?? 5
+    }
 
     @MainActor
     func testTourEveryScreen() throws {
@@ -14,6 +18,7 @@ final class TourTests: XCTestCase {
         #endif
         // pymobiledevice3 runs the whole bundle: each phone test answers to MESHSAT_PROVE.
         try XCTSkipUnless(ProcessInfo.processInfo.environment["MESHSAT_PROVE"] == "tour", "MESHSAT_PROVE=tour runs the tour")
+        wakeAndUnlock()
         let app = XCUIApplication()
         // activate() keeps a running app and its node link; launch() first kills it, and on a
         // phone the relaunch is refused while the kill's termination assertions are outstanding.
@@ -77,6 +82,23 @@ final class TourTests: XCTestCase {
     }
 
     // MARK: - helpers
+
+    // The test phone has no passcode, so a sleeping, locked phone is woken with the home button
+    // and unlocked with a swipe up on the lock screen (26 Sep 2026: a tour started against a dark
+    // screen failed in 0.1 s). On an unlocked phone both are harmless.
+    @MainActor
+    private func wakeAndUnlock() {
+        let device = XCUIDevice.shared
+        device.press(.home)
+        Thread.sleep(forTimeInterval: 1)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let bottom = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.97))
+        let middle = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+        bottom.press(forDuration: 0.1, thenDragTo: middle)
+        Thread.sleep(forTimeInterval: 1)
+        device.press(.home)
+        Thread.sleep(forTimeInterval: 1)
+    }
 
     private func pause(_ name: String) {
         NSLog("MeshSatTour: %@", name)
