@@ -6,6 +6,7 @@
 #   fastlane screenshots     the parity screenshot suite (UI tests) on the iPhone 16 simulator
 #   fastlane beta            match + gym + pilot; refuses to run until the App Store Connect
 #                            API key is present in the environment (MESHSAT-1331)
+#   fastlane store_review_state  read-only: submissions, version, notes and attachment as App Review sees them
 default_platform(:ios)
 
 PROJECT = "MeshSat.xcodeproj"
@@ -310,6 +311,30 @@ platform :ios do
       end
       attachment = detail.upload_attachment(path: file)
       UI.success("Attached #{attachment.file_name} (#{File.size(file)} bytes)")
+    end
+  end
+
+  # Read-only: where the App Store version stands with App Review (submissions, item, version,
+  # notes, attachment). Answers "do we resubmit or wait" without opening App Store Connect. A
+  # submission in UNRESOLVED_ISSUES with a REJECTED item is also what an open information request
+  # looks like (26 Sep 2026): the reply on the App Review page does not change these states.
+  desc "Print the App Review state of the submissions, version, notes and attachment"
+  lane :store_review_state do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    _, subs = asc_rest(:get, "v1/reviewSubmissions?filter[app]=#{app.id}&filter[platform]=IOS&include=items&fields[reviewSubmissionItems]=state")
+    (subs["data"] || []).each do |s|
+      a = s["attributes"]
+      UI.message("submission #{s['id']}: #{a['state']}#{a['submittedDate'] ? ", submitted #{a['submittedDate']}" : ", not submitted (draft)"}")
+    end
+    (subs["included"] || []).each { |i| UI.message("  item #{i['id'][0, 12]}...: #{i['attributes']['state']}") }
+    app.get_app_store_versions(filter: { platform: "IOS" }).each do |v|
+      UI.message("version #{v.version_string}: #{v.app_store_state}, release #{v.release_type}, build #{v.build&.version || '?'}")
+      detail = v.fetch_app_store_review_detail(includes: "appStoreReviewAttachments") rescue nil
+      next if detail.nil?
+      UI.message("  notes #{detail.notes.to_s.length} chars, demo account #{detail.demo_account_required ? 'required' : 'no'}, phone #{detail.contact_phone.to_s.empty? ? 'MISSING' : 'set'}")
+      # AppStoreReviewAttachment has no file_size; asset_delivery_state is a hash with "state".
+      (detail.app_store_review_attachments || []).each { |att| UI.message("  attachment #{att.file_name}: #{att.asset_delivery_state&.dig('state')}") }
     end
   end
 
