@@ -286,6 +286,33 @@ platform :ios do
     end
   end
 
+  # App Review's "Information Needed" answers (Guideline 2.1, 26 Sep 2026): the Notes field of the
+  # App Review Information section is rewritten from fastlane/metadata/review_information/notes.txt
+  # and, with REVIEW_ATTACHMENT=<file>, the attachment (the screen recording) replaces whatever was
+  # attached before. The reply to App Review itself has no public API: the owner pastes the same
+  # notes into the App Review page and attaches the same file there.
+  desc "Rewrite the App Review notes and attachment of the pending version"
+  lane :store_review_info do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    UI.user_error!("no editable version") if version.nil?
+    detail = version.fetch_app_store_review_detail
+    notes = File.read(File.join(__dir__, "metadata", "review_information", "notes.txt")).strip
+    UI.user_error!("notes.txt is over Apple's 4000 characters (#{notes.length})") if notes.length > 4000
+    detail.update(attributes: { notes: notes, demoAccountRequired: false })
+    UI.message("App Review notes written (#{notes.length} characters)")
+    if (file = ENV["REVIEW_ATTACHMENT"])
+      UI.user_error!("REVIEW_ATTACHMENT #{file} does not exist") unless File.exist?(file)
+      (detail.app_store_review_attachments || []).each do |old|
+        UI.message("Removing attachment #{old.file_name}")
+        old.delete!
+      end
+      attachment = detail.upload_attachment(path: file)
+      UI.success("Attached #{attachment.file_name} (#{File.size(file)} bytes)")
+    end
+  end
+
   # Sends the pending version to App Review. Release is manual: an approved version waits for a
   # person to press Release in App Store Connect. Run store_listing first.
   desc "Submit the pending App Store version for review (manual release)"
