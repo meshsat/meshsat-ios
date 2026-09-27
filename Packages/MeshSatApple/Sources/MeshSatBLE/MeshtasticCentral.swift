@@ -411,6 +411,8 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
         var hasRx: Bool { central.has(IridiumPipeContract.rxUUID) }
         var hasTx: Bool { central.has(IridiumPipeContract.txUUID) }
         var hasStatus: Bool { central.has(IridiumPipeContract.statusUUID) }
+        var hasStats: Bool { central.has(IridiumPipeContract.statsUUID) }
+        var hasPass: Bool { central.has(IridiumPipeContract.passUUID) }
         func chunkSize() -> Int { central.writeChunkSize() }
         func write(uuid: String, _ chunk: [UInt8]) async -> Int {
             guard let q = central.currentOps() else { return GattOpQueue.statusClosed }
