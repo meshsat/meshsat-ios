@@ -1,0 +1,1 @@
+Settings > Advanced > Node log shows the node's live log over Bluetooth. Setup > Satellite gains a Node health card from the node. Pass windows go to the node for its own routing. A Bluetooth drop during a satellite session no longer leaves the modem unreachable for 95 seconds, and reconnecting no longer opens a session by itself.
