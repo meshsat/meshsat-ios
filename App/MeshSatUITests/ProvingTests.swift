@@ -134,6 +134,64 @@ final class ProvingTests: XCTestCase {
         openTab(app, "Setup")
     }
 
+    /// Settings > Advanced > Node log (MESHSAT-1374): switch the node's log on, wait for the node to
+    /// restart and reconnect, and hold the screen while lines stream in for the screenshots.
+    @MainActor
+    func testNodeLog() throws {
+        try gate("nodelog")
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Advanced")
+        tap(app, "Node log")
+        XCTAssertTrue(app.staticTexts["Stream the node's log"].waitForExistence(timeout: 10), "the switch's row")
+        Thread.sleep(forTimeInterval: 4)  // the screen before the switch, for the screenshot
+        let toggle = app.buttons["Stream the node's log"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "the switch")
+        if toggle.value as? String != "On" {
+            toggle.tap()
+            // A security set_config makes the node restart once; the link comes back by itself.
+            Thread.sleep(forTimeInterval: 45)
+        }
+        // Lines arrive as the node logs; give it a minute and keep the screen for the captures.
+        var lines = 0
+        for _ in 0..<12 {
+            Thread.sleep(forTimeInterval: 5)
+            let stamped = NSPredicate(format: "label MATCHES '^[0-9]{2}:[0-9]{2}:[0-9]{2}.*'")
+            lines = app.staticTexts.matching(stamped).count
+            if lines >= 5 { break }
+        }
+        NSLog("MeshSatProve: node log lines on screen: %d", lines)
+        XCTAssertGreaterThan(lines, 0, "at least one line from the node")
+        tap(app, "Pause")
+        Thread.sleep(forTimeInterval: 5)
+        tap(app, "Resume")
+        Thread.sleep(forTimeInterval: 10)
+        openTab(app, "Setup")
+    }
+
+    /// Setup > Satellite: the Node health card from STATS (MESHSAT-1378), scrolled into view.
+    @MainActor
+    func testNodeHealth() throws {
+        try gate("health")
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Satellite")
+        Thread.sleep(forTimeInterval: 4)
+        let card = app.staticTexts["Node health"].firstMatch
+        var tries = 0
+        while !card.exists || !card.isHittable, tries < 4 {
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 1)
+            tries += 1
+        }
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "the Node health card (a node with STATS)")
+        let rows = ["Modem", "Signal", "Sessions since boot", "Last session", "Node uptime"]
+        for row in rows { NSLog("MeshSatProve: row %@ %@", row, app.staticTexts[row].firstMatch.exists ? "present" : "absent") }
+        XCTAssertTrue(app.staticTexts["Modem"].firstMatch.waitForExistence(timeout: 15), "the Modem row (STATS answered)")
+        Thread.sleep(forTimeInterval: 15)  // two STATS re-reads, for the screenshots
+        openTab(app, "Setup")
+    }
+
     /// The alarm test from the Home SOS card: confirm, then send each text the composer opens.
     @MainActor
     func testAlarm() throws {
