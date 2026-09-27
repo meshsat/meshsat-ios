@@ -32,7 +32,13 @@ final class VirtualClock: DriverClock, @unchecked Sendable {
 /// A scripted RockBLOCK 9603 behind the pipe.
 final class FakeModem: ModemLink, @unchecked Sendable {
     private let lock = NSLock()
-    private(set) var commands: [String] = []
+    /// Read from the test while the driver's task appends: always under the lock.
+    var commands: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return commandLog
+    }
+    private var commandLog: [String] = []
     var echo = true
     var sbdixReply = "+SBDIX: 0, 219, 0, 0, 0, 0"
     var csqf = 2
@@ -40,6 +46,8 @@ final class FakeModem: ModemLink, @unchecked Sendable {
     var mt: [UInt8] = []
     /// Commands to ignore first, as a modem still powering up does.
     var silentFor = 0
+    /// A command that is never answered, e.g. "AT+SBDIX" for a session cut by a link drop.
+    var silentCommand: String?
     var moWritten: [UInt8]?
     /// A wedged BLE pipe: attached, answering every write with a failure (MESHSAT-1270).
     var writesFail = false
@@ -72,7 +80,7 @@ final class FakeModem: ModemLink, @unchecked Sendable {
 
     func clearCommands() {
         lock.lock()
-        commands.removeAll()
+        commandLog.removeAll()
         lock.unlock()
     }
 
@@ -89,6 +97,17 @@ final class FakeModem: ModemLink, @unchecked Sendable {
     private func reply(_ command: String, _ body: String) {
         let echoed = echo ? command + "\r" : ""
         send(Array((echoed + body).utf8))
+    }
+
+    /// Record the command; true when the modem stays silent on it.
+    private func swallowed(_ command: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        commandLog.append(command)
+        var silent = silentFor > 0
+        if silent { silentFor -= 1 }
+        if command == silentCommand { silent = true }
+        return silent
     }
 
     private func onByte(_ b: UInt8) {
@@ -110,12 +129,7 @@ final class FakeModem: ModemLink, @unchecked Sendable {
         }
         let command = String(decoding: line, as: UTF8.self)
         line.removeAll()
-        lock.lock()
-        commands.append(command)
-        let silent = silentFor > 0
-        if silent { silentFor -= 1 }
-        lock.unlock()
-        if silent { return }
+        if swallowed(command) { return }
         switch command {
         case "ATE0":
             reply(command, "\r\nOK\r\n")
@@ -406,6 +420,89 @@ final class IridiumATDriverTests: XCTestCase {
         let again = try XCTUnwrap(againRaw)
         XCTAssertTrue(again.moSuccess)
         XCTAssertEqual(modem.commands.filter { $0 == "AT+SBDIX" }.count, sent + 1)
+    }
+
+    /// MESHSAT-1372: a Bluetooth drop mid-session used to hold the command lock for the full
+    /// 95 s, so the next link's probe queued behind it and the phone reported no modem for a
+    /// minute and a half after reconnecting in seconds.
+    func testALinkDropMidSessionEndsTheSessionAtOnceAsUnconfirmedAndFreesTheNextLink() async throws {
+        let modem = FakeModem()
+        let spp = await attached(modem)
+        modem.silentCommand = "AT+SBDIX"
+        let startedAt = clock.nowMs()
+        let session = Task { await spp.sbdix() }
+        await waitUntil { modem.commands.contains("AT+SBDIX") }
+        clock.advance(ms: 5_000)
+        // The link goes away (the central tears the pipe down and the gateway detaches).
+        await spp.detach()
+        let answered = await session.value
+        let result = try XCTUnwrap(answered)
+        XCTAssertTrue(result.linkLost)
+        XCTAssertEqual(result.moStatus, IridiumATDriver.moLinkLost)
+        XCTAssertEqual(IridiumATDriver.moStatusText(result.moStatus), "the link to the node dropped during the session")
+        XCTAssertFalse(result.moSuccess)
+        XCTAssertLessThan(clock.nowMs() - startedAt, IridiumATDriver.sbdixTimeoutMs / 2)
+        // The hold runs from the session's start, as a 32/36 the node caught would have set.
+        let hold = await spp.sbdixHoldRemainingMs()
+        XCTAssertEqual(hold, IridiumATDriver.sbdixHoldMs - (clock.nowMs() - startedAt))
+
+        // The next link is probed at once, nothing queues behind the dead session.
+        let next = FakeModem()
+        await spp.attach(next)
+        await waitUntil { await spp.state == .connected }
+        let state = await spp.state
+        XCTAssertEqual(state, .connected)
+        XCTAssertTrue(next.commands.contains("AT+CGSN"))
+        // And no session goes out on the new link inside the hold.
+        let held = await spp.sbdix()
+        XCTAssertNil(held)
+        XCTAssertFalse(next.commands.contains("AT+SBDIX"))
+    }
+
+    /// The ring flag stays up in the modem until a session clears it: it is remembered, not
+    /// answered with a session (MESHSAT-1372); a session that reached the gateway replaces it.
+    func testARingFlagOrAGatewayCountIsRememberedAsMailboxWaitingByTheModemsLastWord() async throws {
+        let modem = FakeModem()
+        let spp = await attached(modem)
+        var waiting = await spp.mailboxWaiting
+        XCTAssertFalse(waiting)
+        modem.sbdsxReply = "+SBDSX: 0, 218, 0, -1, 1, 0"
+        _ = await spp.sbdStatus()
+        waiting = await spp.mailboxWaiting
+        XCTAssertTrue(waiting)
+        XCTAssertFalse(modem.commands.contains("AT+SBDIX"), "a ring flag is remembered, not answered here")
+        modem.sbdixReply = "+SBDIX: 32, 218, 0, 0, 0, 0"
+        _ = await spp.sbdix()
+        waiting = await spp.mailboxWaiting
+        XCTAssertTrue(waiting, "a session that did not reach the gateway knows nothing new")
+        clock.advance(ms: IridiumATDriver.sbdixHoldMs)
+        modem.sbdixReply = "+SBDIX: 0, 219, 0, 0, 0, 2"
+        _ = await spp.sbdix()
+        waiting = await spp.mailboxWaiting
+        XCTAssertTrue(waiting)
+        modem.sbdixReply = "+SBDIX: 0, 220, 0, 0, 0, 0"
+        _ = await spp.sbdix()
+        waiting = await spp.mailboxWaiting
+        XCTAssertFalse(waiting)
+        modem.sbdsxReply = "+SBDSX: 0, 220, 0, -1, 0, 3"
+        _ = await spp.sbdStatus()
+        waiting = await spp.mailboxWaiting
+        XCTAssertTrue(waiting)
+        modem.sbdsxReply = "+SBDSX: 0, 220, 0, -1, 0, 0"
+        _ = await spp.sbdStatus()
+        waiting = await spp.mailboxWaiting
+        XCTAssertFalse(waiting, "the modem's last word wins")
+    }
+
+    func testAMailboxCheckCutByALinkDropSaysSo() async {
+        let modem = FakeModem()
+        let spp = await attached(modem)
+        modem.silentCommand = "AT+SBDIX"
+        let check = Task { await spp.checkMailbox { _ in } }
+        await waitUntil { modem.commands.contains("AT+SBDIX") }
+        await spp.detach()
+        let result = await check.value
+        XCTAssertEqual(result, .linkLost)
     }
 
     func testAnUnsolicitedSbdringIsReportedWithoutSendingAnything() async {

@@ -89,9 +89,24 @@ final class IridiumBlePipeTests: XCTestCase {
         XCTAssertNil(pipe.owner.value)
     }
 
-    func testANodeThatHoldsItsModemAnswersNodeAndTheClaimFails() async {
+    /// STATUS may say "node" for about a second after the TX subscription, longer with a session
+    /// in flight: a wait, not a refusal (MESHSAT-1372).
+    func testANodeThatHoldsItsModemAndHandsItOverWithinTheTimeoutIsClaimed() async {
         let (pipe, _) = make { $0.statusOwner = .node }
-        let ok = await pipe.claim(timeoutMs: 1_000)
+        let handover = Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            pipe.onValue(
+                uuid: IridiumPipeContract.statusUUID, [IridiumPipeContract.statusVersion, IridiumPipeContract.Owner.phone.rawValue])
+        }
+        let ok = await pipe.claim(timeoutMs: 2_000)
+        XCTAssertTrue(ok)
+        XCTAssertEqual(pipe.owner.value, .phone)
+        await handover.value
+    }
+
+    func testANodeThatKeepsItsModemPastTheTimeoutFailsTheClaimAndTheOwnerStaysNode() async {
+        let (pipe, _) = make { $0.statusOwner = .node }
+        let ok = await pipe.claim(timeoutMs: 200)
         XCTAssertFalse(ok)
         XCTAssertEqual(pipe.owner.value, .node)
     }

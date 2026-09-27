@@ -66,6 +66,7 @@ public final class GatewayModel {
         case .held(let seconds): return "The modem pauses after a failed session, \(seconds) s more."
         case .sessionFailed(let moStatus): return "The session failed: \(IridiumATDriver.moStatusText(moStatus))."
         case .noAnswer: return "The modem gave no readable answer."
+        case .linkLost: return "The link to the node dropped during the session; what it fetched is unknown."
         case .checked(let received, let stillQueued):
             if received == 0 { return "No messages waiting." }
             return Words.count(received, "message") + " received" + (stillQueued > 0 ? ", \(stillQueued) more waiting." : ".")

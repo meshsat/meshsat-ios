@@ -78,17 +78,20 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
     }
 
     /// Take the modem: subscribe to STATUS and TX and wait until STATUS says the phone owns
-    /// it. False if the node's own logic holds it or nothing answered in time. A node without
-    /// STATUS (firmware before a5038c8) counts as owned once TX is subscribed.
+    /// it. False if nothing answered "phone" in time. A node without STATUS (firmware before
+    /// a5038c8) counts as owned once TX is subscribed. STATUS saying "node" is a wait, never a
+    /// failure: a node that owns its modem while no phone is subscribed hands it over about a
+    /// second after the TX subscription, or after the session it has in flight (MESHSAT-1372);
+    /// the owner observer attaches the driver on that notification whenever it comes.
     public func claim(timeoutMs: Int64 = 8_000) async -> Bool {
         guard link.hasTx else { return false }
         // One retry each: the first write can fail while the link is still being encrypted,
         // and without STATUS notifications the handover is never heard.
         if link.hasStatus {
-            let watching = await twice { await link.setNotify(uuid: IridiumPipeContract.statusUUID, on: true) }
+            let watching = await twice("STATUS") { await link.setNotify(uuid: IridiumPipeContract.statusUUID, on: true) }
             if !watching { Self.log.warning("Iridium pipe: STATUS notifications could not be enabled; reading it instead") }
         }
-        let subscribed = await twice { await link.setNotify(uuid: IridiumPipeContract.txUUID, on: true) }
+        let subscribed = await twice("TX") { await link.setNotify(uuid: IridiumPipeContract.txUUID, on: true) }
         if !subscribed {
             Self.log.warning("Iridium pipe: TX subscription failed")
             return false
@@ -96,30 +99,56 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
         // Subscribing to TX is what hands the modem over: read STATUS after it, so the answer
         // arrives even when its notification does not.
         if link.hasStatus { refreshStatus() } else { owner.send(.phone) }
-        let answer = await awaitOwner(timeoutMs: timeoutMs)
-        // On a timeout, say what STATUS last read: "none" means the node never registered the
-        // TX subscription (another central may hold the pipe), a stale "phone" means the
-        // notification was lost (25 Sep 2026, twelve claims in a row answered nothing).
-        let said = answer.map { "\($0)" } ?? "nothing within \(timeoutMs / 1000) s, STATUS last read \(String(describing: owner.value))"
-        Self.log.info("Iridium pipe: claim answered \(said)")
-        return answer == .phone
+        if await awaitOwner(timeoutMs: timeoutMs) == .phone {
+            Self.log.info("Iridium pipe: the phone owns the modem")
+            return true
+        }
+        // Say what STATUS last read: "none" means the node never registered the TX
+        // subscription (another central may hold the pipe), "node" that it is using the modem,
+        // a stale "phone" that the notification was lost (25 Sep 2026, twelve claims in a row
+        // answered nothing).
+        let seen = owner.value
+        let why = seen == .node ? ", the node is using the modem, waiting for its release)" : ")"
+        Self.log.info("Iridium pipe: no handover within \(timeoutMs / 1000) s (STATUS says \(Self.describe(seen))\(why)")
+        return false
     }
 
-    private func twice(_ op: () async -> Int) async -> Bool {
+    static func describe(_ owner: Owner?) -> String {
+        owner.map { "\($0)" } ?? "nothing"
+    }
+
+    /// Up to two attempts; a failure logs the ATT status, because 5 (insufficient
+    /// authentication) and 15 (insufficient encryption) say the reconnect landed without the
+    /// bond, the picture of the failed claims of 25 Sep 2026 (MESHSAT-1356).
+    private func twice(_ what: String, _ op: () async -> Int) async -> Bool {
         var attempts = 0
         while attempts < 2 {
             attempts += 1
-            if await op() == GattOpQueue.statusSuccess { return true }
+            let status = await op()
+            if status == GattOpQueue.statusSuccess { return true }
+            Self.log.warning("Iridium pipe: \(what) subscribe attempt \(attempts) failed, \(Self.attStatusText(status))")
         }
         return false
     }
 
-    /// The first `.phone` or `.node` on the owner state, or nil after `timeoutMs`.
+    /// An ATT error code in words, for the log.
+    public static func attStatusText(_ status: Int) -> String {
+        switch status {
+        case GattOpQueue.statusRefused: "the stack refused the operation"
+        case GattOpQueue.statusTimeout: "no answer from the node"
+        case GattOpQueue.statusClosed: "the connection is gone"
+        case 5: "ATT 5 insufficient authentication (the link is not bonded)"
+        case 15: "ATT 15 insufficient encryption (the link is not encrypted)"
+        default: "ATT status \(status)"
+        }
+    }
+
+    /// The first `.phone` on the owner state, or nil after `timeoutMs`.
     private func awaitOwner(timeoutMs: Int64) async -> Owner? {
         let stream = owner.subscribe()
         return await withTaskGroup(of: Owner?.self) { group in
             group.addTask {
-                for await o in stream where o == .phone || o == .node { return o }
+                for await o in stream where o == .phone { return o }
                 return nil
             }
             group.addTask {

@@ -45,9 +45,14 @@ public actor IridiumATDriver {
     /// failure: the session was cut after the upload (MAN0009, +SBDIX). Seen on flaneur, 19 Sep 2026.
     public static let moMaybeSent: Set<Int> = [10, 13, 17, 18, 19]
 
+    /// Not a modem status: the link to the node dropped while the session ran, so its outcome
+    /// is unknown (MESHSAT-1372). Negative so it can never collide with an +SBDIX code.
+    public static let moLinkLost = -1
+
     /// What an +SBDIX MO status means, in plain words.
     public static func moStatusText(_ code: Int) -> String {
         switch code {
+        case moLinkLost: "the link to the node dropped during the session"
         case 0...4: "sent"
         case 10: "the gateway did not finish the call in time"
         case 11: "the modem's outgoing queue is full"
@@ -94,8 +99,15 @@ public actor IridiumATDriver {
         public let mtQueued: Int
         /// The message this session brought in, already read from the modem, or nil.
         public var mt: [UInt8]?
+        /// The link to the node dropped while the session ran: `moStatus` is `moLinkLost` and
+        /// nothing else in here is known. The node finishes the session by itself, so the
+        /// message may well have been sent (MESHSAT-1372).
+        public var linkLost = false
         public var moSuccess: Bool { (0...4).contains(moStatus) }
         public var mtAvailable: Bool { mtStatus == 1 }
+
+        static let linkLostResult = SbdixResult(
+            moStatus: IridiumATDriver.moLinkLost, moMsn: -1, mtStatus: -1, mtMsn: -1, mtLength: 0, mtQueued: 0, mt: nil, linkLost: true)
     }
 
     public struct SbdsxResult: Sendable, Equatable {
@@ -115,6 +127,8 @@ public actor IridiumATDriver {
         /// The session failed, e.g. status 32: the modem sees no satellite.
         case sessionFailed(moStatus: Int)
         case noAnswer
+        /// The link to the node dropped while the session ran; what it fetched, if anything, is unknown.
+        case linkLost
         /// The session ran: `received` messages were handed over, `stillQueued` more wait at the gateway.
         case checked(received: Int, stillQueued: Int)
     }
@@ -131,6 +145,13 @@ public actor IridiumATDriver {
     }
     public private(set) var signal = 0
     public private(set) var modemInfo = ModemInfo()
+    /// The gateway holds a message for this modem, by the modem's last word on it: +SBDSX's ring
+    /// alert flag or waiting count, or the queued count of a session that reached the gateway.
+    /// A session that did not (32, 36, a cut link) leaves it as it was. The modem keeps its ring
+    /// alert flag up until a session clears it, and the app used to answer that flag with a
+    /// billed session at every reconnect (MESHSAT-1372); now it is a fact the gateway acts on
+    /// under the same cues as a send.
+    public private(set) var mailboxWaiting = false
 
     public nonisolated let stateChanges = Broadcast<State>(replayLatest: true)
     public nonisolated let linkBrokenChanges = Broadcast<Bool>(replayLatest: true)
@@ -255,6 +276,7 @@ public actor IridiumATDriver {
         var buf = [UInt8]()
         let deadline = clock.nowMs() + timeoutMs
         while clock.nowMs() < deadline {
+            try linkStillThere(link)
             if let b = input.read() {
                 buf.append(b)
                 if Self.endsResponse(buf) { break }
@@ -263,6 +285,14 @@ public actor IridiumATDriver {
             }
         }
         return String(decoding: buf, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A command's answer is waited for only while the link it went out on is still the driver's
+    /// (MESHSAT-1372). Before this, a Bluetooth drop during an SBDIX held the command lock for
+    /// the full 95 s, and the next link's probe queued behind it: the phone reconnected in
+    /// seconds and reported no modem for a minute and a half.
+    private func linkStillThere(_ forLink: ModemLink) throws {
+        guard link === forLink else { throw IridiumDriverError.notConnected }
     }
 
     private static let okCR = Array("OK\r".utf8)
@@ -373,7 +403,9 @@ public actor IridiumATDriver {
         do {
             let resp = try await sendAT("AT+SBDSX")
             guard let v = Self.ints(in: resp, after: "+SBDSX:", count: 6) else { return nil }
-            return SbdsxResult(moFlag: v[0] != 0, moMsn: v[1], mtFlag: v[2] != 0, mtMsn: v[3], raFlag: v[4] != 0, msgWaiting: v[5])
+            let status = SbdsxResult(moFlag: v[0] != 0, moMsn: v[1], mtFlag: v[2] != 0, mtMsn: v[3], raFlag: v[4] != 0, msgWaiting: v[5])
+            mailboxWaiting = status.raFlag || status.msgWaiting > 0
+            return status
         } catch {
             errors.send("SBDSX failed: \(error)")
             return nil
@@ -401,7 +433,7 @@ public actor IridiumATDriver {
                 let checksum = data.reduce(0) { $0 + Int($1) }
                 try await link.write(data + [UInt8((checksum >> 8) & 0xFF), UInt8(checksum & 0xFF)])
                 // "0" is success; 1 timeout, 2 bad checksum, 3 wrong size.
-                let result = await readUntilOkOrTimeout(Self.atTimeoutMs)
+                let result = try await readUntilOkOrTimeout(Self.atTimeoutMs, on: link)
                 let code = result.split(whereSeparator: \.isNewline)
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .first { $0.count == 1 && $0.first!.isNumber }
@@ -421,6 +453,9 @@ public actor IridiumATDriver {
 
     /// SBD session (AT+SBDIX), billed. Refused while held after status 32/36. The MO buffer is
     /// cleared afterwards whatever the outcome: the caller's queue keeps the message for a retry.
+    /// A link that drops mid-session answers a result flagged `linkLost` at once, and the hold
+    /// runs for 3 min from the session's start: the node finishes the session by itself, and a
+    /// 32 or 36 it caught would have set exactly that hold (MESHSAT-1372).
     public func sbdix(deliverMt: Bool = true, answeringRing: Bool = false) async -> SbdixResult? {
         guard isWireReady else { return nil }
         let hold = sbdixHoldRemainingMs()
@@ -428,6 +463,7 @@ public actor IridiumATDriver {
             errors.send("SBDIX held for \(hold / 1000) s after a failed session")
             return nil
         }
+        let startedMs = clock.nowMs()
         do {
             // +SBDIXA marks a session that answers a ring alert (MAN0009, +SBDIX[A]).
             let resp = try await sendAT(answeringRing ? "AT+SBDIXA" : "AT+SBDIX", timeoutMs: Self.sbdixTimeoutMs)
@@ -438,6 +474,8 @@ public actor IridiumATDriver {
             }
             var result = SbdixResult(moStatus: v[0], moMsn: v[1], mtStatus: v[2], mtMsn: v[3], mtLength: v[4], mtQueued: v[5], mt: nil)
             if result.moStatus == 32 || result.moStatus == 36 { sbdixHeldUntil = clock.nowMs() + Self.sbdixHoldMs }
+            // Only a session that reached the gateway says anything about what waits there.
+            if result.moSuccess { mailboxWaiting = result.mtQueued > 0 }
             sessionOutcomes.send(result.moSuccess)
             _ = await clearMoBuffer()
             // A message came in with this session: read it now, before another session overwrites it.
@@ -461,6 +499,15 @@ public actor IridiumATDriver {
                 result.mt = mt
             }
             return result
+        } catch IridiumDriverError.notConnected {
+            // The node holds the modem and finishes the session on its own (firmware since
+            // bf2ba14); the outcome never reaches this phone. The ISU registers once every 3
+            // minutes and every SBDIX registers, so the hold runs from the session's start, as
+            // it would after a 32 or 36 the node caught. The caller keeps the message for a
+            // retry: it may have been sent, and a duplicate costs one credit, a loss costs more.
+            sbdixHeldUntil = max(sbdixHeldUntil, startedMs + Self.sbdixHoldMs)
+            errors.send("The link to the node dropped during a satellite session; its outcome is unknown")
+            return SbdixResult.linkLostResult
         } catch {
             errors.send("SBDIX failed: \(error)")
             return nil
@@ -514,6 +561,7 @@ public actor IridiumATDriver {
         var frameStart = -1
         var needed = -1
         while clock.nowMs() < deadline {
+            try linkStillThere(link)
             guard let b = input.read() else {
                 await clock.sleep(ms: 10)
                 continue
@@ -538,7 +586,7 @@ public actor IridiumATDriver {
                 let len = needed - frameStart - 4
                 let msg = Array(raw[(frameStart + 2)..<(frameStart + 2 + len)])
                 let sum = Int(raw[needed - 2]) << 8 | Int(raw[needed - 1])
-                _ = await readUntilOkOrTimeout(Self.atTimeoutMs)
+                _ = try await readUntilOkOrTimeout(Self.atTimeoutMs, on: link)
                 if msg.reduce(0, { $0 + Int($1) }) & 0xFFFF != sum { throw IridiumDriverError.protocolError("SBDRB checksum mismatch") }
                 return msg
             }
@@ -563,6 +611,7 @@ public actor IridiumATDriver {
         if status?.moFlag == true, !(await clearMoBuffer()) { return .noAnswer }
         // The session's message is handed over here, not through mtSink, so it is stored once.
         guard let result = await sbdix(deliverMt: false) else { return .noAnswer }
+        if result.linkLost { return .linkLost }
         if let mt = result.mt {
             await onMessage(mt)
             received += 1
@@ -598,10 +647,11 @@ public actor IridiumATDriver {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func readUntilOkOrTimeout(_ timeoutMs: Int64) async -> String {
+    private func readUntilOkOrTimeout(_ timeoutMs: Int64, on link: ModemLink) async throws -> String {
         var buf = [UInt8]()
         let deadline = clock.nowMs() + timeoutMs
         while clock.nowMs() < deadline {
+            try linkStillThere(link)
             if let b = input.read() {
                 buf.append(b)
                 let s = String(decoding: buf, as: UTF8.self)
