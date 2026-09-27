@@ -59,6 +59,7 @@ public enum MSIcon {
     public static var history: Image { asset("outlined_history", fallback: "clock.arrow.circlepath") }
     public static var key: Image { asset("outlined_key", fallback: "key") }
     public static var monitorHeart: Image { asset("outlined_monitor_heart", fallback: "waveform.path.ecg") }
+    public static var terminal: Image { asset("outlined_terminal", fallback: "terminal") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {

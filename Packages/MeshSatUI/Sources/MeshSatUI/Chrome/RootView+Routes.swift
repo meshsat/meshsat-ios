@@ -31,6 +31,7 @@ extension RootView {
         case .about: RoutedScreen("About", AboutScreen())
         case .geofence: RoutedScreen("Zones", GeofenceScreen())
         case .radioConfig: RoutedScreen("Mesh radio settings", RadioConfigScreen())
+        case .nodeLog: RoutedScreen("Node log", NodeLogScreen())
         case .passes: RoutedScreen(Route.passes.subScreenTitle ?? "Satellite passes", PassesScreen())
         default: nil
         }
