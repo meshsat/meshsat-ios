@@ -67,7 +67,17 @@ public struct SettingsSatelliteSection: View {
                 }
                 // The node's own view of its modem (contract v2 STATS, MESHSAT-1378): only a node
                 // that serves it gets the card; older firmware shows nothing here.
-                if settings.pipeHasStats { NodeHealthCard(stats: settings.nodeStats) }
+                if settings.pipeHasStats {
+                    NodeHealthCard(stats: settings.nodeStats)
+                        // An idle node never notifies STATS (only its ages and uptime move); a
+                        // read answers the live value, so the card asks every 10 s while shown.
+                        .task {
+                            while !Task.isCancelled {
+                                try? await Task.sleep(for: .seconds(10))
+                                settings.gateway.central.iridiumPipe.value?.refreshStats()
+                            }
+                        }
+                }
                 Text(
                     "A RockBLOCK 9704 on an HC-05 needs Bluetooth Classic, which iPhones do not have. "
                         + "MeshSat iOS uses the modem on the node."
