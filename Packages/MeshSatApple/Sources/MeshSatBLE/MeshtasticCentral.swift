@@ -387,6 +387,13 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
         if has(IridiumPipeContract.rxUUID) || has(IridiumPipeContract.txUUID) {
             let pipe = IridiumBlePipe(link: PipeLink(central: self))
             if pipe.usable { iridiumPipe.send(pipe) }
+            // CoreBluetooth caches a bonded node's GATT table and refreshes it only on the node's
+            // Service Changed indication (which the firmware sends after a table change); there
+            // is no refresh call. A pipe without STATS on a node that should have it is that
+            // stale table, seen on Android after the contract v2 firmware (MESHSAT-1378).
+            if !pipe.hasStats {
+                Self.log.info("Iridium pipe without STATS: contract v1 firmware, or a cached table awaiting the node's Service Changed")
+            }
         }
         state.send(.connected)
         sendToRadio(MeshtasticProtocol.encodeWantConfig(UInt32.random(in: 1...UInt32(Int32.max))))
