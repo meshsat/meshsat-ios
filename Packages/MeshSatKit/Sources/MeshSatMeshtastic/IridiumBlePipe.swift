@@ -200,6 +200,14 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
         return watching
     }
 
+    /// Read STATS again. The node notifies it only when something other than its three moving
+    /// fields (the ages and the uptime) changes, so an idle node is silent and a card would
+    /// freeze; a read always answers the live value. The health card asks every 10 s while it
+    /// is on screen, nothing more.
+    public func refreshStats() {
+        if link.hasStats { link.read(uuid: IridiumPipeContract.statsUUID) }
+    }
+
     /// Hand the node the next pass windows, soonest first, at most eight; a write replaces its
     /// list. Accepted whoever owns the modem. False on a node without PASS or a failed write.
     public func writePasses(_ windows: [IridiumPipeContract.PassWindow]) async -> Bool {

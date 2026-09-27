@@ -240,6 +240,8 @@ final class IridiumBlePipeTests: XCTestCase {
         XCTAssertEqual(link.notifies.map(\.0), [IridiumPipeContract.statsUUID])
         XCTAssertEqual(link.reads, [IridiumPipeContract.statsUUID])
         XCTAssertEqual(pipe.stats.value?.sessions, 7)
+        pipe.refreshStats()
+        XCTAssertEqual(link.reads.count, 2, "a read on request, for the idle node that never notifies")
         XCTAssertEqual(pipe.stats.value?.owner, .node)
         // A notification updates it; a short one is ignored, the last good value stays.
         pipe.onValue(uuid: IridiumPipeContract.statsUUID, [2, 3])
