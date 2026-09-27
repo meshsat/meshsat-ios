@@ -10,6 +10,9 @@ public enum MeshtasticBleContract {
     public static let fromRadioUUID = "2c55e69e-4993-11ed-b878-0242ac120002"
     /// Notifies when FromRadio has something new.
     public static let fromNumUUID = "ed9da18c-a800-4f66-a670-aa7547de15e6"
+    /// The node's log, one LogRecord protobuf per notification, while
+    /// `config.security.debug_log_api_enabled` is set (MESHSAT-1374). Read + notify.
+    public static let logRadioUUID = "5a3d6e49-06e6-4423-9944-e9de8cdf9547"
     public static let clientCharacteristicConfigUUID = "00002902-0000-1000-8000-00805f9b34fb"
     /// What Android requests; iOS takes what CoreBluetooth reports instead.
     public static let requestedMtu = 517

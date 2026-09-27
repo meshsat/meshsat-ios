@@ -43,6 +43,11 @@ public final class GatewayModel {
     public private(set) var deviceMetadata: MeshtasticProtocol.MeshDeviceMetadata?
     public private(set) var nodeBattery: GatewayController.NodeBatteryNow?
     public private(set) var modemState: IridiumATDriver.State = .disconnected
+    /// The node's log (MESHSAT-1374): the lines kept, whether the screen paused them, and the
+    /// node's own `debug_log_api_enabled` as it last reported or was asked.
+    public private(set) var nodeLogLines: [NodeLogLine] = []
+    public private(set) var nodeLogPaused = false
+    public private(set) var nodeDebugLog = false
     public private(set) var modemSignal = 0
     /// IridiumSpp.linkBroken: writes to the node's pipe do not land (MESHSAT-1270).
     public private(set) var modemLinkBroken = false
@@ -168,6 +173,7 @@ public final class GatewayModel {
                 for await bars in driver.signalReadings.subscribe() { self?.modemSignal = bars }
             })
         followModemFlags(driver)
+        followNodeLog(central)
         tasks.append(
             Task { [weak self] in
                 for await states in gateway.interfaceManager.states.subscribe() { self?.interfaces = states }
@@ -232,6 +238,24 @@ public final class GatewayModel {
     }
 
     /// The run and, for the run shown, its deliveries (rememberSosStatuses in SosScreens.kt).
+    /// The node log buffer and the security flag behind Settings > Advanced > Node log.
+    private func followNodeLog(_ central: MeshtasticCentral) {
+        tasks.append(
+            Task { [weak self] in
+                for await lines in central.nodeLog.lines.subscribe() { self?.nodeLogLines = lines }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await paused in central.nodeLog.paused.subscribe() { self?.nodeLogPaused = paused }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await security in central.radio.securityConfig.subscribe() {
+                    self?.nodeDebugLog = security?.debugLogApiEnabled ?? false
+                }
+            })
+    }
+
     /// IridiumSpp.linkBroken and modemSilent, read by the Home lanes and the node banner.
     private func followModemFlags(_ driver: IridiumATDriver) {
         tasks.append(

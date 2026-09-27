@@ -35,6 +35,9 @@ public final class MeshtasticRadioState: @unchecked Sendable {
     public let networkConfig = StateBroadcast<Meshtastic_Config.NetworkConfig?>(nil)
     public let powerConfig = StateBroadcast<Meshtastic_Config.PowerConfig?>(nil)
     public let displayConfig = StateBroadcast<Meshtastic_Config.DisplayConfig?>(nil)
+    /// Kept whole so a single flag (debug_log_api_enabled, MESHSAT-1374) can be set without
+    /// wiping the node's keys.
+    public let securityConfig = StateBroadcast<Meshtastic_Config.SecurityConfig?>(nil)
     public let channels = StateBroadcast<[MeshtasticProtocol.MeshChannel]>([])
     public let deviceMetadata = StateBroadcast<MeshtasticProtocol.MeshDeviceMetadata?>(nil)
     /// The latest NeighborInfo each node has sent, by reporting node number (MESHSAT-1249).
@@ -85,6 +88,7 @@ public final class MeshtasticRadioState: @unchecked Sendable {
         case .network(let c)?: networkConfig.send(c)
         case .power(let c)?: powerConfig.send(c)
         case .display(let c)?: displayConfig.send(c)
+        case .security(let c)?: securityConfig.send(c)
         default: break
         }
     }

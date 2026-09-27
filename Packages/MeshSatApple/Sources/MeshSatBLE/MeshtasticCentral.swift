@@ -42,6 +42,10 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     public let bluetoothOn = StateBroadcast<Bool>(false)
     /// The node's Iridium serial pipe, when the connected radio is a MeshSat node.
     public let iridiumPipe = StateBroadcast<IridiumBlePipe?>(nil)
+    /// The node's live log lines (MESHSAT-1374), kept while the app runs: one line per LogRadio
+    /// notification while `followNodeLog(true)` has subscribed and the node's
+    /// `debug_log_api_enabled` is set.
+    public let nodeLog = NodeLogBuffer()
     /// Everything the radio told us.
     public let radio = MeshtasticRadioState()
 
@@ -273,6 +277,20 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
         guard let q = currentOps() else { return }
         let uuid = MeshtasticBleContract.fromRadioUUID
         q.enqueue("r:\(uuid)") { [self] in read(uuid: uuid) }
+    }
+
+    /// The connected node offers the LogRadio characteristic (MeshtasticBle.logRadioAvailable).
+    public var logRadioAvailable: Bool { state.value == .connected && has(MeshtasticBleContract.logRadioUUID) }
+
+    /// Follow, or stop following, the node's log over LogRadio (MESHSAT-1374); the lines land in
+    /// `nodeLog`. The GATT status of the CCCD write, or one of GattOpQueue's negative codes. The
+    /// node sends lines only while its `debug_log_api_enabled` is set, see the gateway's
+    /// `setNodeDebugLog`.
+    public func followNodeLog(_ on: Bool) async -> Int {
+        guard let q = currentOps() else { return GattOpQueue.statusClosed }
+        guard has(MeshtasticBleContract.logRadioUUID) else { return GattOpQueue.statusRefused }
+        let uuid = MeshtasticBleContract.logRadioUUID
+        return await q.enqueue("d:\(uuid)") { [self] in setNotify(uuid: uuid, on: on) }.await()
     }
 
     /// Read the link's RSSI; the value arrives on `rssi`.
@@ -535,6 +553,8 @@ extension MeshtasticCentral: CBPeripheralDelegate {
             }
         case MeshtasticBleContract.fromNumUUID:
             readFromRadio()
+        case MeshtasticBleContract.logRadioUUID:
+            if let line = NodeLog.parse(value, receivedMs: MeshtasticProtoAdapter.nowMs()) { nodeLog.add(line) }
         case _ where IridiumBlePipe.isPipeCharacteristic(uuid):
             iridiumPipe.value?.onValue(uuid: uuid, value)
         default:

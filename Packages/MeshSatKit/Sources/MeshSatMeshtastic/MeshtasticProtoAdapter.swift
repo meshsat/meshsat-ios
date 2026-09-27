@@ -469,6 +469,18 @@ public enum MeshtasticProtoAdapter {
         return bytes(of: toRadio)
     }
 
+    // MARK: The node's log (MESHSAT-1374)
+
+    /// A SecurityConfig with `debug_log_api_enabled` set as asked, every other field as the
+    /// node reported it, wrapped as a set_config admin message. The node keeps its keys.
+    public static func buildAdminSetDebugLogApi(myNodeNum: UInt32, security: Meshtastic_Config.SecurityConfig, enabled: Bool) -> [UInt8] {
+        var sec = security
+        sec.debugLogApiEnabled = enabled
+        var config = Meshtastic_Config()
+        config.security = sec
+        return buildAdminSetConfig(myNodeNum: myNodeNum, config: config)
+    }
+
     // MARK: Bytes and names
 
     /// Serialising a message built from scratch cannot fail; an empty array would be a bug.

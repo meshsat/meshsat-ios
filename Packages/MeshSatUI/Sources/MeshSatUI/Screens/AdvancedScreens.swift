@@ -32,6 +32,9 @@ public struct AdvancedScreen: View {
                 NavRow(icon: MSIcon.monitorHeart, title: "Diagnostics", detail: "Link health, batch queue, crash reports, service") {
                     router.navigate(.setupSection(.diagnostics))
                 }
+                NavRow(icon: MSIcon.terminal, title: "Node log", detail: "The node's live log over Bluetooth, on demand") {
+                    router.navigate(.nodeLog)
+                }
                 MSDivider()
             }
         }
