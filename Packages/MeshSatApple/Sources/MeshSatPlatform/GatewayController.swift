@@ -508,6 +508,7 @@ public final class GatewayController: @unchecked Sendable {
     /// One pipe's life: claim it until the phone holds the modem, attach the driver while it
     /// does, let go when the setting or the manager says so.
     private func runPipeSession(_ pipe: IridiumBlePipe) async {
+        await followNodeHealth(pipe)
         let enabled = settings.get(SettingsKey.iridiumNodePipeEnabled)
         if !enabled || !iridiumWanted.value {
             await pipe.release()

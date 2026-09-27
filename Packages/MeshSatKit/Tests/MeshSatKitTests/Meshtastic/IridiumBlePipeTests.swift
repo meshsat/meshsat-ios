@@ -9,6 +9,8 @@ final class FakePipeLink: IridiumPipeLink, @unchecked Sendable {
     var hasRx = true
     var hasTx = true
     var hasStatus = true
+    var hasStats = false
+    var hasPass = false
     var mtuPayload = 244
     /// Refuse the first N descriptor writes (the link is still being encrypted).
     var refuseNotifies = 0
@@ -22,8 +24,18 @@ final class FakePipeLink: IridiumPipeLink, @unchecked Sendable {
     func chunkSize() -> Int { mtuPayload }
 
     func write(uuid: String, _ chunk: [UInt8]) async -> Int {
+        if uuid == IridiumPipeContract.passUUID { return recordPassWrite(chunk) }
         XCTAssertEqual(uuid, IridiumPipeContract.rxUUID)
         return recordWrite(chunk)
+    }
+
+    private(set) var passWrites: [[UInt8]] = []
+
+    private func recordPassWrite(_ chunk: [UInt8]) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        passWrites.append(chunk)
+        return writeStatus
     }
 
     private func recordWrite(_ chunk: [UInt8]) -> Int {
@@ -47,7 +59,18 @@ final class FakePipeLink: IridiumPipeLink, @unchecked Sendable {
         return refuse
     }
 
+    /// What STATS answers to a read; nil answers nothing.
+    var statsValue: [UInt8]?
+    private(set) var reads: [String] = []
+
     func read(uuid: String) {
+        lock.lock()
+        reads.append(uuid)
+        lock.unlock()
+        if uuid == IridiumPipeContract.statsUUID {
+            if let statsValue { pipe?.onValue(uuid: uuid, statsValue) }
+            return
+        }
         XCTAssertEqual(uuid, IridiumPipeContract.statusUUID)
         guard let owner = statusOwner else { return }
         pipe?.onValue(uuid: uuid, [IridiumPipeContract.statusVersion, owner.rawValue])
@@ -194,9 +217,72 @@ final class IridiumBlePipeTests: XCTestCase {
         XCTAssertNil(pipe.owner.value)
     }
 
+    // MARK: Contract v2 (MESHSAT-1378)
+
+    func testAVersion1NodeHasNoStatsAndTakesNoPassList() async {
+        let (pipe, link) = make()
+        XCTAssertFalse(pipe.hasStats)
+        let watched = await pipe.watchStats()
+        XCTAssertFalse(watched)
+        let wrote = await pipe.writePasses([IridiumPipeContract.PassWindow(startEpochS: 1, durationS: 2, maxElevationDeg: 3)])
+        XCTAssertFalse(wrote)
+        XCTAssertTrue(link.passWrites.isEmpty)
+        XCTAssertTrue(link.notifies.isEmpty)
+    }
+
+    func testWatchStatsSubscribesReadsAndPublishesTheHealth() async {
+        let (pipe, link) = make {
+            $0.hasStats = true
+            $0.statsValue = ContractsTests.sampleStats
+        }
+        let watched = await pipe.watchStats()
+        XCTAssertTrue(watched)
+        XCTAssertEqual(link.notifies.map(\.0), [IridiumPipeContract.statsUUID])
+        XCTAssertEqual(link.reads, [IridiumPipeContract.statsUUID])
+        XCTAssertEqual(pipe.stats.value?.sessions, 7)
+        XCTAssertEqual(pipe.stats.value?.owner, .node)
+        // A notification updates it; a short one is ignored, the last good value stays.
+        pipe.onValue(uuid: IridiumPipeContract.statsUUID, [2, 3])
+        XCTAssertEqual(pipe.stats.value?.sessions, 7)
+        XCTAssertNil(pipe.owner.value, "STATS never speaks for STATUS")
+    }
+
+    func testAStatusOfFourBytesCarriesFlagsAndSignalAndTwoBytesStillNamesTheOwner() async {
+        let (pipe, _) = make()
+        pipe.onValue(uuid: IridiumPipeContract.statusUUID, [2, 1, 0b0101, 3])
+        XCTAssertEqual(pipe.owner.value, .phone)
+        XCTAssertEqual(pipe.status.value?.flags, [.sessionInFlight, .modemAnswers])
+        XCTAssertEqual(pipe.status.value?.csq, 3)
+        pipe.onValue(uuid: IridiumPipeContract.statusUUID, [1, 2])
+        XCTAssertEqual(pipe.owner.value, .node)
+        XCTAssertNil(pipe.status.value?.flags)
+        pipe.close()
+        XCTAssertNil(pipe.status.value)
+    }
+
+    func testThePassListIsWrittenWithResponseSoonestFirstAtMostEight() async {
+        let (pipe, link) = make { $0.hasPass = true }
+        XCTAssertTrue(pipe.hasPass)
+        var windows: [IridiumPipeContract.PassWindow] = []
+        for i in 0..<10 {
+            let start = UInt32(1_800_000_000 + i * 600)
+            windows.append(IridiumPipeContract.PassWindow(startEpochS: start, durationS: UInt16(300 + i), maxElevationDeg: UInt8(10 + i)))
+        }
+        let wrote = await pipe.writePasses(windows)
+        XCTAssertTrue(wrote)
+        XCTAssertEqual(link.passWrites.count, 1)
+        XCTAssertEqual(link.passWrites[0], IridiumPipeContract.encodePassList(Array(windows.prefix(8))))
+        XCTAssertEqual(link.passWrites[0].count, 2 + 8 * 7)
+        link.writeStatus = 133
+        let failed = await pipe.writePasses(windows)
+        XCTAssertFalse(failed)
+    }
+
     func testCharacteristicRouting() {
         XCTAssertTrue(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.txUUID.uppercased()))
         XCTAssertTrue(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.statusUUID))
+        XCTAssertTrue(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.statsUUID))
+        XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.passUUID))
         XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.rxUUID))
         XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(MeshtasticBleContract.fromRadioUUID))
     }

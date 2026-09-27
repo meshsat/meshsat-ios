@@ -19,6 +19,9 @@ public protocol IridiumPipeLink: AnyObject, Sendable {
     var hasRx: Bool { get }
     var hasTx: Bool { get }
     var hasStatus: Bool { get }
+    /// The version 2 additions (MESHSAT-1378); a version 1 node has neither.
+    var hasStats: Bool { get }
+    var hasPass: Bool { get }
     /// The largest write the link takes now (the MTU minus the ATT header).
     func chunkSize() -> Int
     /// Write `chunk` to the characteristic, acknowledged; the GattOpQueue status.
@@ -41,12 +44,33 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
 
     /// Who holds the modem; nil until STATUS has answered (Android's Owner.Unknown).
     public let owner: StateBroadcast<Owner?>
+    /// The whole of STATUS, flags and signal included from version 2; nil until it answered.
+    public let status = StateBroadcast<IridiumPipeContract.Status?>(nil)
+    /// The node's satellite health (STATS), nil until read or on a version 1 node.
+    public let stats = StateBroadcast<IridiumPipeContract.Stats?>(nil)
     /// Bytes the modem sent, for the AT driver.
     public let input = PipeInputBuffer()
     private let output: PipeOutputChunker
 
     /// False when the service lacks RX or TX: nothing here can be used.
     public var usable: Bool { link.hasRx && link.hasTx }
+    /// The node serves the version 2 additions.
+    public var hasStats: Bool { link.hasStats }
+    public var hasPass: Bool { link.hasPass }
+    /// The pass list this link last gave the node, so an unchanged prediction is not rewritten.
+    public var passesWritten: [IridiumPipeContract.PassWindow]? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return passesWrittenValue
+        }
+        set {
+            lock.lock()
+            passesWrittenValue = newValue
+            lock.unlock()
+        }
+    }
+    private var passesWrittenValue: [IridiumPipeContract.PassWindow]?
 
     public init(link: any IridiumPipeLink) {
         self.link = link
@@ -166,6 +190,28 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
         if link.hasStatus { link.read(uuid: IridiumPipeContract.statusUUID) }
     }
 
+    /// Follow STATS: subscribe and read it once. Independent of the claim, so the health card
+    /// works while the node holds its modem. False on a node without it.
+    @discardableResult
+    public func watchStats() async -> Bool {
+        guard link.hasStats else { return false }
+        let watching = await twice("STATS") { await link.setNotify(uuid: IridiumPipeContract.statsUUID, on: true) }
+        link.read(uuid: IridiumPipeContract.statsUUID)
+        return watching
+    }
+
+    /// Hand the node the next pass windows, soonest first, at most eight; a write replaces its
+    /// list. Accepted whoever owns the modem. False on a node without PASS or a failed write.
+    public func writePasses(_ windows: [IridiumPipeContract.PassWindow]) async -> Bool {
+        guard link.hasPass else { return false }
+        let status = await link.write(uuid: IridiumPipeContract.passUUID, IridiumPipeContract.encodePassList(windows))
+        if status != GattOpQueue.statusSuccess {
+            let count = min(windows.count, IridiumPipeContract.passListMax)
+            Self.log.warning("Iridium pipe: PASS write of \(count) windows failed, \(Self.attStatusText(status))")
+        }
+        return status == GattOpQueue.statusSuccess
+    }
+
     /// Hand the modem back to the node.
     public func release() async {
         if link.hasTx { _ = await link.setNotify(uuid: IridiumPipeContract.txUUID, on: false) }
@@ -180,9 +226,13 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
             input.offer(value)
             currentReceiver()?(value)
         case IridiumPipeContract.statusUUID:
-            let next = IridiumPipeContract.parseStatus(value)?.owner
+            let parsed = IridiumPipeContract.parseStatus(value)
+            let next = parsed?.owner
             if next != .phone && owner.value == .phone { input.clear() }
+            status.send(parsed)
             owner.send(next)
+        case IridiumPipeContract.statsUUID:
+            if let parsed = IridiumPipeContract.parseStats(value) { stats.send(parsed) }
         default:
             break
         }
@@ -191,12 +241,14 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
     /// The connection is gone: wake any reader and forget the owner.
     public func close() {
         owner.send(nil)
+        status.send(nil)
         input.close()
     }
 
+    /// The characteristics whose values this pipe consumes (RX and PASS are write-only).
     public static func isPipeCharacteristic(_ uuid: String) -> Bool {
         let u = uuid.lowercased()
-        return u == IridiumPipeContract.txUUID || u == IridiumPipeContract.statusUUID
+        return u == IridiumPipeContract.txUUID || u == IridiumPipeContract.statusUUID || u == IridiumPipeContract.statsUUID
     }
 
     // MARK: ModemLink

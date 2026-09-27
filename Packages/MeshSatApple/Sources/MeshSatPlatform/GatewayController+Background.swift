@@ -54,5 +54,6 @@ extension GatewayController {
         Self.log.info("Pass prediction: \(set.tles.count) TLEs (\(set.source)), \(all.count) passes")
         passCache.replace(all, atMs: clock.nowMs())
         passes.send(all)
+        await writePassWindows()
     }
 }

@@ -65,6 +65,9 @@ public struct SettingsSatelliteSection: View {
                         .msText(.bodySmall, color: MSColors.textMuted)
                     }
                 }
+                // The node's own view of its modem (contract v2 STATS, MESHSAT-1378): only a node
+                // that serves it gets the card; older firmware shows nothing here.
+                if settings.pipeHasStats { NodeHealthCard(stats: settings.nodeStats) }
                 Text(
                     "A RockBLOCK 9704 on an HC-05 needs Bluetooth Classic, which iPhones do not have. "
                         + "MeshSat iOS uses the modem on the node."
@@ -75,6 +78,28 @@ public struct SettingsSatelliteSection: View {
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+    }
+}
+
+/// The "Node health" card of SettingsScreen.kt: what the node reports on STATS, worded by
+/// NodeStatsText row for row as Android does.
+struct NodeHealthCard: View {
+    let stats: IridiumPipeContract.Stats?
+
+    var body: some View {
+        SectionCard("Node health") {
+            if let s = stats {
+                ForEach(Array(NodeStatsText.rows(s).enumerated()), id: \.offset) { _, row in InfoRow(row.label, row.value) }
+                if let warning = NodeStatsText.warning(s) { Text(warning).msText(.bodySmall, color: MSColors.amber) }
+                Text(
+                    "What the node reports about its own modem, whoever holds it. "
+                        + "The signal here is information, never a reason to hold a send."
+                )
+                .msText(.bodySmall, color: MSColors.textMuted)
+            } else {
+                Text("Waiting for the node's report.").msText(.bodySmall, color: MSColors.textMuted)
+            }
+        }
     }
 }
 

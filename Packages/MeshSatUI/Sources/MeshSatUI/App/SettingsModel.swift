@@ -22,6 +22,9 @@ public final class SettingsModel {
     public private(set) var modemInfo = IridiumATDriver.ModemInfo()
     public private(set) var pipePresent = false
     public private(set) var pipeOwner: IridiumPipeContract.Owner?
+    /// The connected node serves STATS (contract v2, MESHSAT-1378), and its last value.
+    public private(set) var pipeHasStats = false
+    public private(set) var nodeStats: IridiumPipeContract.Stats?
     private var tasks: [Task<Void, Never>] = []
     private var hubTasks: [Task<Void, Never>] = []
 
@@ -49,14 +52,22 @@ public final class SettingsModel {
         tasks.append(
             Task { [weak self] in
                 var ownerTask: Task<Void, Never>?
+                var statsTask: Task<Void, Never>?
                 for await pipe in central.iridiumPipe.subscribe() {
                     ownerTask?.cancel()
+                    statsTask?.cancel()
                     self?.pipePresent = pipe != nil
                     self?.pipeOwner = nil
+                    self?.pipeHasStats = pipe?.hasStats ?? false
+                    self?.nodeStats = nil
                     guard let pipe else { continue }
                     let stream = pipe.owner.subscribe()
                     ownerTask = Task { [weak self] in
                         for await o in stream { self?.pipeOwner = o }
+                    }
+                    let stats = pipe.stats.subscribe()
+                    statsTask = Task { [weak self] in
+                        for await s in stats { self?.nodeStats = s }
                     }
                 }
             })
