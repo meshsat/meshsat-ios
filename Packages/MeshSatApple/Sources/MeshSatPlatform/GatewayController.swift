@@ -400,6 +400,9 @@ public final class GatewayController: @unchecked Sendable {
             if !SatelliteLimits.fits(data.count) { return "\(Dispatcher.never) \(SatelliteLimits.tooLong(data.count))" }
             guard await driver.writeMoBuffer(data) else { return "Could not hand the message to the modem" }
             guard let result = await driver.sbdix() else { return "The modem gave no readable answer" }
+            // The link dropped mid-session: the node finished it on its own and the message may
+            // have gone (MESHSAT-1372). Unconfirmed, retried after the hold, never lost.
+            if result.linkLost { return "\(Dispatcher.unconfirmed) \(IridiumATDriver.moStatusText(result.moStatus))" }
             if !result.moSuccess {
                 let why = "status \(result.moStatus), \(IridiumATDriver.moStatusText(result.moStatus)), MOMSN \(result.moMsn)"
                 // The upload may have reached the gateway before the link was cut: say so, and

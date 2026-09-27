@@ -17,12 +17,15 @@ extension GatewayController {
                     await onMeshFrame(data)
                 }
             })
-        // Iridium MT: once the modem is up, and on every ring alert. Never on a timer, because
-        // every SBDIX is billed (MESHSAT-1236).
+        // Iridium MT: the free half once the modem is up (a message already in the modem's MT
+        // buffer), a session on every ring alert. Never a session on the connect itself: the
+        // ring flag stays up in the modem until a session clears it, so answering it on every
+        // reconnect opened a billed session six times in a row (MESHSAT-1372), and never on a
+        // timer, because every SBDIX is billed (MESHSAT-1236).
         keep(
             Task { [self] in
                 for await state in driver.stateChanges.subscribe() where state == .connected {
-                    await pollIridiumMt(ringAlert: false)
+                    await readIridiumMtBuffer()
                 }
             })
         keep(
@@ -33,13 +36,16 @@ extension GatewayController {
             })
         // The modem sees a satellite: send what waits now instead of at its next retry, as the
         // Bridge drains its queue on a signal of at least one bar (MESHSAT-1249). Not during the
-        // 3 minutes after a session that found no network.
+        // 3 minutes after a session that found no network. The same cue fetches a message the
+        // gateway holds, when no queued send is about to bring it in anyway.
         keep(
             Task { [self] in
                 for await bars in driver.signalReadings.subscribe() where bars >= Self.iridiumMinSignalBars {
-                    if await driver.sbdixHoldRemainingMs() == 0 {
-                        await dispatcher?.drainNow(channelId: "iridium_0", reason: "the modem sees a satellite (\(bars)/5)")
-                    }
+                    guard await driver.sbdixHoldRemainingMs() == 0 else { continue }
+                    let woke = await dispatcher?.drainNow(channelId: "iridium_0", reason: "the modem sees a satellite (\(bars)/5)") ?? 0
+                    // A send's session brings the waiting message in anyway; only with nothing
+                    // to send is a session opened for the mailbox alone (MESHSAT-1372).
+                    if woke == 0 { await fetchIridiumMailboxOnSignal(bars) }
                 }
             })
     }
@@ -141,19 +147,41 @@ extension GatewayController {
         return true
     }
 
-    /// Fetch MT traffic. A message already in the modem's MT buffer is read for free; only a
-    /// ring alert, or a gateway that reported messages waiting, is worth a billed SBDIX.
+    /// Answer a ring alert: read what is already in the modem for free, then one +SBDIXA
+    /// (through the driver's hold). The session's message, if any, is stored by the mtSink.
     func pollIridiumMt(ringAlert: Bool) async {
-        guard let status = await driver.sbdStatus() else { return }
+        guard await readIridiumMtBuffer() != nil else { return }
+        if ringAlert { _ = await driver.sbdix(answeringRing: true) }
+    }
+
+    /// The free part of a mailbox check, for a modem that has just come up: +SBDSX (which also
+    /// records whether the gateway holds a message, the driver's `mailboxWaiting`) and a read of
+    /// a message already in the MT buffer. No session: a reconnect is not a reason to be billed
+    /// (MESHSAT-1372). Nil when the modem did not answer.
+    @discardableResult
+    func readIridiumMtBuffer() async -> IridiumATDriver.SbdsxResult? {
+        guard let status = await driver.sbdStatus() else { return nil }
         if status.mtFlag, let text = await driver.readMtBuffer() {
             await storeIridiumMt(text)
             // Drop it from the modem now that it is in the database, or the next poll would
             // store it again (MESHSAT-1266).
             _ = await driver.clearMtBuffer()
         }
-        if ringAlert || status.raFlag || status.msgWaiting > 0 {
-            _ = await driver.sbdix(answeringRing: ringAlert || status.raFlag)
+        if await driver.mailboxWaiting {
+            Self.log.info("Iridium: the gateway holds a message; it is fetched when the modem sees a satellite")
         }
+        return status
+    }
+
+    /// The modem sees a satellite and nothing waits to be sent: if the gateway holds a message
+    /// (by the modem's last status), fetch it now, under exactly the rules a send follows (the
+    /// 32/36 hold was checked by the caller, the pass scheduler paces the readings).
+    func fetchIridiumMailboxOnSignal(_ bars: Int) async {
+        guard await driver.mailboxWaiting, await driver.state == .connected else { return }
+        Self.log.info("Iridium: fetching the message the gateway holds (\(bars)/5)")
+        guard let status = await readIridiumMtBuffer() else { return }
+        guard await driver.mailboxWaiting else { return }
+        _ = await driver.sbdix(answeringRing: status.raFlag)
     }
 
     /// Store an MT message and hand it to the routing rules.
