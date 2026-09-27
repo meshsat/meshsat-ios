@@ -1,8 +1,10 @@
 // Mirrors ui/screens/NodeLogScreen.kt (MESHSAT-1374): Settings > Advanced > Node log, the
 // node's live log over Bluetooth, the same lines its serial console prints, so a bench session
 // needs no USB cable. The switch sets security.debug_log_api_enabled on the node (a setting the
-// node keeps); the screen follows LogRadio only while it is open. Lines newest at the bottom,
-// paused lines held and appended on resume, at most 2000 kept. Same screen on Android.
+// node keeps; a security set_config makes the node restart once, and the link comes back by
+// itself in about 15 s, the switch reading the config dump again after it); the screen follows
+// LogRadio only while it is open. Lines newest at the bottom, paused lines held and appended on
+// resume, at most 2000 kept. Same screen on Android.
 import MeshSatMeshtastic
 import SwiftUI
 
@@ -67,7 +69,8 @@ public struct NodeLogScreen: View {
     private var hint: String {
         if !connected { return "Connect your MeshSat node first." }
         if streaming { return "The node sends every log line while this switch is on; it may drop lines in a burst. Newest at the bottom." }
-        return "Sets the node's debug log over Bluetooth (security.debug_log_api_enabled); a setting the node keeps."
+        return "Sets the node's debug log over Bluetooth (security.debug_log_api_enabled); a setting the node keeps. "
+            + "The node restarts once to apply it, and the link comes back by itself."
     }
 
     private var streamingBinding: Binding<Bool> {
