@@ -375,6 +375,33 @@ platform :ios do
     UI.success("#{version.version_string} is waiting for App Review (submission #{submission})")
   end
 
+  # After an answered information request the page's "Resubmit to App Review" stays greyed until
+  # the rejected item is marked resolved. This is what that button does: resolve every rejected
+  # item of the Unresolved Issues submission, then submit the same submission again. Nothing in
+  # the version or the build changes; the thread and the attachment stay.
+  desc "Resubmit the Unresolved Issues submission to App Review without changing anything"
+  lane :store_resubmit do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    _, subs = asc_rest(:get, "v1/reviewSubmissions?filter[app]=#{app.id}&filter[platform]=IOS&filter[state]=UNRESOLVED_ISSUES&include=items&fields[reviewSubmissionItems]=state")
+    sub = (subs["data"] || []).first
+    UI.user_error!("no submission in Unresolved Issues") if sub.nil?
+    submission = sub["id"]
+    (subs["included"] || []).each do |item|
+      next unless item["attributes"]["state"] == "REJECTED"
+      code, body = asc_rest(:patch, "v1/reviewSubmissionItems/#{item['id']}", {
+        data: { type: "reviewSubmissionItems", id: item["id"], attributes: { resolved: true } }
+      })
+      UI.user_error!("resolve item: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 200
+      UI.message("item #{item['id'][0, 12]}...: #{body.dig('data', 'attributes', 'state')}")
+    end
+    code, body = asc_rest(:patch, "v1/reviewSubmissions/#{submission}", {
+      data: { type: "reviewSubmissions", id: submission, attributes: { submitted: true } }
+    })
+    UI.user_error!("resubmit: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 200
+    UI.success("submission #{submission} resubmitted: #{body.dig('data', 'attributes', 'state')}")
+  end
+
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
   lane :beta do
     asc_key
