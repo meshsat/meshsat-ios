@@ -26,8 +26,31 @@ final class HubProtocolTests: XCTestCase {
         XCTAssertEqual(t.deviceBirth("pi-01", "mesh-abc"), "meshsat/bridge/pi-01/device/mesh-abc/birth")
         XCTAssertEqual(t.deviceSOS("dev-01"), "meshsat/dev-01/sos")
         XCTAssertEqual(t.deviceMODecoded("+31600000000"), "meshsat/%2B31600000000/mo/decoded")
-        XCTAssertTrue(t.mayReceiveTakBroadcast)
         XCTAssertEqual(HubTopics.segment("a/b#c+%"), "a%2Fb%23c%2B%25")
+    }
+
+    // TAK through the Hub (MESHSAT-1464): the export rides the bridge's own subtree, and what the
+    // Hub delivers arrives on two topics, the second naming the bridge that exported the event.
+    func testTakTopics() {
+        let t = HubTopics()
+        XCTAssertEqual(t.takCotOut("pi-01"), "meshsat/bridge/pi-01/tak/cot/out")
+        XCTAssertEqual(t.takCotOut("kit+1/2"), "meshsat/bridge/kit%2B1%2F2/tak/cot/out")
+        XCTAssertEqual(t.takCotInFilters, ["meshsat/broadcast/tak/cot/in", "meshsat/broadcast/tak/cot/in/+"])
+
+        // From a TAK server: no sender.
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/in"), "")
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/in/pi-01"), "pi-01")
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/in/"), "")
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/in/pi-01/more"), "")
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/inpi-01"), "")
+        XCTAssertEqual(t.takCotSender("meshsat/bridge/pi-01/tak/cot/out"), "")
+
+        XCTAssertTrue(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in/pi-01", bridgeId: "pi-01"))
+        XCTAssertTrue(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in/kit%2B1", bridgeId: "kit+1"))
+        XCTAssertFalse(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in/pi-02", bridgeId: "pi-01"))
+        XCTAssertFalse(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in", bridgeId: "pi-01"))
+        // An id that merely starts the same is somebody else.
+        XCTAssertFalse(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in/pi-011", bridgeId: "pi-01"))
     }
 
     func testBodiesCarryTheBridgesFields() {
@@ -229,7 +252,11 @@ final class HubReporterTests: XCTestCase {
         XCTAssertEqual(session.will?.topic, "meshsat/bridge/ios-test/death")
         XCTAssertTrue(session.will.map { String(decoding: $0.payload, as: UTF8.self).contains("\"reason\":\"lwt\"") } ?? false)
         XCTAssertEqual(
-            session.subscribed, ["meshsat/bridge/ios-test/cmd", "meshsat/broadcast/tak/cot/in", "meshsat/bridge/ios-test/mo/ack"])
+            session.subscribed,
+            [
+                "meshsat/bridge/ios-test/cmd", "meshsat/broadcast/tak/cot/in", "meshsat/broadcast/tak/cot/in/+",
+                "meshsat/bridge/ios-test/mo/ack",
+            ])
         let birth = session.published.first { $0.topic.hasSuffix("/birth") }
         XCTAssertEqual(birth?.retain, true)
         XCTAssertEqual(birth?.qos, 1)
@@ -342,11 +369,37 @@ final class HubReporterTests: XCTestCase {
         XCTAssertEqual(JSONBody.number(52.370216), "52.370216")
     }
 
+    // The Hub delivers what a bridge exports to the tenant's other bridges, and the broker hands this
+    // one its own as well. It is dropped by the topic that names the sender (MESHSAT-1464).
+    func testATakEventThisBridgeExportedIsDroppedAndOthersAreTaken() async {
+        let session = FakeMQTTSession()
+        let reporter = HubReporter(config: config, host: FakeHubHost(), makeSession: { _ in session })
+        let taken = Changes()
+        reporter.setTakCotCallback { xml in taken.add(xml) }
+        reporter.start()
+        _ = await waitUntil { reporter.state.value == .connected }
+
+        session.deliver("meshsat/broadcast/tak/cot/in/ios-test", "<event uid=\"own\"/>")
+        session.deliver("meshsat/broadcast/tak/cot/in/pi-01", "<event uid=\"other-bridge\"/>")
+        session.deliver("meshsat/broadcast/tak/cot/in", "<event uid=\"tak-server\"/>")
+        let got = await waitUntil { taken.list.count >= 2 }
+        XCTAssertTrue(got)
+        XCTAssertEqual(taken.list, ["<event uid=\"other-bridge\"/>", "<event uid=\"tak-server\"/>"])
+        await reporter.stop()
+    }
+
     func testACustomerTenantsTopicsHangOffItsPrefix() {
         let t = HubTopics(prefix: "meshsat/acme")
         XCTAssertEqual(t.bridgeCmd("b-1"), "meshsat/acme/bridge/b-1/cmd")
         XCTAssertEqual(t.devicePosition("+31612345678"), "meshsat/acme/%2B31612345678/position")
-        XCTAssertFalse(t.mayReceiveTakBroadcast)
+        // A customer's TAK traffic is delivered under its own prefix, and its export goes there too:
+        // the platform's topics are not a customer's to read (MESHSAT-1464).
+        XCTAssertEqual(t.takCotOut("b-1"), "meshsat/acme/bridge/b-1/tak/cot/out")
+        XCTAssertEqual(t.takCotInFilters, ["meshsat/acme/broadcast/tak/cot/in", "meshsat/acme/broadcast/tak/cot/in/+"])
+        XCTAssertEqual(t.takCotSender("meshsat/acme/broadcast/tak/cot/in/b-2"), "b-2")
+        XCTAssertEqual(t.takCotSender("meshsat/broadcast/tak/cot/in/b-2"), "")
+        XCTAssertTrue(t.isOwnTakExport(topic: "meshsat/acme/broadcast/tak/cot/in/b-1", bridgeId: "b-1"))
+        XCTAssertFalse(t.isOwnTakExport(topic: "meshsat/broadcast/tak/cot/in/b-1", bridgeId: "b-1"))
         XCTAssertEqual(HubTopics(prefix: "").prefix, "meshsat")
         XCTAssertEqual(HubTopics(prefix: "meshsat/acme/").prefix, "meshsat/acme")
     }

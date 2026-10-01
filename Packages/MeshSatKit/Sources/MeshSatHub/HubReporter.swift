@@ -384,7 +384,7 @@ public final class HubReporter: @unchecked Sendable {
     private func subscribeAndAnnounce(_ s: any MQTTSession) async {
         do {
             try await s.subscribe(
-                [topics.bridgeCmd(config.bridgeId)] + (topics.mayReceiveTakBroadcast ? [HubTopics.takBroadcast] : []) + [
+                [topics.bridgeCmd(config.bridgeId)] + topics.takCotInFilters + [
                     topics.bridgeMOAck(config.bridgeId)
                 ],
                 qos: Self.qosAtLeastOnce)
@@ -450,6 +450,8 @@ public final class HubReporter: @unchecked Sendable {
 
     func handleInbound(topic: String, payload: String) async {
         if topic.contains("/tak/cot/in") {
+            // What this bridge exported itself comes back on the topic that names it as the sender.
+            if topics.isOwnTakExport(topic: topic, bridgeId: config.bridgeId) { return }
             hooks().tak?(payload)
             return
         }
