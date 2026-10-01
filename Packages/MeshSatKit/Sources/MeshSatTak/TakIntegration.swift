@@ -1,6 +1,6 @@
 // Mirrors tak/TakIntegration.kt: CoT events out, and inbound ones parsed and summarised for the
-// message list. Android has two outputs, an ATAK broadcast intent and the MQTT publish to the
-// Hub on meshsat/{deviceId}/tak/cot/out. iOS has no ATAK intent (the README says so), so the
+// message list. Android has two outputs, an ATAK broadcast intent and the publish to the Hub on
+// {prefix}/bridge/{bridgeId}/tak/cot/out. iOS has no ATAK intent (the README says so), so the
 // only output is the publisher this is given.
 import Foundation
 
@@ -77,8 +77,10 @@ public final class TakIntegration: @unchecked Sendable {
         return "[TAK:\(cs)] \(ev.type) event"
     }
 
-    /// The topic Android and the Bridge publish on, under the tenant's prefix.
-    public static func outTopic(prefix: String, deviceId: String) -> String { "\(prefix)/\(deviceId)/tak/cot/out" }
+    /// The topic every client exports on, under the tenant's prefix: the bridge's own subtree
+    /// (MESHSAT-1464). HubTopics.takCotOut is what the app uses; this is the same shape for a
+    /// plain id.
+    public static func outTopic(prefix: String, deviceId: String) -> String { "\(prefix)/bridge/\(deviceId)/tak/cot/out" }
 
     private func emit(_ ev: CotEvent) async {
         let xml = CotXml.marshal(ev)

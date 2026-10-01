@@ -75,13 +75,36 @@ public struct HubTopics: Sendable, Equatable {
     public func deviceTelemetry(_ deviceId: String) -> String { device(deviceId) + "/telemetry" }
     public func deviceSOS(_ deviceId: String) -> String { device(deviceId) + "/sos" }
     public func deviceMODecoded(_ deviceId: String) -> String { device(deviceId) + "/mo/decoded" }
-    /// CoT events out, as the Bridge and Android publish them (tak/TakIntegration.kt).
-    public func takCotOut(_ deviceId: String) -> String { device(deviceId) + "/tak/cot/out" }
+    /// CoT events out, on the bridge's OWN subtree (MESHSAT-1464). It was `{prefix}/{id}/tak/cot/out`,
+    /// a topic no bridge credential may publish: the broker grants a bridge `{prefix}/bridge/{bid}/#`
+    /// and nothing device-shaped for TAK. The Hub listens here and forwards to the tenant's TAK
+    /// servers (meshsat-hub MESHSAT-1458).
+    public func takCotOut(_ bridgeId: String) -> String { bridge(bridgeId) + "/tak/cot/out" }
 
-    /// The operator's TAK picture: never under the prefix, and granted only to bridges of the
-    /// platform tenant (a customer gets TAK from its own hosted TAK server).
-    public static let takBroadcast = "meshsat/broadcast/tak/cot/in"
-    public var mayReceiveTakBroadcast: Bool { prefix == Self.platformPrefix }
+    /// What the Hub delivers back (meshsat-hub MESHSAT-1461), under the tenant's prefix like
+    /// everything else: an event from one of the tenant's TAK servers on this topic, and an event
+    /// another bridge of the tenant exported one level below it, with that bridge's id as the last
+    /// segment. For the platform tenant this is the historical `meshsat/broadcast/tak/cot/in`.
+    public var takCotIn: String { "\(prefix)/broadcast/tak/cot/in" }
+
+    /// The two subscriptions that receive what the Hub delivers.
+    public var takCotInFilters: [String] { [takCotIn, takCotIn + "/+"] }
+
+    /// The bridge that exported a delivered event, as the topic names it (percent-encoded, as
+    /// `segment` writes it), or "" for an event from a TAK server and for any other topic.
+    public func takCotSender(_ topic: String) -> String {
+        let lead = takCotIn + "/"
+        guard topic.hasPrefix(lead) else { return "" }
+        let rest = String(topic.dropFirst(lead.count))
+        return rest.isEmpty || rest.contains("/") ? "" : rest
+    }
+
+    /// Whether a delivered event is one this bridge exported itself. By the topic, not by the
+    /// event's uid: a kit exports events for mesh nodes other than itself.
+    public func isOwnTakExport(topic: String, bridgeId: String) -> Bool {
+        let sender = takCotSender(topic)
+        return !sender.isEmpty && sender == Self.segment(bridgeId)
+    }
 
     /// A topic segment as the Hub writes it: + # / % percent-encoded (hubmqtt.EncodeSegment).
     public static func segment(_ id: String) -> String {

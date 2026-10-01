@@ -211,7 +211,7 @@ final class CotBuilderTests: XCTestCase {
         XCTAssertTrue(xmls[0].contains("uid=\"MESHSAT-abcdef123456\""))
         XCTAssertTrue(xmls[0].contains("callsign=\"MS-3456\""))
         XCTAssertTrue(xmls[1].contains("<emergency type=\"911 Alert\">fall</emergency>"))
-        XCTAssertEqual(TakIntegration.outTopic(prefix: "meshsat/acme", deviceId: "kit-1"), "meshsat/acme/kit-1/tak/cot/out")
+        XCTAssertEqual(TakIntegration.outTopic(prefix: "meshsat/acme", deviceId: "kit-1"), "meshsat/acme/bridge/kit-1/tak/cot/out")
 
         let pos = CotBuilder.position(uid: "u", callsign: "KIT", lat: 52.3676, lon: 4.9041)
         XCTAssertEqual(tak.formatForDisplay(pos), "[TAK:KIT] 52.367600,4.904100")
