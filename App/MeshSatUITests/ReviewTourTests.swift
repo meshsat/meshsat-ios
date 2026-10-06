@@ -166,10 +166,33 @@ final class ReviewTourTests: XCTestCase {
             rows.first?.tap()
         }
         answerPairingPrompt()
-        let connected = app.staticTexts["Connected"].firstMatch
-        let isConnected = connected.waitForExistence(timeout: 60)
+        // Disconnect is offered only while the node is connected (a "Connected" text also
+        // belongs to the Hub row of the screen underneath).
+        let isConnected = app.buttons["Disconnect"].firstMatch.waitForExistence(timeout: 60)
         if required { XCTAssertTrue(isConnected, "connected to the node") }
         step(isConnected ? "connected" : "not-connected")
+        if isConnected, required { waitForStableLink(app) }
+    }
+
+    /// About 12 s after a fresh pairing the node announces a changed service table and the app
+    /// reconnects (MESHSAT-1378; 53 s on 6 Oct 2026). The demo stays on the node page until the
+    /// link is back and has held for 20 s, so the viewer sees it return by itself.
+    @MainActor
+    private func waitForStableLink(_ app: XCUIApplication) {
+        step("link-settle")
+        let deadline = Date().addingTimeInterval(TimeInterval(env["MESHSAT_SETTLE"] ?? "") ?? 150)
+        var stableSince: Date?
+        while Date() < deadline {
+            if app.buttons["Disconnect"].firstMatch.exists {
+                let since = stableSince ?? Date()
+                stableSince = since
+                if Date().timeIntervalSince(since) >= 20 { break }
+            } else {
+                stableSince = nil
+            }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        step(stableSince == nil ? "link-not-back" : "link-stable")
     }
 
     /// iOS's "Bluetooth Pairing Request" belongs to SpringBoard: a text field for the code and a
@@ -197,12 +220,14 @@ final class ReviewTourTests: XCTestCase {
         let text = env["MESHSAT_TEXT"] ?? "Hello from the iPhone over the mesh"
         openTab(app, "Messages")
         tap(app, "New message")
-        tap(app, "Everyone on the mesh")
+        // The dialog's own line: the chat list behind the dialog has an "Everyone on the mesh" row
+        // whose centre lies under the dialog's Satellite choice (take five opened the satellite chat).
+        tap(app, "Every node on your channel")
         let field = app.textViews.firstMatch.exists ? app.textViews.firstMatch : app.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 10), "composer")
         field.tap()
-        field.typeText(text)
-        tap(app, "Send")
+        // The composer sends on the keyboard's Send key (submitLabel .send, onSubmit: send).
+        field.typeText(text + "\n")
         XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 15), "the bubble")
     }
 
@@ -300,36 +325,28 @@ final class ReviewTourTests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         var candidate: XCUIElement?
         while Date() < deadline, candidate == nil {
-            let buttons = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", label)).allElementsBoundByIndex
-            let texts = app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
             let keyboard = app.keyboards.firstMatch
             let keyboardTop = keyboard.exists ? keyboard.frame.minY : .greatestFiniteMagnitude
-            let visible = (buttons + texts).filter { $0.exists && $0.isHittable && $0.frame.maxY <= keyboardTop }
-            let rank: (XCUIElement) -> Int = { e in
-                let l = e.label
-                if l == label { return 0 }
-                if l.hasPrefix(label) { return 1 }
-                return 2
+            // isHittable on an element with no usable frame records a failure of its own ("Activation
+            // point invalid"), so the frame is checked first.
+            let usable: (XCUIElement) -> Bool = { e in
+                guard e.exists else { return false }
+                let f = e.frame
+                guard f.width >= 2, f.height >= 2, f.maxY <= keyboardTop, app.frame.intersects(f) else { return false }
+                return e.isHittable
             }
-            candidate = visible.min { rank($0) < rank($1) }
+            let exact =
+                app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
+                .allElementsBoundByIndex + app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+            candidate = exact.first(where: usable)
             if candidate == nil {
-                if (buttons + texts).contains(where: { $0.exists && $0.frame.minY > app.frame.height * 0.8 }) {
-                    app.swipeUp()
-                } else {
-                    Thread.sleep(forTimeInterval: 0.5)
-                }
+                candidate = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", label)).allElementsBoundByIndex
+                    .first(where: usable)
             }
-        }
-        if candidate == nil {
-            // The text of a row that is on screen but not reported hittable.
-            let text = app.staticTexts[label].firstMatch
-            if text.exists, text.frame.minY >= 0, text.frame.maxY <= app.frame.height {
-                var tries = 0
-                while !text.isHittable, tries < 3 {
-                    app.swipeUp()
-                    tries += 1
-                }
-                candidate = text
+            if candidate == nil {
+                let below = (exact + app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", label)).allElementsBoundByIndex)
+                    .contains { $0.exists && $0.frame.minY > app.frame.height * 0.8 }
+                if below { app.swipeUp() } else { Thread.sleep(forTimeInterval: 0.5) }
             }
         }
         guard let target = candidate else {
