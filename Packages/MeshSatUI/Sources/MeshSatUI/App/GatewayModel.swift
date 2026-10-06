@@ -23,6 +23,8 @@ public final class GatewayModel {
     // Android reads the adapter synchronously; CoreBluetooth answers a moment after start, so
     // Bluetooth counts as on until the central says otherwise (no "Bluetooth is off" flash).
     public private(set) var bluetoothOn = true
+    /// The Bluetooth permission as iOS has it; the node screen's first button depends on it.
+    public private(set) var bluetoothAuthorization: MeshtasticCentral.Authorization = .allowed
     public private(set) var scanResults: [MeshtasticCentral.DiscoveredNode] = []
     public private(set) var myInfo: MeshtasticProtocol.MyNodeInfo?
     public private(set) var nodes: [MeshtasticProtocol.MeshNodeInfo] = []
@@ -105,6 +107,13 @@ public final class GatewayModel {
         observe()
     }
 
+    private func observeBluetoothPermission(_ central: MeshtasticCentral) {
+        tasks.append(
+            Task { [weak self] in
+                for await auth in central.authorization.subscribe() { self?.bluetoothAuthorization = auth }
+            })
+    }
+
     private func observe() {
         let gateway = self.gateway
         let central = gateway.central
@@ -117,6 +126,7 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await on in central.bluetoothOn.subscribe() { self?.bluetoothOn = on }
             })
+        observeBluetoothPermission(central)
         tasks.append(
             Task { [weak self] in
                 for await node in central.scanResults.subscribe() {

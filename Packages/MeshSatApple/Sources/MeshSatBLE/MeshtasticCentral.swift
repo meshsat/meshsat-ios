@@ -23,6 +23,10 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
 
     public enum State: Sendable, Equatable { case disconnected, scanning, connecting, connected }
 
+    /// Whether this app may use Bluetooth, as iOS has it: `undecided` until the person has
+    /// answered the system prompt, which appears when the central is first created (`start()`).
+    public enum Authorization: Sendable, Equatable { case undecided, allowed, denied }
+
     /// A radio seen while scanning.
     public struct DiscoveredNode: Sendable, Equatable {
         public let id: UUID
@@ -40,6 +44,9 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     /// that is the whole reason the node cannot be reached, and the one thing worth telling the
     /// person (MESHSAT-615).
     public let bluetoothOn = StateBroadcast<Bool>(false)
+    /// The Bluetooth permission (MESHSAT-1331, App Review 6 Oct 2026): the node screen asks
+    /// with "Continue" while it is undecided, offers Settings when denied, and scans when allowed.
+    public let authorization = StateBroadcast<Authorization>(MeshtasticCentral.readAuthorization())
     /// The node's Iridium serial pipe, when the connected radio is a MeshSat node.
     public let iridiumPipe = StateBroadcast<IridiumBlePipe?>(nil)
     /// The node's live log lines (MESHSAT-1374), kept while the app runs: one line per LogRadio
@@ -60,6 +67,9 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     private var ops: GattOpQueue?
     private var servicesToDiscover = 0
     private var scanTimeout: DispatchWorkItem?
+    /// A scan asked for while the central was still starting (the first tap, with the permission
+    /// prompt on screen); it runs when the central reports poweredOn.
+    private var scanWanted = false
     private var lastAddressValue: String?
     private let whoIsAsked = WhoIsLimiter()
 
@@ -103,7 +113,17 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
 
     public func startScan(timeoutMs: Int64 = 10_000) {
         start()
-        guard let c = manager(), c.state == .poweredOn else {
+        guard let c = manager() else { return }
+        if c.state == .unknown {
+            // Just created: the permission prompt or the power state comes in a moment, and
+            // centralManagerDidUpdateState runs the scan then. Without this the first tap
+            // only showed the prompt and the person had to tap again.
+            lock.lock()
+            scanWanted = true
+            lock.unlock()
+            return
+        }
+        guard c.state == .poweredOn else {
             errors.send("Bluetooth not available")
             return
         }
@@ -443,13 +463,28 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
 
 extension MeshtasticCentral: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        authorization.send(Self.readAuthorization())
+        lock.lock()
+        let wanted = scanWanted
+        scanWanted = false
+        lock.unlock()
         switch central.state {
         case .poweredOn:
             onBluetoothOn()
+            if wanted { startScan() }
         case .poweredOff, .unauthorized, .unsupported, .resetting:
             onBluetoothOff()
         default:
             break
+        }
+    }
+
+    /// CBManager.authorization is a class property: reading it never shows the prompt.
+    static func readAuthorization() -> Authorization {
+        switch CBManager.authorization {
+        case .notDetermined: .undecided
+        case .allowedAlways: .allowed
+        default: .denied
         }
     }
 
