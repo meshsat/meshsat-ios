@@ -11,7 +11,8 @@ import XCTest
 final class ReviewTourTests: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
     private var dwell: TimeInterval { TimeInterval(env["MESHSAT_DWELL"] ?? "") ?? 4 }
-    private var nodeName: String { env["MESHSAT_NODE_NAME"] ?? "MeshSat" }
+    /// The node's Bluetooth name as iOS Settings shows it (the T-Beam Supreme node: FLNR_074c).
+    private var nodeName: String { env["MESHSAT_NODE_NAME"] ?? "FLNR" }
 
     @MainActor
     func testReviewDemo() throws {
@@ -21,10 +22,11 @@ final class ReviewTourTests: XCTestCase {
         try XCTSkipUnless(env["MESHSAT_PROVE"] == "review", "MESHSAT_PROVE=review runs the demo")
         wakeAndUnlock()
         let app = XCUIApplication()
-        if env["MESHSAT_FORGET"] != "0" {
-            unpairInApp(app)
-            forgetInSettings()
+        if env["MESHSAT_PREP_ONLY"] == "1" {
+            prepare(app)
+            return
         }
+        if env["MESHSAT_FORGET"] != "0" { prepare(app) }
         step("launch")
         app.launch()
         XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 30))
@@ -44,8 +46,8 @@ final class ReviewTourTests: XCTestCase {
         back(app)
 
         app.buttons["Home"].firstMatch.tap()
+        // Not scrolled: the bottom of Home carries the phone's own coordinates (the tester's home).
         pause("home-paired")
-        scrollAndPause(app, "home-paired-2")
 
         sendMeshText(app)
         let replyWait = TimeInterval(env["MESHSAT_REPLY_WAIT"] ?? "") ?? 45
@@ -73,23 +75,40 @@ final class ReviewTourTests: XCTestCase {
 
     // MARK: - the pairing
 
-    /// Disconnect in the app forgets the saved node, so the fresh launch starts unpaired.
+    /// Before the take: the app must start unpaired AND iOS must have no bond, so the scan, the
+    /// tap and the PIN prompt all happen on camera. Disconnect in the app forgets the saved node
+    /// (only offered while connected: a wedged "Connecting" link, as after an app upgrade with the
+    /// link alive, is cleared by forgetting the node in Settings first and pairing again), then
+    /// the app is quit and the bond is forgotten in Settings.
     @MainActor
-    private func unpairInApp(_ app: XCUIApplication) {
+    private func prepare(_ app: XCUIApplication) {
+        step("prepare")
         app.activate()
-        guard app.buttons["Home"].waitForExistence(timeout: 15) else { return }
+        if !app.buttons["Home"].waitForExistence(timeout: 20) {
+            app.launch()
+            _ = app.buttons["Home"].waitForExistence(timeout: 30)
+        }
         openTab(app, "Setup")
         open(app, "Your MeshSat node")
+        if !app.buttons["Disconnect"].firstMatch.waitForExistence(timeout: 8) {
+            forgetInSettings()
+            app.activate()
+            _ = app.buttons["Home"].waitForExistence(timeout: 20)
+            pairWithNode(app, required: false)
+        }
         let disconnect = app.buttons["Disconnect"].firstMatch
-        if disconnect.waitForExistence(timeout: 5) {
+        if disconnect.waitForExistence(timeout: 5), disconnect.isHittable {
             step("disconnect")
             disconnect.tap()
             Thread.sleep(forTimeInterval: 2)
+        } else {
+            NSLog("MeshSatReview: no Disconnect button; the saved node stays")
         }
         back(app)
         openTab(app, "Home")
         app.terminate()
         Thread.sleep(forTimeInterval: 5)
+        forgetInSettings()
     }
 
     /// Settings > Bluetooth > (i) next to the node > Forget This Device, so iOS asks for the PIN
@@ -104,10 +123,12 @@ final class ReviewTourTests: XCTestCase {
         bluetooth.tap()
         let row = settings.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", nodeName)).firstMatch
         guard row.waitForExistence(timeout: 15) else { return NSLog("MeshSatReview: node not in Bluetooth list") }
-        let info = settings.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'More Info' OR label CONTAINS[c] %@", nodeName))
-            .allElementsBoundByIndex.first {
-                $0.exists && $0.isHittable && $0.frame.minY >= row.frame.minY - 20 && $0.frame.maxY <= row.frame.maxY + 20
-            }
+        let info = settings.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'More Info' OR label CONTAINS[c] 'Info' OR label CONTAINS[c] %@", nodeName)
+        )
+        .allElementsBoundByIndex.first {
+            $0.exists && $0.isHittable && $0.frame.minY >= row.frame.minY - 20 && $0.frame.maxY <= row.frame.maxY + 20
+        }
         guard let info else { return NSLog("MeshSatReview: no info button") }
         info.tap()
         let forget = settings.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Forget'")).firstMatch
@@ -122,30 +143,33 @@ final class ReviewTourTests: XCTestCase {
         Thread.sleep(forTimeInterval: 2)
     }
 
-    /// Scan, tap the node, answer iOS's pairing prompt with the PIN, wait for Connected.
+    /// Scan, tap the node, answer iOS's pairing prompt with the PIN, wait for Connected. With
+    /// `required` false (the preparation) a missing scan list is not a failure: the app may be
+    /// reconnecting to its saved node by itself, and only the prompt and the wait matter.
     @MainActor
-    private func pairWithNode(_ app: XCUIApplication) {
+    private func pairWithNode(_ app: XCUIApplication, required: Bool = true) {
         step("scan")
         tap(app, "Continue", timeout: 3, required: false)
-        tap(app, "Scan for Meshtastic devices", timeout: 10, required: false)
+        tap(app, "Scan for Meshtastic devices", timeout: required ? 10 : 3, required: false)
         let found = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", nodeName)).firstMatch
         let anyDevice = app.staticTexts["Found devices:"].firstMatch
-        if !found.waitForExistence(timeout: 20) {
+        if !found.waitForExistence(timeout: 20), required {
             XCTAssertTrue(anyDevice.waitForExistence(timeout: 10), "a device found")
         }
         Thread.sleep(forTimeInterval: 2)
-        step("tap-node")
         if found.exists {
+            step("tap-node")
             found.tap()
-        } else {
-            // the first device row under "Found devices:"
+        } else if anyDevice.exists {
+            step("tap-node")
             let rows = app.buttons.allElementsBoundByIndex.filter { $0.frame.minY > anyDevice.frame.maxY && $0.isHittable }
             rows.first?.tap()
         }
         answerPairingPrompt()
         let connected = app.staticTexts["Connected"].firstMatch
-        XCTAssertTrue(connected.waitForExistence(timeout: 60), "connected to the node")
-        step("connected")
+        let isConnected = connected.waitForExistence(timeout: 60)
+        if required { XCTAssertTrue(isConnected, "connected to the node") }
+        step(isConnected ? "connected" : "not-connected")
     }
 
     /// iOS's "Bluetooth Pairing Request" belongs to SpringBoard: a text field for the code and a
