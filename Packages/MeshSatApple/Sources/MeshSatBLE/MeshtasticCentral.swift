@@ -42,8 +42,10 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     public let rssi = StateBroadcast<Int>(0)
     /// Whether the phone's Bluetooth is switched on and this app may use it. When it is off,
     /// that is the whole reason the node cannot be reached, and the one thing worth telling the
-    /// person (MESHSAT-615).
-    public let bluetoothOn = StateBroadcast<Bool>(false)
+    /// person (MESHSAT-615). True until the central reports otherwise: before the first scan
+    /// creates it nothing is known, and "Bluetooth is off" on an unpaired phone was wrong
+    /// (MESHSAT-1504).
+    public let bluetoothOn = StateBroadcast<Bool>(true)
     /// The Bluetooth permission (MESHSAT-1331, App Review 6 Oct 2026): the node screen asks
     /// with "Continue" while it is undecided, offers Settings when denied, and scans when allowed.
     public let authorization = StateBroadcast<Authorization>(MeshtasticCentral.readAuthorization())
@@ -70,6 +72,9 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     /// A scan asked for while the central was still starting (the first tap, with the permission
     /// prompt on screen); it runs when the central reports poweredOn.
     private var scanWanted = false
+    /// A link handed back by state restoration, picked up once the central is poweredOn
+    /// (MESHSAT-1505): CoreBluetooth ignores discoverServices before that.
+    private var restoredPending: CBPeripheral?
     private var lastAddressValue: String?
     private let whoIsAsked = WhoIsLimiter()
 
@@ -470,6 +475,7 @@ extension MeshtasticCentral: CBCentralManagerDelegate {
         lock.unlock()
         switch central.state {
         case .poweredOn:
+            resumeRestoredLink(central)
             onBluetoothOn()
             if wanted { startScan() }
         case .poweredOff, .unauthorized, .unsupported, .resetting:
@@ -500,11 +506,30 @@ extension MeshtasticCentral: CBCentralManagerDelegate {
         peripheral = p
         lock.unlock()
         p.delegate = self
+        state.send(.connecting)
+        // Not discoverServices here: restoration runs before the central is poweredOn, a call now
+        // is ignored, and connect(address:) then refuses the same node, so the link stayed on
+        // Connecting for ever (MESHSAT-1505). resumeRestoredLink does it on poweredOn.
+        lock.lock()
+        restoredPending = p
+        lock.unlock()
+        if central.state == .poweredOn { resumeRestoredLink(central) }
+    }
+
+    /// The restored link, once the central can use it: services when iOS kept it connected,
+    /// a connect when it did not.
+    private func resumeRestoredLink(_ central: CBCentralManager) {
+        lock.lock()
+        let p = restoredPending
+        restoredPending = nil
+        lock.unlock()
+        guard let p else { return }
         if p.state == .connected {
-            state.send(.connecting)
+            Self.log.info("Resuming the restored node link: discovering services")
             p.discoverServices([MeshSatBLE.meshtasticService, MeshSatBLE.iridiumPipeService])
         } else {
-            state.send(.connecting)
+            Self.log.info("Resuming the restored node link: connecting (\(p.state.rawValue))")
+            central.connect(p, options: nil)
         }
     }
 
