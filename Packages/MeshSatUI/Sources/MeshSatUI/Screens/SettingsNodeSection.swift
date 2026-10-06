@@ -2,9 +2,14 @@
 // SetupSection.Node part): the status row in the mesh colour; connected, the node id, its
 // battery (MESHSAT-1315), its reboots, the mesh nodes and a red Disconnect; disconnected, a
 // Scan button and the devices found, each of which connects on tap. iOS shows CoreBluetooth's
-// permission prompt on the first scan by itself.
+// permission prompt when the central is first created, so before the permission is decided
+// the button reads "Continue" with a line saying why (App Review, guideline 5.1.1(iv), 6 Oct
+// 2026: a screen that leads to a permission prompt continues with a neutral word, not with the
+// feature's own), and once denied it opens Settings. Android has no such rule and keeps its one
+// button; the two apps differ here on purpose (MESHSAT-1331).
 import MeshSatMeshtastic
 import SwiftUI
+import UIKit
 
 public struct SettingsNodeSection: View {
     @Environment(GatewayModel.self) private var model
@@ -21,23 +26,41 @@ public struct SettingsNodeSection: View {
                         connectedRows
                         MSFilledButton("Disconnect", container: MSColors.red) { model.disconnect() }
                     } else if model.meshState == .disconnected || model.meshState == .scanning {
-                        MSFilledButton(
-                            model.meshState == .scanning ? "Scanning..." : "Scan for Meshtastic devices", container: MSColors.teal
-                        ) {
-                            model.startScan()
-                        }
-                        if !model.scanResults.isEmpty {
-                            Text("Found devices:").msText(.bodySmall, color: MSColors.textMuted)
-                            ForEach(model.scanResults, id: \.id) { node in
-                                DeviceRow(name: node.name ?? "Unknown", address: node.address) { model.connect(node) }
-                            }
-                        }
+                        scanRows
                     }
                 }
             }
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+    }
+
+    @ViewBuilder
+    private var scanRows: some View {
+        switch model.bluetoothAuthorization {
+        case .undecided:
+            Text("MeshSat finds your node over Bluetooth. iOS asks for your permission first.")
+                .msText(.bodySmall, color: MSColors.textMuted)
+            MSFilledButton("Continue", container: MSColors.teal) { model.startScan() }
+        case .denied:
+            Text("Bluetooth is off for MeshSat. Allow it in Settings to reach your node.")
+                .msText(.bodySmall, color: MSColors.textMuted)
+            MSFilledButton("Open Settings", container: MSColors.teal) {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }
+        case .allowed:
+            MSFilledButton(
+                model.meshState == .scanning ? "Scanning..." : "Scan for Meshtastic devices", container: MSColors.teal
+            ) {
+                model.startScan()
+            }
+            if !model.scanResults.isEmpty {
+                Text("Found devices:").msText(.bodySmall, color: MSColors.textMuted)
+                ForEach(model.scanResults, id: \.id) { node in
+                    DeviceRow(name: node.name ?? "Unknown", address: node.address) { model.connect(node) }
+                }
+            }
+        }
     }
 
     @ViewBuilder
