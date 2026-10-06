@@ -289,24 +289,47 @@ final class ReviewTourTests: XCTestCase {
         Thread.sleep(forTimeInterval: 1)
     }
 
-    /// The first on-screen, hittable element with this label (hidden tab stacks keep theirs).
+    /// The first on-screen, hittable element for this label. A Setup row (NavRow) is a Button
+    /// whose accessibility label is its icon, title and detail joined, so buttons are matched by
+    /// CONTAINS and ranked exact, prefix, contains; the hidden tab stacks keep their elements in
+    /// the tree, which is why only hittable ones count (take two: Home's hidden "Satellite" lane
+    /// took the tap meant for Setup's row). When nothing hittable carries the label, the text
+    /// itself is taken, scrolled into view if needed (a row's inner text is not always hittable).
     @MainActor
     private func tap(_ app: XCUIApplication, _ label: String, timeout: TimeInterval = 10, required: Bool = true) {
         let deadline = Date().addingTimeInterval(timeout)
         var candidate: XCUIElement?
         while Date() < deadline, candidate == nil {
-            let pool =
-                app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
-                .allElementsBoundByIndex + app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+            let buttons = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", label)).allElementsBoundByIndex
+            let texts = app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
             let keyboard = app.keyboards.firstMatch
             let keyboardTop = keyboard.exists ? keyboard.frame.minY : .greatestFiniteMagnitude
-            candidate = pool.first { $0.exists && $0.isHittable && $0.frame.maxY <= keyboardTop }
+            let visible = (buttons + texts).filter { $0.exists && $0.isHittable && $0.frame.maxY <= keyboardTop }
+            let rank: (XCUIElement) -> Int = { e in
+                let l = e.label
+                if l == label { return 0 }
+                if l.hasPrefix(label) { return 1 }
+                return 2
+            }
+            candidate = visible.min { rank($0) < rank($1) }
             if candidate == nil {
-                if pool.contains(where: { $0.exists && $0.frame.minY > app.frame.height * 0.8 }) {
+                if (buttons + texts).contains(where: { $0.exists && $0.frame.minY > app.frame.height * 0.8 }) {
                     app.swipeUp()
                 } else {
                     Thread.sleep(forTimeInterval: 0.5)
                 }
+            }
+        }
+        if candidate == nil {
+            // The text of a row that is on screen but not reported hittable.
+            let text = app.staticTexts[label].firstMatch
+            if text.exists, text.frame.minY >= 0, text.frame.maxY <= app.frame.height {
+                var tries = 0
+                while !text.isHittable, tries < 3 {
+                    app.swipeUp()
+                    tries += 1
+                }
+                candidate = text
             }
         }
         guard let target = candidate else {
