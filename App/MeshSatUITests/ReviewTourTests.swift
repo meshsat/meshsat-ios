@@ -33,14 +33,14 @@ final class ReviewTourTests: XCTestCase {
         pause("home-unpaired")
 
         app.buttons["Setup"].firstMatch.tap()
-        open(app, "Your MeshSat node")
+        tap(app, "Your MeshSat node")
         pause("node-page")
         pairWithNode(app)
         pause("node-connected")
         scrollAndPause(app, "node-connected-2")
         back(app)
 
-        open(app, "Satellite")
+        tap(app, "Satellite")
         pause("satellite")
         scrollAndPause(app, "satellite-2")
         back(app)
@@ -60,8 +60,8 @@ final class ReviewTourTests: XCTestCase {
         }
 
         app.buttons["Setup"].firstMatch.tap()
-        open(app, "Advanced")
-        open(app, "Node log")
+        tap(app, "Advanced")
+        tap(app, "Node log")
         pause("node-log")
         Thread.sleep(forTimeInterval: 10)
         back(app)
@@ -89,7 +89,7 @@ final class ReviewTourTests: XCTestCase {
             _ = app.buttons["Home"].waitForExistence(timeout: 30)
         }
         openTab(app, "Setup")
-        open(app, "Your MeshSat node")
+        tap(app, "Your MeshSat node")
         if !app.buttons["Disconnect"].firstMatch.waitForExistence(timeout: 8) {
             forgetInSettings()
             app.activate()
@@ -230,7 +230,9 @@ final class ReviewTourTests: XCTestCase {
         }
     }
 
-    // MARK: - helpers (as in TourTests and ProvingTests)
+    // MARK: - helpers (as in TourTests and ProvingTests; rows are tapped through tap(), which takes
+    // only on-screen, hittable elements: the hidden tab stacks keep theirs in the tree, and in take
+    // two of the demo a tap on Home's hidden "Satellite" lane landed on the SMS row of Setup)
 
     private func step(_ name: String) { NSLog("MeshSatReview: %@", name) }
 
@@ -274,26 +276,6 @@ final class ReviewTourTests: XCTestCase {
             pops += 1
             Thread.sleep(forTimeInterval: 0.8)
         }
-    }
-
-    @MainActor
-    private func element(_ app: XCUIApplication, _ label: String) -> XCUIElement {
-        let button = app.buttons[label].firstMatch
-        if button.exists { return button }
-        return app.staticTexts[label].firstMatch
-    }
-
-    @MainActor
-    private func open(_ app: XCUIApplication, _ label: String) {
-        let target = element(app, label)
-        XCTAssertTrue(target.waitForExistence(timeout: 10), "row \(label)")
-        var tries = 0
-        while !target.isHittable, tries < 4 {
-            app.swipeUp()
-            tries += 1
-        }
-        target.tap()
-        Thread.sleep(forTimeInterval: 1)
     }
 
     @MainActor
