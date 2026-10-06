@@ -1,14 +1,15 @@
 // What the gateway does around iOS's background limits (MESHSAT-1328). Android's
 // GatewayService is a foreground service and simply keeps running; iOS gives the app the
-// Bluetooth and location background modes while their sessions are live, and two scheduled
-// windows (BGTaskScheduler) for the rest. Everything here is idempotent and short.
+// Bluetooth background mode while the node link is live, the significant-change location
+// service (no location background mode since build 23, App Review guideline 2.5.4), and two
+// scheduled windows (BGTaskScheduler) for the rest. Everything here is idempotent and short.
 import Foundation
 import MeshSatEngine
 import MeshSatSatellite
 
 extension GatewayController {
-    /// The app left the screen: the location session keeps the process alive when Always is
-    /// granted, and the telemetry records the transition.
+    /// The app left the screen: significant-change location takes over when Always is granted,
+    /// and the telemetry records the transition.
     public func enteredBackground() {
         location.beginBackgroundActivity()
         telemetryLogger?.recordEvent(tag: "GatewayController", message: "Entered background")

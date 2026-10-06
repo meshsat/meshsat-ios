@@ -77,7 +77,6 @@ targets:
         UIBackgroundModes:
           - bluetooth-central
           - bluetooth-peripheral
-          - location
           - processing
           - fetch
         BGTaskSchedulerPermittedIdentifiers:

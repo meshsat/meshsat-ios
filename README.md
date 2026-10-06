@@ -61,7 +61,7 @@ The list below is what the app is being built to do, following MeshSat Android. 
 - **Safety.** Hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent. A check-in timer that sends SOS when the phone sees no activity for too long, and zones drawn on the map that record when a node enters or leaves an area.
 - **Offline map** down to country level, and **night mode**, which turns the whole app red.
 
-Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. iOS keeps the app alive for Bluetooth events and, when you allow it, for location updates; the Gateway card in Setup says which mode you are in.
+Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. iOS keeps the app alive for Bluetooth events from the node; in the background the phone's position is refreshed only on significant movement, so position reports, zones and an SOS from the background use that coarser fix. The Gateway card in Setup says which mode you are in.
 
 ## What works, and what does not
 

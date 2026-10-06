@@ -51,8 +51,8 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     private let lock = NSLock()
     private var started = false
     private var askedAlways = false
-    /// iOS 17: keeps the process running in the background while location is on (CLBackgroundActivitySession).
-    private var backgroundSession: AnyObject?
+    /// Whether the significant-change service is on (the app is in the background with Always).
+    private var significantOn = false
 
     override public init() {
         super.init()
@@ -60,10 +60,11 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = Self.distanceFilterM
         manager.pausesLocationUpdatesAutomatically = false
-        #if os(iOS)
-        manager.allowsBackgroundLocationUpdates = true
-        manager.showsBackgroundLocationIndicator = false
-        #endif
+        // No location background mode (App Review, guideline 2.5.4, 6 Oct 2026): the app is not
+        // kept alive for location. In the background a fix comes from the significant-change
+        // service, which wakes the app on its own, and from the moments iOS runs the app for
+        // Bluetooth events from the node. allowsBackgroundLocationUpdates must stay false: set
+        // without the mode it is a fatal error.
     }
 
     /// Ask for permission on first use and start updates; a no-op while not authorized (the
@@ -139,30 +140,29 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         return was
     }
 
-    /// The app went to the background: with Always granted, a background activity session
-    /// keeps the app running for its location work (iOS 17).
+    /// The app went to the background: with Always granted, the significant-change service
+    /// delivers a fix on a cell change or about 500 m of movement and wakes the app for it; the
+    /// Hub report, the zones and an SOS use that fix. Standard updates stop with the app.
     public func beginBackgroundActivity() {
-        #if os(iOS)
         guard manager.authorizationStatus == .authorizedAlways else { return }
         lock.lock()
-        defer { lock.unlock() }
-        if backgroundSession == nil, #available(iOS 17.0, *) {
-            backgroundSession = CLBackgroundActivitySession()
-            Self.log.info("Background activity session started")
+        let start = !significantOn
+        significantOn = true
+        lock.unlock()
+        if start {
+            manager.startMonitoringSignificantLocationChanges()
+            Self.log.info("Significant-change location on for the background")
         }
-        #endif
     }
 
     public func endBackgroundActivity() {
-        #if os(iOS)
         lock.lock()
-        let session = backgroundSession
-        backgroundSession = nil
+        let stop = significantOn
+        significantOn = false
         lock.unlock()
-        if #available(iOS 17.0, *), let s = session as? CLBackgroundActivitySession {
-            s.invalidate()
-            Self.log.info("Background activity session ended")
+        if stop {
+            manager.stopMonitoringSignificantLocationChanges()
+            Self.log.info("Significant-change location off; standard updates in the foreground")
         }
-        #endif
     }
 }
