@@ -290,27 +290,40 @@ platform :ios do
   # App Review's "Information Needed" answers (Guideline 2.1, 26 Sep 2026): the Notes field of the
   # App Review Information section is rewritten from fastlane/metadata/review_information/notes.txt
   # and, with REVIEW_ATTACHMENT=<file>, the attachment (the screen recording) replaces whatever was
-  # attached before. The reply to App Review itself has no public API: the owner pastes the same
-  # notes into the App Review page and attaches the same file there.
-  desc "Rewrite the App Review notes and attachment of the pending version"
+  # attached before. Apple allows ONE attachment there ("There can be max of 1 attachment", 16 Oct
+  # 2026): anything else, such as the demo QR images, goes on the reply. The Hub demo login's password is
+  # never in git: notes.txt says {{HUB_REVIEW_PASSWORD}} and REVIEW_HUB_PASSWORD fills it in (OpenBao
+  # ci-no/apps/meshsat-ios/app-review-hub-login). The reply to App Review itself has no public API:
+  # the owner pastes it into the App Review page and attaches the same files there.
+  desc "Rewrite the App Review notes and attachments of the pending version"
   lane :store_review_info do
+    files = ENV["REVIEW_ATTACHMENT"].to_s.split(",").map(&:strip).reject(&:empty?)
+    UI.user_error!("App Review Information takes one attachment, got #{files.size}") if files.size > 1
+    files.each { |f| UI.user_error!("REVIEW_ATTACHMENT #{f} does not exist") unless File.exist?(f) }
+    notes = File.read(File.join(__dir__, "metadata", "review_information", "notes.txt")).strip
+    if notes.include?("{{HUB_REVIEW_PASSWORD}}")
+      password = ENV["REVIEW_HUB_PASSWORD"].to_s
+      UI.user_error!("notes.txt needs REVIEW_HUB_PASSWORD for the Hub demo login") if password.empty?
+      notes = notes.gsub("{{HUB_REVIEW_PASSWORD}}", password)
+    end
+    UI.user_error!("notes.txt is over Apple's 4000 characters (#{notes.length})") if notes.length > 4000
     asc_key
     app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
     UI.user_error!("no editable version") if version.nil?
-    detail = version.fetch_app_store_review_detail
-    notes = File.read(File.join(__dir__, "metadata", "review_information", "notes.txt")).strip
-    UI.user_error!("notes.txt is over Apple's 4000 characters (#{notes.length})") if notes.length > 4000
+    # Without the include the attachments come back empty and the old ones would never be removed.
+    detail = version.fetch_app_store_review_detail(includes: "appStoreReviewAttachments")
     detail.update(attributes: { notes: notes, demoAccountRequired: false })
     UI.message("App Review notes written (#{notes.length} characters)")
-    if (file = ENV["REVIEW_ATTACHMENT"])
-      UI.user_error!("REVIEW_ATTACHMENT #{file} does not exist") unless File.exist?(file)
+    unless files.empty?
       (detail.app_store_review_attachments || []).each do |old|
         UI.message("Removing attachment #{old.file_name}")
         old.delete!
       end
-      attachment = detail.upload_attachment(path: file)
-      UI.success("Attached #{attachment.file_name} (#{File.size(file)} bytes)")
+      files.each do |file|
+        attachment = detail.upload_attachment(path: file)
+        UI.success("Attached #{attachment.file_name} (#{File.size(file)} bytes)")
+      end
     end
   end
 
