@@ -377,6 +377,29 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
+    /// One channel's timed-out pending ACKs (MESHSAT-1584).
+    @discardableResult
+    public func timeoutPendingAcks(channel: String, cutoff: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE message_deliveries
+                    SET ack_status = 'timeout', updated_at = ?
+                    WHERE ack_status = 'pending' AND ack_timestamp IS NOT NULL AND ack_timestamp <= ?
+                    AND channel = ?
+                    """,
+                arguments: [now, cutoff, channel])
+            return db.changesCount
+        }
+    }
+
+    /// The channels with a delivery waiting for its ACK.
+    public func pendingAckChannels() async throws -> [String] {
+        try await db.read { db in
+            try String.fetchAll(db, sql: "SELECT DISTINCT channel FROM message_deliveries WHERE ack_status = 'pending'")
+        }
+    }
+
     public func getByChannelAndSeq(channel: String, seqNum: Int64) async throws -> MessageDelivery? {
         try await db.read { db in
             try MessageDelivery.fetchOne(

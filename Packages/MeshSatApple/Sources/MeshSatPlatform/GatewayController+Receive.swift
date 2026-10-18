@@ -188,7 +188,7 @@ extension GatewayController {
     func storeIridiumMt(_ mtText: String) async {
         var imei = await driver.modemInfo.imei
         if imei.isEmpty { imei = "iridium" }
-        if deduplicator.isDuplicateKey("iridium:\(imei):\(mtText.hashValue)") { return }
+        if deduplicator.isDuplicateKey("iridium:\(imei):" + Deduplicator.stableKey(mtText)) { return }
         try? await db.messages.insert(
             MessageRecord(timestamp: clock.nowMs(), transport: "iridium", direction: "rx", sender: imei, text: mtText))
         Self.log.info("Iridium MT stored: \(mtText.count) chars")

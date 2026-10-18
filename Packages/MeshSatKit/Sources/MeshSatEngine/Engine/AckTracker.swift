@@ -63,7 +63,9 @@ public final class AckTracker: @unchecked Sendable {
         guard let delivery = try? await store.getByChannelAndSeq(channel: channel, seqNum: seqNum), let id = delivery.id else {
             return false
         }
-        if delivery.ackStatus != "pending" { return false }
+        // A late ACK after the timeout is still the far end's answer: recorded, not lost
+        // (MESHSAT-1584, as Android). An answer already recorded stays.
+        if delivery.ackStatus != "pending" && delivery.ackStatus != "timeout" { return false }
         let now = clock.nowMs()
         if positive {
             try? await store.setAcked(id: id, now: now)
@@ -75,11 +77,14 @@ public final class AckTracker: @unchecked Sendable {
         return true
     }
 
+    /// Each channel that has a pending ACK, on that channel's own timeout. The sweep had no
+    /// channel filter, so the first channel's 30 s timed out every pending ACK and the
+    /// satellite's 2 minutes never applied (MESHSAT-1584, as Android).
     public func checkTimeouts() async {
-        for channel in Self.channels {
+        let now = clock.nowMs()
+        for channel in (try? await store.pendingAckChannels()) ?? [] {
             let timeout = timeoutMs(for: channel)
-            let now = clock.nowMs()
-            let timedOut = (try? await store.timeoutPendingAcks(cutoff: now - timeout, now: now)) ?? 0
+            let timedOut = (try? await store.timeoutPendingAcks(channel: channel, cutoff: now - timeout, now: now)) ?? 0
             if timedOut > 0 { Self.log.warning("\(channel): \(timedOut) ACKs timed out (timeout=\(timeout / 1000)s)") }
         }
     }

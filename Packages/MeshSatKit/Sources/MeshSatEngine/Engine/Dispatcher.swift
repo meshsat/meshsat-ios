@@ -500,7 +500,10 @@ public final class Dispatcher: @unchecked Sendable {
         if let woke = try? await store.retryNowForChannel(channelId, now: clock.nowMs()), woke > 0 {
             Self.log.info("\(woke) more deliveries for \(channelId) are due now: a send just worked")
         }
-        if del.qosLevel >= 1 {
+        // Not on the mesh: the ledger's mesh sends are broadcasts, which never ask for an ACK
+        // (MESHSAT-1112), so none can come. It stays sent: accepted by the radio, not confirmed
+        // (MESHSAT-1584, as Android).
+        if del.qosLevel >= 1 && !channelId.hasPrefix("mesh") {
             try? await store.setAckPending(id: id, now: clock.nowMs())
             Self.log.info("Delivery \(id) sent to \(channelId) (seq=\(seqNum), ack=pending)")
         } else {

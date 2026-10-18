@@ -22,6 +22,10 @@ public protocol DeliveryStore: Sendable {
     func setAcked(id: Int64, now: Int64) async throws
     func setNacked(id: Int64, now: Int64) async throws
     @discardableResult func timeoutPendingAcks(cutoff: Int64, now: Int64) async throws -> Int
+    /// One channel's timed-out pending ACKs; the sweep is per channel (MESHSAT-1584).
+    @discardableResult func timeoutPendingAcks(channel: String, cutoff: Int64, now: Int64) async throws -> Int
+    /// The channels with a delivery waiting for its ACK.
+    func pendingAckChannels() async throws -> [String]
     func getByChannelAndSeq(channel: String, seqNum: Int64) async throws -> MessageDelivery?
 }
 
