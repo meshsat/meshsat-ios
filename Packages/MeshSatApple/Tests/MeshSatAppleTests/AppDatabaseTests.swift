@@ -185,6 +185,41 @@ final class AppDatabaseTests: XCTestCase {
         XCTAssertEqual(r22, "sent/acked")
     }
 
+    // A satellite chat label only rises (review 2026-10-19 00:36, FE-R5): the uncertain-send hook
+    // writes "May have been sent" through setForwardedToUnlessDelivered, so the Hub's receipt for an
+    // earlier session stays, whichever comes first; with no receipt the label is written.
+    func testASatelliteChatLabelOnlyRises() async throws {
+        let db = try AppDatabase.inMemory()
+        let dao = db.messages
+        func label(_ id: Int64) async throws -> String? {
+            try await db.writer.read { db in
+                try String.fetchOne(db, sql: "SELECT forwardedTo FROM messages WHERE id = ?", arguments: [id])
+            }
+        }
+        func message() async throws -> Int64 {
+            try await dao.insert(
+                MessageRecord(
+                    timestamp: 1000, transport: "iridium", direction: "tx", sender: "self", recipient: "hub", text: "sat",
+                    forwarded: true, forwardedTo: "iridium:queued"))
+        }
+        let receiptFirst = try await message()
+        try await dao.setForwardedTo(id: receiptFirst, "iridium:delivered")
+        try await dao.setForwardedToUnlessDelivered(id: receiptFirst, "iridium:unconfirmed")
+        let l1 = try await label(receiptFirst)
+        XCTAssertEqual(l1, "iridium:delivered")
+
+        let uncertainFirst = try await message()
+        try await dao.setForwardedToUnlessDelivered(id: uncertainFirst, "iridium:unconfirmed")
+        try await dao.setForwardedTo(id: uncertainFirst, "iridium:delivered")
+        let l2 = try await label(uncertainFirst)
+        XCTAssertEqual(l2, "iridium:delivered")
+
+        let noReceipt = try await message()
+        try await dao.setForwardedToUnlessDelivered(id: noReceipt, "iridium:unconfirmed")
+        let l3 = try await label(noReceipt)
+        XCTAssertEqual(l3, "iridium:unconfirmed")
+    }
+
     func testContactsAndKeysUpsert() async throws {
         let db = try AppDatabase.inMemory()
         try await db.contacts.upsert(Contact(fingerprint: "ab", name: "zed", signingPub: "p1", trust: "SCANNED"))

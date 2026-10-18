@@ -118,10 +118,11 @@ extension GatewayController {
                         }
                     }
                     // A satellite send that reported a failure after the upload may have arrived: the
-                    // chat shows "May have been sent" until a retry is confirmed.
+                    // chat shows "May have been sent" until a retry is confirmed, never over the Hub's
+                    // receipt for an earlier session (review 2026-10-19 00:36, FE-R5, as Android).
                     disp.setOnUnconfirmed { [self] del, _ in
                         if del.channel == "iridium_0", del.msgRef.hasPrefix("msg:"), let msgId = Int64(del.msgRef.dropFirst(4)) {
-                            try? await db.messages.setForwardedTo(id: msgId, Self.iridiumUnconfirmed)
+                            try? await db.messages.setForwardedToUnlessDelivered(id: msgId, Self.iridiumUnconfirmed)
                         }
                     }
                     disp.setOnAudit { event, iface, deliveryId, ruleId, detail in
