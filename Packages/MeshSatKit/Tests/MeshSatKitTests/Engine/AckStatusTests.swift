@@ -16,8 +16,16 @@ private struct FixedClock: DriverClock {
 private final class StepClock: @unchecked Sendable {
     private let lock = NSLock()
     private var t: Int64 = 1_000_000_000
-    func now() -> Int64 { lock.lock(); defer { lock.unlock() }; return t }
-    func advance(_ ms: Int64) { lock.lock(); t += ms; lock.unlock() }
+    func now() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return t
+    }
+    func advance(_ ms: Int64) {
+        lock.lock()
+        t += ms
+        lock.unlock()
+    }
 }
 
 final class AckStatusTests: XCTestCase {
@@ -32,7 +40,8 @@ final class AckStatusTests: XCTestCase {
     }
 
     private func sendOne(_ channel: String) async -> [String] {
-        let row = MessageDelivery(id: 3, msgRef: "msg:3", channel: channel, textPreview: "hello", maxRetries: 3, qosLevel: 1, createdAt: 1, updatedAt: 1)
+        let row = MessageDelivery(
+            id: 3, msgRef: "msg:3", channel: channel, textPreview: "hello", maxRetries: 3, qosLevel: 1, createdAt: 1, updatedAt: 1)
         let store = FakeDeliveryStore(rows: [row])
         let rules = EmptyRules()
         let dispatcher = Dispatcher(
@@ -78,7 +87,8 @@ final class AckStatusTests: XCTestCase {
     }
 
     func testALateAckAfterTheTimeoutIsRecordedAndOneAlreadyRecordedStays() async {
-        var row = MessageDelivery(id: 9, msgRef: "msg:9", channel: "iridium_0", textPreview: "x", ackStatus: "timeout", createdAt: 1, updatedAt: 1)
+        var row = MessageDelivery(
+            id: 9, msgRef: "msg:9", channel: "iridium_0", textPreview: "x", ackStatus: "timeout", createdAt: 1, updatedAt: 1)
         let store = FakeDeliveryStore(rows: [row])
         store.seqRow = row
         let tracker = AckTracker(store: store, clock: FixedClock(t: 5_000))

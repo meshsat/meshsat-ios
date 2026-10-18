@@ -79,7 +79,10 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
     func setAckPending(id: Int64, now: Int64) async throws { note("ackPending:\(id)") }
     func setAcked(id: Int64, now: Int64) async throws { note("acked:\(id)") }
     func setNacked(id: Int64, now: Int64) async throws { note("nacked:\(id)") }
-    func timeoutPendingAcks(cutoff: Int64, now: Int64) async throws -> Int { note("sweepAll:\(cutoff)"); return 0 }
+    func timeoutPendingAcks(cutoff: Int64, now: Int64) async throws -> Int {
+        note("sweepAll:\(cutoff)")
+        return 0
+    }
     func timeoutPendingAcks(channel: String, cutoff: Int64, now: Int64) async throws -> Int {
         note("sweep:\(channel):\(cutoff)")
         return 0
