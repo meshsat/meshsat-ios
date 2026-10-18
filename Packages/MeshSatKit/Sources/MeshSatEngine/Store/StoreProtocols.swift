@@ -8,8 +8,21 @@ public protocol DeliveryStore: Sendable {
     func getById(_ id: Int64) async throws -> MessageDelivery?
     func getPending(channel: String, now: Int64, limit: Int) async throws -> [MessageDelivery]
     func setStatus(id: Int64, _ status: String, lastError: String, now: Int64) async throws
-    func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64) async throws
-    func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64) async throws
+    // The worker's writes (review 2026-10-18 23:31, FE-R4): each changes a row only while the
+    // worker may still own it, and answers how many rows it changed; 0 means a confirmation, a
+    // cancel or another worker came first, and the row stays as that left it.
+    /// Take a waiting, unconfirmed delivery for one send ('sending').
+    @discardableResult func claimForSend(id: Int64, now: Int64) async throws -> Int
+    /// The send went out: sent, its sequence number and the ACK wait, in one write, while 'sending'.
+    @discardableResult func markSent(id: Int64, seqNum: Int64, ackPending: Bool, now: Int64) async throws -> Int
+    /// A waiting, unconfirmed delivery stops before it is sent.
+    @discardableResult func dropWaiting(id: Int64, _ status: String, lastError: String, now: Int64) async throws -> Int
+    /// The send ends for good, while 'sending'.
+    @discardableResult func finishSend(id: Int64, _ status: String, lastError: String, now: Int64) async throws -> Int
+    @discardableResult func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64) async throws -> Int
+    @discardableResult func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64) async throws -> Int
+    /// A confirmed delivery left waiting by an older worker becomes sent (at start).
+    @discardableResult func settleConfirmed(now: Int64) async throws -> Int
     func queueDepth(channel: String) async throws -> Int
     @discardableResult func expireDeliveries(now: Int64) async throws -> Int
     @discardableResult func holdForChannel(_ channel: String, now: Int64) async throws -> Int
@@ -17,8 +30,6 @@ public protocol DeliveryStore: Sendable {
     @discardableResult func cancelRunaway(safetyLimit: Int, now: Int64) async throws -> Int
     @discardableResult func retryNowForChannel(_ channel: String, now: Int64) async throws -> Int
     @discardableResult func recoverStale(now: Int64) async throws -> Int
-    func setSeqNum(id: Int64, _ seqNum: Int64, now: Int64) async throws
-    func setAckPending(id: Int64, now: Int64) async throws
     func setAcked(id: Int64, now: Int64) async throws
     func setNacked(id: Int64, now: Int64) async throws
     @discardableResult func timeoutPendingAcks(cutoff: Int64, now: Int64) async throws -> Int

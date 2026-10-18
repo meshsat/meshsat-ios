@@ -47,6 +47,8 @@ public final class Dispatcher: @unchecked Sendable {
     private let lock = NSLock()
     private var workers: [String: Task<Void, Never>] = [:]
     private var reapers: [Task<Void, Never>] = []
+    /// The start-up repair; workers send nothing before it is done (start).
+    private var recovery: Task<Void, Never>?
     private var maxHops = Dispatcher.defaultMaxHops
     private var maxQueueDepth = Dispatcher.defaultMaxQueueDepth
     private var dedupCache: [String: Int64] = [:]
@@ -302,15 +304,24 @@ public final class Dispatcher: @unchecked Sendable {
 
     /// Start the dispatcher: per-interface workers and the background reapers.
     public func start(interfaces: [String: String]) {
+        // Done before any worker takes a row: a recovery that ran after a worker's claim would set
+        // that live send back to retry, and its outcome would then find the row taken (FE-R4).
         let startup = Task { [self] in
             let now = clock.nowMs()
             if let cancelled = try? await store.cancelRunaway(safetyLimit: MessageDelivery.runawaySafetyLimit, now: now), cancelled > 0 {
                 Self.log.warning("Cancelled \(cancelled) runaway deliveries")
             }
+            // A confirmed delivery an older worker set back to retry is sent, not sent again.
+            if let settled = try? await store.settleConfirmed(now: now), settled > 0 {
+                Self.log.info("Settled \(settled) confirmed deliveries that were left waiting")
+            }
             if let recovered = try? await store.recoverStale(now: now), recovered > 0 {
                 Self.log.info("Recovered \(recovered) stale deliveries")
             }
         }
+        lock.lock()
+        recovery = startup
+        lock.unlock()
         for ifaceId in interfaces.keys { startWorker(ifaceId) }
         let pruner = Task { [self] in
             while !Task.isCancelled {
@@ -347,6 +358,7 @@ public final class Dispatcher: @unchecked Sendable {
             while !Task.isCancelled {
                 await clock.sleep(ms: pollIntervalMs)
                 if Task.isCancelled { break }
+                await startupRepair()?.value
                 await processBatch(interfaceId)
             }
         }
@@ -405,6 +417,12 @@ public final class Dispatcher: @unchecked Sendable {
         return due
     }
 
+    private func startupRepair() -> Task<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return recovery
+    }
+
     private func processBatch(_ channelId: String) async {
         let deliveries: [MessageDelivery]
         do {
@@ -432,31 +450,40 @@ public final class Dispatcher: @unchecked Sendable {
     private func deliver(_ channelId: String, _ del: MessageDelivery) async -> Bool {
         guard let id = del.id, let fresh = try? await store.getById(id) else { return true }
         if ["sent", "dead", "cancelled", "delivered"].contains(fresh.status) { return true }
+        // The checks before a send read the row; what they write changes it only while it still
+        // waits and is not confirmed (review 2026-10-18 23:31, FE-R4), so a confirmation or a
+        // cancel that commits meanwhile is never overwritten.
         if let mayDeliver = hooks().mayDeliver, await mayDeliver(fresh) == false {
-            try? await store.setStatus(id: id, "dead", lastError: "cancelled", now: clock.nowMs())
-            await audit("drop", channelId, fresh, why: "cancelled")
-            Self.log.info("Delivery \(id) stopped: \(fresh.msgRef) was cancelled")
+            if ((try? await store.dropWaiting(id: id, "dead", lastError: "cancelled", now: clock.nowMs())) ?? 0) > 0 {
+                await audit("drop", channelId, fresh, why: "cancelled")
+                Self.log.info("Delivery \(id) stopped: \(fresh.msgRef) was cancelled")
+            }
             return true
         }
         if accessEvaluator.hasEgressRules(channelId) {
             let matches = accessEvaluator.evaluateEgress(channelId, RouteMessage(text: del.textPreview))
             if matches.isEmpty {
-                try? await store.setStatus(id: id, "denied", lastError: "egress rules denied", now: clock.nowMs())
-                Self.log.info("Delivery \(id) denied by egress rules on \(channelId)")
+                if ((try? await store.dropWaiting(id: id, "denied", lastError: "egress rules denied", now: clock.nowMs())) ?? 0) > 0 {
+                    Self.log.info("Delivery \(id) denied by egress rules on \(channelId)")
+                }
                 return true
             }
         }
         if del.priority > 0, let expiresAt = del.expiresAt, clock.nowMs() > expiresAt {
-            try? await store.setStatus(id: id, "expired", lastError: "TTL expired before send", now: clock.nowMs())
+            try? await store.dropWaiting(id: id, "expired", lastError: "TTL expired before send", now: clock.nowMs())
             return true
         }
 
         if isManual(channelId) {
             // Parked for the user; the composer lane picks it up and reports userSent/userDeclined.
-            try? await store.setStatus(id: id, Self.awaitingUser, lastError: "", now: clock.nowMs())
+            try? await store.dropWaiting(id: id, Self.awaitingUser, lastError: "", now: clock.nowMs())
             return true
         }
-        try? await store.setStatus(id: id, "sending", lastError: "", now: clock.nowMs())
+        // The row is taken for this send in one write, only while it still waits and is not
+        // confirmed (FE-R4): one confirmed, cancelled or held since it was read is not sent. Every
+        // later write of this send matches only a row that is still 'sending', so a confirmation
+        // that commits while the send is out is never undone.
+        guard ((try? await store.claimForSend(id: id, now: clock.nowMs())) ?? 0) > 0 else { return true }
         let payload = del.payload.map { [UInt8]($0) } ?? Array(del.textPreview.utf8)
         let error = await deliveryCallback(channelId, payload, del.textPreview, del.recipient, id, Self.sourceBearerOf(del.visited))
 
@@ -467,9 +494,12 @@ public final class Dispatcher: @unchecked Sendable {
         if error.hasPrefix(Self.never) {
             // Trying again cannot help (a message too long for the link): stop here.
             let why = String(error.dropFirst(Self.never.count)).trimmingCharacters(in: .whitespaces)
-            try? await store.setStatus(id: id, "dead", lastError: why, now: clock.nowMs())
-            await audit("drop", channelId, del, why: String(why.prefix(80)))
-            Self.log.warning("Delivery \(id) can never go by \(channelId): \(why)")
+            if ((try? await store.finishSend(id: id, "dead", lastError: why, now: clock.nowMs())) ?? 0) > 0 {
+                await audit("drop", channelId, del, why: String(why.prefix(80)))
+                Self.log.warning("Delivery \(id) can never go by \(channelId): \(why)")
+            } else {
+                Self.log.info("Delivery \(id) can never go by \(channelId), but it was confirmed meanwhile: it stays so")
+            }
             return true
         }
         if error.hasPrefix(Self.notNow) {
@@ -477,8 +507,11 @@ public final class Dispatcher: @unchecked Sendable {
             // wait it out without counting a try.
             let rest = String(error.dropFirst(Self.notNow.count))
             let waitMs = Int64(rest.split(separator: " ").first ?? "") ?? 60_000
-            try? await store.deferRetry(id: id, nextRetry: clock.nowMs() + waitMs, lastError: error, now: clock.nowMs())
-            Self.log.info("Delivery \(id) waits \(waitMs / 1000) s: \(channelId) cannot send now")
+            if ((try? await store.deferRetry(id: id, nextRetry: clock.nowMs() + waitMs, lastError: error, now: clock.nowMs())) ?? 0) > 0 {
+                Self.log.info("Delivery \(id) waits \(waitMs / 1000) s: \(channelId) cannot send now")
+            } else {
+                Self.log.info("Delivery \(id) was confirmed meanwhile: it does not wait for \(channelId)")
+            }
             return false
         }
         if error.hasPrefix(Self.unconfirmed), let hook = hooks().onUnconfirmed {
@@ -491,8 +524,14 @@ public final class Dispatcher: @unchecked Sendable {
     private func handleSuccess(_ channelId: String, _ del: MessageDelivery) async {
         guard let id = del.id else { return }
         let seqNum = sequenceTracker.nextEgressSeq(channelId)
-        try? await store.setSeqNum(id: id, seqNum, now: clock.nowMs())
-        try? await store.setStatus(id: id, "sent", lastError: "", now: clock.nowMs())
+        // Not on the mesh: the ledger's mesh sends are broadcasts, which never ask for an ACK
+        // (MESHSAT-1112), so none can come. It stays sent: accepted by the radio, not confirmed
+        // (MESHSAT-1584, as Android).
+        let ackPending = del.qosLevel >= 1 && !channelId.hasPrefix("mesh")
+        // Sent, the sequence number and the ACK wait in one write, and only while this send still
+        // holds the row (FE-R4): a confirmation that came in first stays, and one that comes later
+        // finds the row sent and confirms it.
+        let held = ((try? await store.markSent(id: id, seqNum: seqNum, ackPending: ackPending, now: clock.nowMs())) ?? 0) > 0
         await audit("deliver", channelId, del)
         if let onSent = hooks().onSent { await onSent(del) }
         // The link works right now (for a satellite, the sky is open): whatever else waits for
@@ -500,11 +539,9 @@ public final class Dispatcher: @unchecked Sendable {
         if let woke = try? await store.retryNowForChannel(channelId, now: clock.nowMs()), woke > 0 {
             Self.log.info("\(woke) more deliveries for \(channelId) are due now: a send just worked")
         }
-        // Not on the mesh: the ledger's mesh sends are broadcasts, which never ask for an ACK
-        // (MESHSAT-1112), so none can come. It stays sent: accepted by the radio, not confirmed
-        // (MESHSAT-1584, as Android).
-        if del.qosLevel >= 1 && !channelId.hasPrefix("mesh") {
-            try? await store.setAckPending(id: id, now: clock.nowMs())
+        if !held {
+            Self.log.info("Delivery \(id) sent to \(channelId) (seq=\(seqNum)); it was confirmed meanwhile and stays so")
+        } else if ackPending {
             Self.log.info("Delivery \(id) sent to \(channelId) (seq=\(seqNum), ack=pending)")
         } else {
             Self.log.info("Delivery \(id) sent to \(channelId) (seq=\(seqNum), qos=0)")
@@ -513,21 +550,33 @@ public final class Dispatcher: @unchecked Sendable {
 
     private func handleFailure(_ channelId: String, _ del: MessageDelivery, _ error: String) async {
         guard let id = del.id else { return }
+        // Each write below changes the row only while this send holds it (FE-R4): a delivery an
+        // earlier send's confirmation settled while this one was out is not retried and not dropped.
         if del.qosLevel == 0 {
-            try? await store.setStatus(id: id, "dead", lastError: error, now: clock.nowMs())
+            guard ((try? await store.finishSend(id: id, "dead", lastError: error, now: clock.nowMs())) ?? 0) > 0 else {
+                return confirmedMeanwhile(channelId, id, error)
+            }
             await audit("drop", channelId, del, why: String(error.prefix(80)))
             return
         }
         let newRetries = del.retries + 1
         if del.maxRetries > 0 && newRetries >= del.maxRetries {
-            try? await store.setStatus(id: id, "dead", lastError: error, now: clock.nowMs())
+            guard ((try? await store.finishSend(id: id, "dead", lastError: error, now: clock.nowMs())) ?? 0) > 0 else {
+                return confirmedMeanwhile(channelId, id, error)
+            }
             await audit("drop", channelId, del, why: String(error.prefix(80)))
             Self.log.warning("Delivery \(id) exhausted retries (\(newRetries)): \(error)")
             return
         }
         let nextRetry = calculateNextRetry(channelId, retries: newRetries, priority: del.priority, moStatus: Self.moStatusOf(error))
-        try? await store.scheduleRetry(id: id, retries: newRetries, nextRetry: nextRetry, lastError: error, now: clock.nowMs())
+        let retried = try? await store.scheduleRetry(
+            id: id, retries: newRetries, nextRetry: nextRetry, lastError: error, now: clock.nowMs())
+        guard (retried ?? 0) > 0 else { return confirmedMeanwhile(channelId, id, error) }
         Self.log.warning("Delivery \(id) retry \(newRetries) scheduled for \(channelId): \(error)")
+    }
+
+    private func confirmedMeanwhile(_ channelId: String, _ id: Int64, _ error: String) {
+        Self.log.info("Delivery \(id): this send by \(channelId) failed (\(error)), but the delivery was confirmed meanwhile: no retry")
     }
 
     func calculateNextRetry(_ channelId: String, retries: Int, priority: Int = 1, moStatus: Int? = nil) -> Int64 {

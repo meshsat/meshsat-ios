@@ -19,6 +19,7 @@ public struct MessageDeliveryDao: Sendable {
         try await db.read { db in try MessageDelivery.fetchOne(db, sql: "SELECT * FROM message_deliveries WHERE id = ?", arguments: [id]) }
     }
 
+    /// What the worker may send now. Never a delivery the far end has confirmed (FE-R4, below).
     public func getPending(channel: String, now: Int64, limit: Int = 10) async throws -> [MessageDelivery] {
         try await db.read { db in
             try MessageDelivery.fetchAll(
@@ -28,6 +29,7 @@ public struct MessageDeliveryDao: Sendable {
                     WHERE channel = ? AND status IN ('queued', 'retry')
                       AND (next_retry IS NULL OR next_retry <= ?)
                       AND (priority = 0 OR expires_at IS NULL OR expires_at > ?)
+                      AND COALESCE(ack_status, '') != 'acked'
                     ORDER BY priority ASC, created_at ASC
                     LIMIT ?
                     """,
@@ -35,6 +37,7 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
+    /// A status by id alone (the composer lane's sent and declined); the delivery worker writes through the guarded calls below.
     public func setStatus(id: Int64, _ status: String, lastError: String = "", now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(
@@ -43,25 +46,120 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
+    // MARK: The delivery worker's writes (review 2026-10-18 23:31, FE-R4, MESHSAT-1584)
+    //
+    // As MessageDeliveryDao.kt: a confirmation (an ACK, the Hub's satellite receipt) can commit at
+    // any moment while a send is in flight. The worker takes a row in one statement (claimForSend)
+    // and every later write of that send matches only a row that is still 'sending'. Every
+    // confirmation moves the row out of 'sending' in its own statement (setAcked,
+    // markAckedBySatRef), so a confirmed delivery is never set back to sent, pending, retry or dead.
+    // No transaction is held while a send waits for the modem.
+
+    /// Take a waiting delivery for one send. 0 when it is no longer waiting (confirmed, cancelled,
+    /// held or taken since it was read); then nothing is sent.
+    @discardableResult
+    public func claimForSend(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE message_deliveries SET status = 'sending', updated_at = ?
+                    WHERE id = ? AND status IN ('queued', 'retry') AND COALESCE(ack_status, '') != 'acked'
+                    """,
+                arguments: [now, id])
+            return db.changesCount
+        }
+    }
+
+    /// The send went out: sent, its sequence number and, when `ackPending`, the wait for its ACK,
+    /// in one statement. 0 when a confirmation came in first; it stays.
+    @discardableResult
+    public func markSent(id: Int64, seqNum: Int64, ackPending: Bool, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            let wait = ackPending ? 1 : 0
+            try db.execute(
+                sql: """
+                    UPDATE message_deliveries
+                    SET status = 'sent', seq_num = ?, last_error = '',
+                        ack_status = CASE WHEN ? AND COALESCE(ack_status, '') != 'acked' THEN 'pending' ELSE ack_status END,
+                        ack_timestamp = CASE WHEN ? AND COALESCE(ack_status, '') != 'acked' THEN ? ELSE ack_timestamp END,
+                        updated_at = ?
+                    WHERE id = ? AND status = 'sending'
+                    """,
+                arguments: [seqNum, wait, wait, now, now, id])
+            return db.changesCount
+        }
+    }
+
+    /// A waiting delivery stops before it is sent ('dead' when cancelled, 'denied', 'expired', or
+    /// parked for the user). 0 when it was confirmed, cancelled or taken since it was read.
+    @discardableResult
+    public func dropWaiting(id: Int64, _ status: String, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE message_deliveries SET status = ?, last_error = ?, updated_at = ?
+                    WHERE id = ? AND status IN ('queued', 'retry') AND COALESCE(ack_status, '') != 'acked'
+                    """,
+                arguments: [status, lastError, now, id])
+            return db.changesCount
+        }
+    }
+
+    /// This send ends for good ('dead'). 0 when it was confirmed meanwhile.
+    @discardableResult
+    public func finishSend(id: Int64, _ status: String, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            try db.execute(
+                sql: "UPDATE message_deliveries SET status = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending'",
+                arguments: [status, lastError, now, id])
+            return db.changesCount
+        }
+    }
+
+    /// This send failed and is tried again at `nextRetry`. 0 when it was confirmed meanwhile: no retry.
+    @discardableResult
     public func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws
+        -> Int
     {
         try await db.write { db in
             try db.execute(
                 sql:
                     """
                     UPDATE message_deliveries SET status = 'retry', retries = ?, next_retry = ?, last_error = ?, updated_at = ?
-                    WHERE id = ?
+                    WHERE id = ? AND status = 'sending'
                     """,
                 arguments: [retries, nextRetry, lastError, now, id])
+            return db.changesCount
         }
     }
 
-    /// Wait until `nextRetry` without counting a try: the channel could not take it just now.
-    public func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws {
+    /// Wait until `nextRetry` without counting a try: the channel could not take it just now. 0
+    /// when it was confirmed meanwhile.
+    @discardableResult
+    public func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
-                sql: "UPDATE message_deliveries SET status = 'retry', next_retry = ?, last_error = ?, updated_at = ? WHERE id = ?",
+                sql: """
+                    UPDATE message_deliveries SET status = 'retry', next_retry = ?, last_error = ?, updated_at = ?
+                    WHERE id = ? AND status = 'sending'
+                    """,
                 arguments: [nextRetry, lastError, now, id])
+            return db.changesCount
+        }
+    }
+
+    /// A confirmed delivery left waiting by a worker from before FE-R4 is sent, not sent again.
+    /// Sent is the claim that certainly holds; ack_status keeps the confirmation. Runs at start.
+    @discardableResult
+    public func settleConfirmed(now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
+        try await db.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE message_deliveries SET status = 'sent', next_retry = NULL, updated_at = ?
+                    WHERE COALESCE(ack_status, '') = 'acked' AND status IN ('queued', 'retry', 'held', 'sending')
+                    """,
+                arguments: [now])
+            return db.changesCount
         }
     }
 
@@ -210,7 +308,7 @@ public struct MessageDeliveryDao: Sendable {
                     """
                     UPDATE message_deliveries
                     SET status = 'retry', last_error = 'recovered after restart', next_retry = ?, updated_at = ?
-                    WHERE status = 'sending'
+                    WHERE status = 'sending' AND COALESCE(ack_status, '') != 'acked'
                     """,
                 arguments: [now, now])
             return db.changesCount
@@ -230,23 +328,20 @@ public struct MessageDeliveryDao: Sendable {
         }
     }
 
-    /// The far end confirmed it: the Hub's receipt for a satellite session, or an SMS report.
+    /// The Hub has the satellite session's message: the delivery is acknowledged. A row the worker
+    /// still holds or would retry becomes sent in the same statement, so the worker's later writes
+    /// leave the confirmation alone (FE-R4).
     @discardableResult
     public func markAckedBySatRef(_ ref: String, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
         try await db.write { db in
             try db.execute(
-                sql: "UPDATE message_deliveries SET ack_status = 'acked', ack_timestamp = ?, updated_at = ? WHERE sat_ref = ?",
+                sql: """
+                    UPDATE message_deliveries
+                    SET ack_status = 'acked', ack_timestamp = ?, updated_at = ?,
+                        status = CASE WHEN status IN ('queued', 'retry', 'held', 'sending') THEN 'sent' ELSE status END
+                    WHERE sat_ref = ?
+                    """,
                 arguments: [now, now, ref])
-            return db.changesCount
-        }
-    }
-
-    @discardableResult
-    public func markAcked(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws -> Int {
-        try await db.write { db in
-            try db.execute(
-                sql: "UPDATE message_deliveries SET ack_status = 'acked', ack_timestamp = ?, updated_at = ? WHERE id = ?",
-                arguments: [now, now, id])
             return db.changesCount
         }
     }
@@ -314,21 +409,10 @@ public struct MessageDeliveryDao: Sendable {
 
     // MARK: Sequence numbers and ACK tracking (Phase C)
 
-    public func setSeqNum(id: Int64, _ seqNum: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
-        try await db.write { db in
-            try db.execute(sql: "UPDATE message_deliveries SET seq_num = ?, updated_at = ? WHERE id = ?", arguments: [seqNum, now, id])
-        }
-    }
+    // The sequence number and the wait for an ACK are written with the send's outcome (markSent).
 
-    public func setAckPending(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
-        try await db.write { db in
-            try db.execute(
-                sql: "UPDATE message_deliveries SET ack_status = 'pending', ack_timestamp = ?, updated_at = ? WHERE id = ?",
-                arguments: [now, now, id])
-        }
-    }
-
-    /// ACKed: promotes the status to 'delivered'.
+    /// ACKed: promotes the status to 'delivered', from any state, the worker's included: its later
+    /// writes match only 'sending' and so leave this alone (FE-R4).
     public func setAcked(id: Int64, now: Int64 = MeshSatStore.nowMs()) async throws {
         try await db.write { db in
             try db.execute(

@@ -7,13 +7,17 @@ import MeshSatEngine
 import MeshSatNet
 import XCTest
 
-/// A delivery store answered from a script, recording what the dispatcher asked of it.
+/// A delivery store answered from a script, recording what the dispatcher asked of it. Its worker
+/// writes keep the guards of MessageDeliveryDao's SQL (FE-R4): a claim only of a waiting,
+/// unconfirmed row, a send's outcome only while the row is 'sending'.
 final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
     private let lock = NSLock()
     private var rows: [Int64: MessageDelivery] = [:]
     private var pendingOnce: [MessageDelivery] = []
     private var served = false
     private var calls: [String] = []
+    /// getPending answers from the rows as they are now, every time, as the SQL does (not once).
+    var live = false
 
     init(rows: [MessageDelivery] = []) {
         for r in rows { self.rows[r.id ?? 0] = r }
@@ -43,8 +47,18 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
         }
     }
     func getById(_ id: Int64) async throws -> MessageDelivery? { row(id) }
+    private var pendingCalls = 0
+    /// How many batches the worker has started (getPending calls).
+    var batches: Int { locked { pendingCalls } }
     func getPending(channel: String, now: Int64, limit: Int) async throws -> [MessageDelivery] {
         locked {
+            pendingCalls += 1
+            if live {
+                return rows.keys.sorted().compactMap { rows[$0] }.filter {
+                    $0.channel == channel && ["queued", "retry"].contains($0.status) && ($0.nextRetry ?? 0) <= now
+                        && $0.ackStatus != "acked"
+                }
+            }
             if served { return [] }
             served = true
             return pendingOnce.filter { $0.channel == channel }
@@ -57,8 +71,76 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
             calls.append("status:\(id):\(status)")
         }
     }
-    func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64) async throws { note("retry:\(id)") }
-    func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64) async throws { note("defer:\(id)") }
+    /// Changes row `id` when `allowed` holds for it, as an UPDATE ... WHERE would; 1 or 0.
+    private func update(
+        _ id: Int64, _ what: String, when allowed: (MessageDelivery) -> Bool, _ change: (inout MessageDelivery) -> Void
+    ) -> Int {
+        locked {
+            guard var r = rows[id], allowed(r) else {
+                calls.append("refused:\(what):\(id)")
+                return 0
+            }
+            change(&r)
+            rows[id] = r
+            calls.append(what)
+            return 1
+        }
+    }
+    private static func waiting(_ r: MessageDelivery) -> Bool { ["queued", "retry"].contains(r.status) && r.ackStatus != "acked" }
+    private static func sending(_ r: MessageDelivery) -> Bool { r.status == "sending" }
+    func claimForSend(id: Int64, now: Int64) async throws -> Int {
+        update(id, "status:\(id):sending", when: Self.waiting) { $0.status = "sending" }
+    }
+    func markSent(id: Int64, seqNum: Int64, ackPending: Bool, now: Int64) async throws -> Int {
+        let n = update(id, "status:\(id):sent", when: Self.sending) {
+            $0.status = "sent"
+            $0.seqNum = seqNum
+            if ackPending && $0.ackStatus != "acked" { $0.ackStatus = "pending" }
+        }
+        if n > 0 {
+            note("seq:\(id):\(seqNum)")
+            if ackPending { note("ackPending:\(id)") }
+        }
+        return n
+    }
+    func dropWaiting(id: Int64, _ status: String, lastError: String, now: Int64) async throws -> Int {
+        update(id, "status:\(id):\(status)", when: Self.waiting) {
+            $0.status = status
+            $0.lastError = lastError
+        }
+    }
+    func finishSend(id: Int64, _ status: String, lastError: String, now: Int64) async throws -> Int {
+        update(id, "status:\(id):\(status)", when: Self.sending) {
+            $0.status = status
+            $0.lastError = lastError
+        }
+    }
+    func scheduleRetry(id: Int64, retries: Int, nextRetry: Int64, lastError: String, now: Int64) async throws -> Int {
+        update(id, "retry:\(id)", when: Self.sending) {
+            $0.status = "retry"
+            $0.retries = retries
+            $0.nextRetry = nextRetry
+            $0.lastError = lastError
+        }
+    }
+    func deferRetry(id: Int64, nextRetry: Int64, lastError: String, now: Int64) async throws -> Int {
+        update(id, "defer:\(id)", when: Self.sending) {
+            $0.status = "retry"
+            $0.nextRetry = nextRetry
+            $0.lastError = lastError
+        }
+    }
+    func settleConfirmed(now: Int64) async throws -> Int {
+        locked {
+            var n = 0
+            for (id, r) in rows where r.ackStatus == "acked" && ["queued", "retry", "held", "sending"].contains(r.status) {
+                rows[id]?.status = "sent"
+                n += 1
+            }
+            calls.append("settle")
+            return n
+        }
+    }
     func queueDepth(channel: String) async throws -> Int { 0 }
     func expireDeliveries(now: Int64) async throws -> Int { 0 }
     func holdForChannel(_ channel: String, now: Int64) async throws -> Int {
@@ -74,10 +156,20 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
         note("retryNow:\(channel)")
         return 2
     }
-    func recoverStale(now: Int64) async throws -> Int { 0 }
-    func setSeqNum(id: Int64, _ seqNum: Int64, now: Int64) async throws { note("seq:\(id):\(seqNum)") }
-    func setAckPending(id: Int64, now: Int64) async throws { note("ackPending:\(id)") }
-    func setAcked(id: Int64, now: Int64) async throws { note("acked:\(id)") }
+    /// Set to hold the start-up repair until the test opens it.
+    var recoverGate: Gate?
+    func recoverStale(now: Int64) async throws -> Int {
+        note("recover")
+        if let recoverGate { await recoverGate.wait() }
+        return 0
+    }
+    func setAcked(id: Int64, now: Int64) async throws {
+        locked {
+            rows[id]?.ackStatus = "acked"
+            rows[id]?.status = "delivered"
+            calls.append("acked:\(id)")
+        }
+    }
     func setNacked(id: Int64, now: Int64) async throws { note("nacked:\(id)") }
     func timeoutPendingAcks(cutoff: Int64, now: Int64) async throws -> Int {
         note("sweepAll:\(cutoff)")

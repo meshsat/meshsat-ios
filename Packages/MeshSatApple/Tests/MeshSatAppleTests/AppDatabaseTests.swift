@@ -99,8 +99,90 @@ final class AppDatabaseTests: XCTestCase {
         try await dao.setSatRef(id: id, "300234010753370:219")
         let acked = try await dao.markAckedBySatRef("300234010753370:219", now: now + 9000)
         XCTAssertEqual(acked, 1)
+        // The Hub has it: a row still waiting becomes sent, so no worker sends it again (FE-R4).
         let stats = try await dao.stats()
-        XCTAssertEqual(stats.map { "\($0.channel)/\($0.status)/\($0.cnt)" }, ["iridium_0/queued/2", "sms_0/dead/1"])
+        XCTAssertEqual(
+            stats.map { "\($0.channel)/\($0.status)/\($0.cnt)" }, ["iridium_0/queued/1", "iridium_0/sent/1", "sms_0/dead/1"])
+    }
+
+    // The worker's guarded writes (review 2026-10-18 23:31, FE-R4), as DeliveryWorkerRoomTest.kt.
+    func testTheWorkersWritesNeverUndoAConfirmation() async throws {
+        let db = try AppDatabase.inMemory()
+        let dao = db.deliveries
+        let now: Int64 = 10_000
+        func queued(_ ref: String, status: String = "queued", retries: Int = 0, ack: String? = nil) async throws -> Int64 {
+            try await dao.insert(
+                MessageDelivery(
+                    msgRef: ref, channel: "iridium_0", status: status, retries: retries, qosLevel: 1, ackStatus: ack,
+                    createdAt: now, updatedAt: now))
+        }
+        func state(_ id: Int64) async throws -> String {
+            let r = try await dao.getById(id)
+            return "\(r?.status ?? "missing")/\(r?.ackStatus ?? "nil")"
+        }
+
+        // A confirmation while the send is out: the send's outcome finds nothing to change.
+        let out = try await queued("msg:1")
+        let r1 = try await dao.claimForSend(id: out, now: now)
+        XCTAssertEqual(r1, 1)
+        let r2 = try await dao.claimForSend(id: out, now: now)
+        XCTAssertEqual(r2, 0, "taken: a second worker gets nothing")
+        try await dao.setAcked(id: out, now: now + 1)
+        let r3 = try await dao.markSent(id: out, seqNum: 4, ackPending: true, now: now + 2)
+        XCTAssertEqual(r3, 0)
+        let r4 = try await dao.scheduleRetry(id: out, retries: 1, nextRetry: now, lastError: "x", now: now + 2)
+        XCTAssertEqual(r4, 0)
+        let r5 = try await dao.deferRetry(id: out, nextRetry: now, lastError: "x", now: now + 2)
+        XCTAssertEqual(r5, 0)
+        let r6 = try await dao.finishSend(id: out, "dead", lastError: "x", now: now + 2)
+        XCTAssertEqual(r6, 0)
+        let r7 = try await state(out)
+        XCTAssertEqual(r7, "delivered/acked")
+        _ = try await dao.timeoutPendingAcks(channel: "iridium_0", cutoff: now + 3_600_000, now: now + 3_600_000)
+        let r8 = try await state(out)
+        XCTAssertEqual(r8, "delivered/acked")
+
+        // The Hub's satellite receipt while the send is out, and for a delivery waiting to be retried.
+        let sat = try await queued("msg:2")
+        let r9 = try await dao.claimForSend(id: sat, now: now)
+        XCTAssertEqual(r9, 1)
+        try await dao.setSatRef(id: sat, "300234010753370:5")
+        let waiting = try await queued("msg:3", status: "retry", retries: 1)
+        try await dao.setSatRef(id: waiting, "300234010753370:6")
+        let r10 = try await dao.markAckedBySatRef("300234010753370:5", now: now + 1)
+        XCTAssertEqual(r10, 1)
+        let r11 = try await dao.markAckedBySatRef("300234010753370:6", now: now + 1)
+        XCTAssertEqual(r11, 1)
+        let r12 = try await dao.markSent(id: sat, seqNum: 5, ackPending: true, now: now + 2)
+        XCTAssertEqual(r12, 0)
+        let r13 = try await state(sat)
+        XCTAssertEqual(r13, "sent/acked")
+        let r14 = try await state(waiting)
+        XCTAssertEqual(r14, "sent/acked")
+        let r15 = try await dao.claimForSend(id: waiting, now: now + 2)
+        XCTAssertEqual(r15, 0)
+
+        // A send with no confirmation: sent and waiting for its ACK in one write.
+        let plain = try await queued("msg:4")
+        let r16 = try await dao.claimForSend(id: plain, now: now)
+        XCTAssertEqual(r16, 1)
+        let r17 = try await dao.markSent(id: plain, seqNum: 6, ackPending: true, now: now + 2)
+        XCTAssertEqual(r17, 1)
+        let r18 = try await state(plain)
+        XCTAssertEqual(r18, "sent/pending")
+
+        // Checks before a send never overwrite a confirmation; one an older worker left waiting is settled.
+        let legacy = try await queued("msg:5", status: "retry", ack: "acked")
+        let r19 = try await dao.dropWaiting(id: legacy, "dead", lastError: "cancelled", now: now)
+        XCTAssertEqual(r19, 0)
+        let r20 = try await dao.claimForSend(id: legacy, now: now)
+        XCTAssertEqual(r20, 0)
+        let left = try await dao.getPending(channel: "iridium_0", now: now + 86_400_000)
+        XCTAssertTrue(left.isEmpty)
+        let r21 = try await dao.settleConfirmed(now: now)
+        XCTAssertEqual(r21, 1)
+        let r22 = try await state(legacy)
+        XCTAssertEqual(r22, "sent/acked")
     }
 
     func testContactsAndKeysUpsert() async throws {
