@@ -55,6 +55,25 @@ public struct HubTopics: Sendable, Equatable {
         self.prefix = p.isEmpty ? Self.platformPrefix : p
     }
 
+    /// Second topic segments that are not tenants on the Hub (store.ReservedTenantIDs, hubmqtt).
+    private static let reserved: Set<String> = ["bridge", "hub", "broadcast", "reticulum", "federation", "routed", "relay"]
+
+    /// The topics for a bundle's prefix, or nil when it is not "meshsat" or "meshsat/{tenant}"
+    /// with a plain tenant id (MESHSAT-1467, as MeshSat Android and the Bridge): a wildcard, a
+    /// slash, a dot or a reserved word there would move the phone onto other topics. Blank is the
+    /// platform tenant.
+    public static func checked(_ prefix: String) -> HubTopics? {
+        let p = prefix.trimmingCharacters(in: .whitespaces)
+        if p.isEmpty || p == platformPrefix { return HubTopics() }
+        guard p.hasPrefix(platformPrefix + "/") else { return nil }
+        let tenant = String(p.dropFirst(platformPrefix.count + 1))
+        let plain =
+            (1...64).contains(tenant.count)
+            && tenant.unicodeScalars.allSatisfy { ($0.isASCII && CharacterSet.alphanumerics.contains($0)) || $0 == "-" || $0 == "_" }
+        guard plain, !reserved.contains(tenant) else { return nil }
+        return HubTopics(prefix: p)
+    }
+
     private func bridge(_ bridgeId: String) -> String { "\(prefix)/bridge/\(Self.segment(bridgeId))" }
     private func device(_ deviceId: String) -> String { "\(prefix)/\(Self.segment(deviceId))" }
 

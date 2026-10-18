@@ -159,6 +159,14 @@ public final class HubReporter: @unchecked Sendable {
             Self.log.warning("Cannot start: Hub URL or bridge ID not configured")
             return
         }
+        // A root that is not the tenant's would publish on topics the broker refuses (MESHSAT-1467).
+        guard HubTopics.checked(config.topicPrefix) != nil else {
+            let why = "The topic root \"\(config.topicPrefix)\" is not meshsat or meshsat/<tenant>"
+            lastError.send(why)
+            state.send(.error)
+            Self.log.warning("Cannot start: \(why)")
+            return
+        }
         lock.lock()
         stopped = false
         lock.unlock()

@@ -1,6 +1,7 @@
 // Mirrors reticulum/RnsMqttInterface.kt: a Reticulum interface over MQTT (MESHSAT-220, 354).
-// Publishes packets base64 on meshsat/{deviceId}/reticulum/tx; the Hub publishes relayed
-// packets to meshsat/{deviceId}/reticulum/rx, which the gateway's inbound handler routes to
+// Publishes packets base64 on {root}/{deviceId}/reticulum/tx, under the tenant's topic root of the
+// link (MESHSAT-1467); the Hub publishes relayed packets to {root}/{deviceId}/reticulum/rx, which
+// the gateway's inbound handler routes to
 // processIncomingMessage. MTU 500, free, latency under a second.
 import Foundation
 import MeshSatWire
@@ -8,7 +9,13 @@ import MeshSatWire
 /// The MQTT transport as this interface needs it (mqtt/MqttTransport.kt).
 public protocol RnsMqttLink: AnyObject, Sendable {
     var isConnected: Bool { get }
+    /// The tenant's topic root the link connected with ("meshsat" for the platform tenant).
+    var topicRoot: String { get }
     func publishRaw(topic: String, qos: Int, retained: Bool, payload: String) async throws
+}
+
+extension RnsMqttLink {
+    public var topicRoot: String { "meshsat" }
 }
 
 public final class RnsMqttInterface: RnsInterface, @unchecked Sendable {
@@ -48,7 +55,7 @@ public final class RnsMqttInterface: RnsInterface, @unchecked Sendable {
 
     public func send(_ packet: [UInt8]) async -> String? {
         guard isOnline else { return "MQTT interface offline" }
-        let topic = "meshsat/\(deviceId())\(Self.topicTxSuffix)"
+        let topic = "\(mqtt.topicRoot)/\(deviceId())\(Self.topicTxSuffix)"
         do {
             try await mqtt.publishRaw(topic: topic, qos: 1, retained: false, payload: Base64Std.encode(packet))
             log("RNS packet sent via MQTT: \(packet.count)B to \(topic)")

@@ -1,8 +1,8 @@
 // Mirrors mqtt/MqttTransport.kt: the device's own MQTT connection to a broker (mqtt_0), apart
 // from the Hub reporter. Publishes position, SOS, telemetry, decoded MO text, health and
-// inbound SMS under meshsat/{deviceId}/..., subscribes to the reverse-path topics, and keeps
-// reconnecting with backoff as Paho's automatic reconnect did. The session is injectable, so
-// the tests run on the fake one.
+// inbound SMS under {root}/{deviceId}/... (the tenant's root, MESHSAT-1467), subscribes to the
+// reverse-path topics, and keeps reconnecting with backoff as Paho's automatic reconnect did.
+// The session is injectable, so the tests run on the fake one.
 import Foundation
 import Logging
 import MeshSatNet
@@ -17,7 +17,6 @@ public final class MqttTransport: @unchecked Sendable {
     public static let connectRetryMinMs: Int64 = 5_000
     public static let connectRetryMaxMs: Int64 = 60_000
     public static let topicRoutes = "meshsat/reticulum/routes"
-    public static let topicTakBroadcast = "meshsat/broadcast/tak/cot/in"
 
     private static let log = Logger(label: "MqttTransport")
     public let state = StateBroadcast<State>(.disconnected)
@@ -27,6 +26,7 @@ public final class MqttTransport: @unchecked Sendable {
     private let lock = NSLock()
     private var session: (any MQTTSession)?
     private var deviceIdValue = ""
+    private var topicRootValue = "meshsat"
     private var onMessage: MessageCallback?
     private var stopped = true
     private var loop: Task<Void, Never>?
@@ -47,6 +47,15 @@ public final class MqttTransport: @unchecked Sendable {
         return deviceIdValue
     }
 
+    /// The tenant's topic root of the last connect (MESHSAT-1467): "meshsat", or "meshsat/{tenant}"
+    /// from the Hub's bundle, checked by the caller (HubTopics.checked). The Reticulum interface
+    /// publishes under it too; the Hub's route hints stay on meshsat/reticulum/routes.
+    public var topicRoot: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return topicRootValue
+    }
+
     public func setMessageCallback(_ cb: MessageCallback?) {
         lock.lock()
         onMessage = cb
@@ -57,7 +66,7 @@ public final class MqttTransport: @unchecked Sendable {
     public static func clientId(deviceId: String) -> String { "meshsat-ios-" + String(deviceId.suffix(8)) }
 
     /// Connect to the broker and keep the connection; a second call replaces the first.
-    public func connect(endpoint: MqttEndpoint, deviceId: String) {
+    public func connect(endpoint: MqttEndpoint, deviceId: String, topicRoot: String = "meshsat") {
         guard !endpoint.host.isEmpty, !deviceId.isEmpty else {
             Self.log.warning("Cannot connect: broker or device id blank")
             return
@@ -65,6 +74,7 @@ public final class MqttTransport: @unchecked Sendable {
         disconnect()
         lock.lock()
         deviceIdValue = deviceId
+        topicRootValue = topicRoot
         stopped = false
         lock.unlock()
         state.send(.connecting)
@@ -161,22 +171,25 @@ public final class MqttTransport: @unchecked Sendable {
 
     // MARK: Topics
 
-    public var topicPosition: String { "meshsat/\(deviceId)/position" }
-    public var topicSOS: String { "meshsat/\(deviceId)/sos" }
-    public var topicTelemetry: String { "meshsat/\(deviceId)/telemetry" }
-    public var topicMODecoded: String { "meshsat/\(deviceId)/mo/decoded" }
-    public var topicHealth: String { "meshsat/\(deviceId)/status/health" }
-    public var topicMTSend: String { "meshsat/\(deviceId)/mt/send" }
-    public var topicTakInbound: String { "meshsat/\(deviceId)/tak/cot/in" }
-    public var topicConfigUpdate: String { "meshsat/\(deviceId)/config/update" }
-    public var topicSmsInbound: String { "meshsat/\(deviceId)/sms/inbound" }
-    public var topicSmsOutbound: String { "meshsat/\(deviceId)/sms/outbound" }
-    public var topicReticulumRx: String { "meshsat/\(deviceId)/reticulum/rx" }
+    public var topicPosition: String { "\(topicRoot)/\(deviceId)/position" }
+    public var topicSOS: String { "\(topicRoot)/\(deviceId)/sos" }
+    public var topicTelemetry: String { "\(topicRoot)/\(deviceId)/telemetry" }
+    public var topicMODecoded: String { "\(topicRoot)/\(deviceId)/mo/decoded" }
+    public var topicHealth: String { "\(topicRoot)/\(deviceId)/status/health" }
+    public var topicMTSend: String { "\(topicRoot)/\(deviceId)/mt/send" }
+    public var topicTakInbound: String { "\(topicRoot)/\(deviceId)/tak/cot/in" }
+    public var topicConfigUpdate: String { "\(topicRoot)/\(deviceId)/config/update" }
+    public var topicSmsInbound: String { "\(topicRoot)/\(deviceId)/sms/inbound" }
+    public var topicSmsOutbound: String { "\(topicRoot)/\(deviceId)/sms/outbound" }
+    public var topicReticulumRx: String { "\(topicRoot)/\(deviceId)/reticulum/rx" }
 
     /// What the transport listens to, in Android's order.
     public var subscriptions: [String] {
-        [topicMTSend, topicTakInbound, Self.topicTakBroadcast, topicConfigUpdate, topicSmsOutbound, topicReticulumRx, Self.topicRoutes]
+        [topicMTSend, topicTakInbound, topicTakBroadcast, topicConfigUpdate, topicSmsOutbound, topicReticulumRx, Self.topicRoutes]
     }
+
+    /// What the Hub delivers of the tenant's TAK traffic, under the tenant's root.
+    public var topicTakBroadcast: String { "\(topicRoot)/broadcast/tak/cot/in" }
 
     // MARK: Internals
 

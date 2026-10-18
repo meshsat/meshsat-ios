@@ -48,6 +48,9 @@ extension GatewayController {
         let brokerUrl = settings.get(SettingsKey.mqttBrokerUrl).trimmingCharacters(in: .whitespaces)
         let deviceId = settings.get(SettingsKey.mqttDeviceId).trimmingCharacters(in: .whitespaces)
         guard !brokerUrl.isEmpty, !deviceId.isEmpty else { return "mqtt not configured" }
+        // The tenant's topic root from the Hub's bundle (MESHSAT-1467, as Android).
+        let prefix = settings.get(SettingsKey.hubTopicPrefix)
+        guard let tenant = HubTopics.checked(prefix) else { return "the topic root \"\(prefix)\" is not meshsat or meshsat/<tenant>" }
         guard var endpoint = MqttEndpoint.parse(brokerUrl, clientId: MqttTransport.clientId(deviceId: deviceId)) else {
             return "mqtt broker URL not understood"
         }
@@ -85,7 +88,7 @@ extension GatewayController {
             updateRnsParts { $0.mqtt = rns }
             Self.log.info("RNS MQTT interface initialized for device \(deviceId)")
         }
-        transport.connect(endpoint: endpoint, deviceId: deviceId)
+        transport.connect(endpoint: endpoint, deviceId: deviceId, topicRoot: tenant.prefix)
         return nil
     }
 
