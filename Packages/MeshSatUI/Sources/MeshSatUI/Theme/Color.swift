@@ -1,4 +1,4 @@
-// Mirrors ui/theme/Color.kt (MeshSat Android, commit 69e213b, MESHSAT-1249): the MeshSat brand
+// Mirrors ui/theme/Color.kt (MeshSat Android, commit 4fe382d, MESHSAT-1249): the MeshSat brand
 // palette, Space Black with Signal Orange, with the same token names so the two files diff
 // side by side. Values are literal ARGB, not asset-catalog colours, on purpose.
 import SwiftUI

@@ -103,7 +103,7 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
 
     /// Take the modem: subscribe to STATUS and TX and wait until STATUS says the phone owns
     /// it. False if nothing answered "phone" in time. A node without STATUS (firmware before
-    /// a5038c8) counts as owned once TX is subscribed. STATUS saying "node" is a wait, never a
+    /// d59d75b) counts as owned once TX is subscribed. STATUS saying "node" is a wait, never a
     /// failure: a node that owns its modem while no phone is subscribed hands it over about a
     /// second after the TX subscription, or after the session it has in flight (MESHSAT-1372);
     /// the owner observer attaches the driver on that notification whenever it comes.
