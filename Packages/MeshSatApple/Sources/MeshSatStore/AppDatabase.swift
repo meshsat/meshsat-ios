@@ -1,7 +1,7 @@
 // Mirrors data/AppDatabase.kt: the SQLite database, on GRDB. Android's Room schema version 18
 // is iOS schema v1, same tables, columns, indices and defaults, so the DAOs' SQL is the same
 // text in both apps. Later changes are appended as further migrations, never edited
-// (root CLAUDE.md rule 9).
+// (MeshSat rule 9: migrations are append-only).
 import Foundation
 import GRDB
 import MeshSatEngine

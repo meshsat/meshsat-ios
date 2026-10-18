@@ -33,7 +33,3 @@ fastlane/screenshots/
 .env
 .idea/
 *.swp
-
-# Claude Code files are local-only, never committed
-CLAUDE.md
-.claude/
