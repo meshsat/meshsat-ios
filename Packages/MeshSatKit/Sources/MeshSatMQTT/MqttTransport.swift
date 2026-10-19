@@ -81,10 +81,10 @@ public final class MqttTransport: @unchecked Sendable {
         let task = Task { [self] in
             var wait = Self.connectRetryMinMs
             while !isStopped {
-                if await connectOnce(endpoint) {
+                if let events = await connectOnce(endpoint) {
                     wait = Self.connectRetryMinMs
                     // Stay until the session drops, then come back with backoff.
-                    await watchUntilDropped()
+                    await watchUntilDropped(events)
                     if isStopped { return }
                     state.send(.connecting)
                 } else {
@@ -214,10 +214,16 @@ public final class MqttTransport: @unchecked Sendable {
         return true
     }
 
-    private func connectOnce(_ endpoint: MqttEndpoint) async -> Bool {
+    /// One connect. The session's event stream when connected, subscribed before "connected" is
+    /// announced: a drop the moment a caller sees the connected state must already have a
+    /// listener, or the transport stays "connected" on a dead session. It was subscribed after,
+    /// in watchUntilDropped, and a drop in between was lost (seen under test load, as the Hub
+    /// reporter's was).
+    private func connectOnce(_ endpoint: MqttEndpoint) async -> AsyncStream<MQTTSessionEvent>? {
         let s = makeSession(endpoint)
         do {
             try await s.connect(will: nil)
+            let events = s.events.subscribe()
             // Subscribed to the inbound stream before the subscriptions are placed, so nothing
             // published in between is lost.
             let inbound = s.inbound.subscribe()
@@ -227,23 +233,23 @@ public final class MqttTransport: @unchecked Sendable {
             guard adopt(s, listener: listener) else {
                 listener.cancel()
                 await s.disconnect()
-                return false
+                return nil
             }
             try await s.subscribe(subscriptions, qos: Self.qosAtLeastOnce)
             state.send(.connected)
             Self.log.info("Connected to \(endpoint.host):\(endpoint.port) as \(endpoint.clientId); \(subscriptions.count) topics")
-            return true
+            return events
         } catch {
             Self.log.error("Connect failed: \(error)")
             await s.disconnect()
-            return false
+            return nil
         }
     }
 
     /// Returns when the session reports a drop (or is gone).
-    private func watchUntilDropped() async {
+    private func watchUntilDropped(_ events: AsyncStream<MQTTSessionEvent>) async {
         guard let s = currentSession() else { return }
-        for await event in s.events.subscribe() {
+        for await event in events {
             switch event {
             case .connectionLost(let why):
                 Self.log.warning("Connection lost: \(why)")

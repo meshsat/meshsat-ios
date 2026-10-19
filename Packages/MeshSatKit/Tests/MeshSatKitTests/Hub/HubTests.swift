@@ -191,8 +191,12 @@ final class FakeMQTTSession: MQTTSession, @unchecked Sendable {
         }
     }
 
+    /// Set to make the broker drop the session while its subscriptions are being placed.
+    var dropOnSubscribe = false
+
     func subscribe(_ topics: [String], qos: Int) async throws {
         locked { subscribedList.append(contentsOf: topics) }
+        if dropOnSubscribe { drop("dropped while subscribing") }
     }
 
     func disconnect() async { locked { connected = false } }

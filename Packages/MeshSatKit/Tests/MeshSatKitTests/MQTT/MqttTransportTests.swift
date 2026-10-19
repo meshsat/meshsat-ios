@@ -92,6 +92,25 @@ final class MqttTransportTests: XCTestCase {
         t.disconnect()
     }
 
+    // A session that drops before "connected" is announced (here while its subscriptions are
+    // placed) must still bring the transport back. Its drop event used to be sent before anything
+    // listened for it, and the transport stayed "connected" on a dead session: the cause of
+    // testReconnectsWithBackoffAfterADrop's failures under parallel load (review 2026-10-19 02:07).
+    func testADropBeforeTheConnectedStateIsAnnouncedIsNotLost() async {
+        let sessions = AprsReceived<FakeMQTTSession>()
+        let t = MqttTransport(
+            makeSession: { _ in
+                let s = FakeMQTTSession()
+                s.dropOnSubscribe = sessions.all.isEmpty  // only the first one
+                sessions.add(s)
+                return s
+            }, sleep: { _ in })
+        t.connect(endpoint: endpoint, deviceId: "dev1")
+        let again = await waitUntil({ sessions.all.count >= 2 && t.state.value == .connected }, ms: 10_000)
+        XCTAssertTrue(again, "sessions \(sessions.all.count), state \(t.state.value)")
+        t.disconnect()
+    }
+
     func testFailedConnectRetriesAndBacksOff() async {
         let attempts = AprsReceived<Int>()
         let slept = AprsReceived<Int64>()
