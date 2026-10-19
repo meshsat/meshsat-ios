@@ -10,7 +10,8 @@ import MeshSatStore
 struct HubMsgPublisher: HubMsgRoute.Publisher {
     let reporter: HubReporter
     var principal: String { reporter.principal }
-    func isConnected() async -> Bool { await reporter.isConnected }
+    /// Ready, not just connected: the session's msg subscriptions hold (PH-R2), as on Android.
+    func isConnected() async -> Bool { reporter.isMsgReady }
     func publishMsg(kind: String, payload: String) async -> HubMsgRoute.Published {
         await reporter.publishMsg(kind: kind, payload: payload)
     }
