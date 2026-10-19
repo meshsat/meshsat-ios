@@ -17,7 +17,9 @@ final class HubReporterStubBrokerTests: XCTestCase {
     final class Probe: @unchecked Sendable {
         private let lock = NSLock()
         private var hooks: [Bool] = []
+        private var hookTimes: [Date] = []
         private var seen: [HubReporter.State] = []
+        private var connectedTimes: [Date] = []
         let r: HubReporter
         private var watcher: Task<Void, Never>?
 
@@ -41,12 +43,16 @@ final class HubReporterStubBrokerTests: XCTestCase {
         private func hook(_ ready: Bool) {
             lock.lock()
             hooks.append(ready)
+            hookTimes.append(Date())
             lock.unlock()
         }
 
         private func see(_ s: HubReporter.State) {
             lock.lock()
-            if seen.last != s { seen.append(s) }
+            if seen.last != s {
+                seen.append(s)
+                if s == .connected { connectedTimes.append(Date()) }
+            }
             lock.unlock()
         }
 
@@ -55,6 +61,14 @@ final class HubReporterStubBrokerTests: XCTestCase {
             lock.lock()
             defer { lock.unlock() }
             return hooks
+        }
+
+        /// How long after the nth connect (0-based) the nth walk began.
+        func walkDelay(_ n: Int) -> TimeInterval {
+            lock.lock()
+            defer { lock.unlock() }
+            guard hookTimes.count > n, connectedTimes.count > n else { return -1 }
+            return hookTimes[n].timeIntervalSince(connectedTimes[n])
         }
 
         /// The reporter's states in order, each change once.
@@ -125,6 +139,7 @@ final class HubReporterStubBrokerTests: XCTestCase {
         let again = await waitUntil(15_000) { p.readyAtHook.count == 2 }
         XCTAssertTrue(again, "tried again on the same connection")
         XCTAssertEqual([true, true], p.readyAtHook)
+        XCTAssertGreaterThan(p.walkDelay(1), 1.0, "the second walk waited for the retry, not for the refused SUBACK")
         await p.stop()
     }
 
