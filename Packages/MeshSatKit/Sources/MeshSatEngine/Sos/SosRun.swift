@@ -35,6 +35,21 @@ public struct SosRun: Sendable, Equatable {
     public var cancelHubSentAt: Int64?
     /// A test that has run its course or was stopped.
     public var finishedAt: Int64?
+    /// Its own identity (HeMB-NG C10, MESHSAT-1584): a UUIDv7 of its start; a run kept from before
+    /// C10 takes the old-format v5. Empty for a test. The rest is C10's state (SosV2): the bridge id
+    /// its frames name, whether the satellite carried the 0x07, the hub leg's v2 publish and the
+    /// Hub's state in its ack, and the cancel owed under the run's id.
+    public var sosId = ""
+    public var bridgeId = ""
+    public var satV2 = false
+    public var hubV2 = false
+    public var hubPublishedAt: Int64?
+    public var hubState = ""
+    public var cancelV2Owed = false
+    public var cancelHubPublishedAt: Int64?
+    public var cancelHubAckedAt: Int64?
+    public var cancelFrameDone = false
+    public var cancelGaveUp = false
 
     public init(
         id: Int64, test: Bool, trigger: String, name: String, fix: SosMessages.Fix?, routes: [Route], skipped: [String], hubWanted: Bool,
@@ -85,6 +100,17 @@ public struct SosRun: Sendable, Equatable {
         if let cancelledAt { o["cancelled_at"] = cancelledAt }
         if let cancelHubSentAt { o["cancel_hub_sent_at"] = cancelHubSentAt }
         if let finishedAt { o["finished_at"] = finishedAt }
+        if !sosId.isEmpty { o["sos_id"] = sosId }
+        if !bridgeId.isEmpty { o["bridge_id"] = bridgeId }
+        if satV2 { o["sat_v2"] = true }
+        if hubV2 { o["hub_v2"] = true }
+        if let hubPublishedAt { o["hub_published_at"] = hubPublishedAt }
+        if !hubState.isEmpty { o["hub_state"] = hubState }
+        if cancelV2Owed { o["cancel_v2_owed"] = true }
+        if let cancelHubPublishedAt { o["cancel_hub_published_at"] = cancelHubPublishedAt }
+        if let cancelHubAckedAt { o["cancel_hub_acked_at"] = cancelHubAckedAt }
+        if cancelFrameDone { o["cancel_frame_done"] = true }
+        if cancelGaveUp { o["cancel_gave_up"] = true }
         guard let data = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
@@ -101,11 +127,23 @@ public struct SosRun: Sendable, Equatable {
             guard let key = r["key"] as? String, let label = r["label"] as? String else { return nil }
             return Route(key: key, label: label)
         }
-        return SosRun(
+        var r = SosRun(
             id: id, test: o["test"] as? Bool ?? false, trigger: o["trigger"] as? String ?? "button", name: o["name"] as? String ?? "",
             fix: fix, routes: routes, skipped: (o["skipped"] as? [String]) ?? [], hubWanted: o["hub_wanted"] as? Bool ?? false,
             deviceId: o["device_id"] as? String ?? "", hubAlertId: o["hub_alert_id"] as? String ?? "", hubSentAt: int64(o["hub_sent_at"]),
             cancelledAt: int64(o["cancelled_at"]), cancelHubSentAt: int64(o["cancel_hub_sent_at"]), finishedAt: int64(o["finished_at"]))
+        r.sosId = o["sos_id"] as? String ?? ""
+        r.bridgeId = o["bridge_id"] as? String ?? ""
+        r.satV2 = o["sat_v2"] as? Bool ?? false
+        r.hubV2 = o["hub_v2"] as? Bool ?? false
+        r.hubPublishedAt = int64(o["hub_published_at"])
+        r.hubState = o["hub_state"] as? String ?? ""
+        r.cancelV2Owed = o["cancel_v2_owed"] as? Bool ?? false
+        r.cancelHubPublishedAt = int64(o["cancel_hub_published_at"])
+        r.cancelHubAckedAt = int64(o["cancel_hub_acked_at"])
+        r.cancelFrameDone = o["cancel_frame_done"] as? Bool ?? false
+        r.cancelGaveUp = o["cancel_gave_up"] as? Bool ?? false
+        return r
     }
 
     private static func int64(_ v: Any?) -> Int64? {
@@ -162,10 +200,26 @@ public enum SosProgress {
             return SosRouteStatus(label: route.label, state: stateOf(del), detail: detailOf(del), cancel: cancel, short: short)
         }
         if run.hubWanted {
+            // The cancel's state on the Hub's link: the old way at the broker, under C10 at the Hub's ack.
+            let cancel: SosRouteStatus.State? =
+                if run.cancelledAt == nil || run.test {
+                    nil
+                } else if run.cancelHubSentAt != nil || run.cancelHubAckedAt != nil {
+                    .sent
+                } else if run.cancelHubPublishedAt != nil {
+                    .sending
+                } else {
+                    .waiting
+                }
             if run.hubSentAt != nil {
-                let cancel: SosRouteStatus.State? =
-                    (run.cancelledAt == nil || run.test) ? nil : (run.cancelHubSentAt != nil ? .sent : .waiting)
-                out.append(SosRouteStatus(label: hubLabel, state: .sent, detail: "Sent", cancel: cancel, short: hubShort))
+                out.append(
+                    SosRouteStatus(
+                        label: hubLabel, state: .sent, detail: run.hubV2 ? "The Hub has it" : "Sent", cancel: cancel, short: hubShort))
+            } else if run.hubPublishedAt != nil {
+                out.append(
+                    SosRouteStatus(
+                        label: hubLabel, state: .sending, detail: "Sent to the Hub, waiting for it to confirm", cancel: cancel,
+                        short: hubShort))
             } else if !run.active {
                 out.append(
                     SosRouteStatus(label: hubLabel, state: .stopped, detail: "Stopped before the Hub could be reached", short: hubShort))

@@ -141,6 +141,9 @@ public enum SettingsKey {
     public static let lastModemImei = Setting("last_modem_imei", default: "")
     /// The SOS in progress or last sent, as JSON (SosRun), so it survives a restart.
     public static let sosRun = Setting("sos_run", default: "")
+    /// The last hub/caps the Hub sent, as it came (C10, MESHSAT-1584): kept, because an SOS may
+    /// have to go by satellite with no Hub session at all.
+    public static let hubCaps = Setting("hub_caps", default: "")
 }
 
 /// Values that live only in the secure store (Android: SecureKeyStore in the Keystore; iOS: the

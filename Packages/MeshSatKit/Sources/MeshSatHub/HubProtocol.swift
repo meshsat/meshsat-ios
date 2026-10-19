@@ -104,6 +104,11 @@ public struct HubTopics: Sendable, Equatable {
     /// the Hub publishes msg/in and msg/status to it. The phone is a bridge principal (C4.1).
     public func msg(_ bridgeId: String, _ kind: String) -> String { bridge(bridgeId) + "/msg/" + kind }
 
+    /// An SOS under its own identity (HeMB-NG C10, MESHSAT-1584): this phone publishes sos/event;
+    /// only the Hub publishes sos/ack and, retained, hub/caps (what it understands).
+    public func sos(_ bridgeId: String, _ kind: String) -> String { bridge(bridgeId) + "/sos/" + kind }
+    public func hubCaps(_ bridgeId: String) -> String { bridge(bridgeId) + "/hub/caps" }
+
     /// What the Hub delivers back (meshsat-hub MESHSAT-1461), under the tenant's prefix like
     /// everything else: an event from one of the tenant's TAK servers on this topic, and an event
     /// another bridge of the tenant exported one level below it, with that bridge's id as the last

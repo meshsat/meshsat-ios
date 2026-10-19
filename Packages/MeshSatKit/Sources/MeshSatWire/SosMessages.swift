@@ -107,10 +107,57 @@ public enum SosMessages {
     /// length-prefixed and cut to 16, 16 and 64 bytes, positions big-endian float32, the time
     /// uint32 Unix seconds. Without a fix the position is 0, 0, as on the Bridge.
     public static func satFrame(bridgeId: String, deviceId: String, fix: Fix?, message: String, nowSec: Int64) -> [UInt8] {
-        let bridge = Array(truncateUtf8(bridgeId, maxBytes: maxFrameId).utf8)
+        sosBody(
+            bridgeId: truncateUtf8(bridgeId, maxBytes: maxFrameId), deviceId: deviceId, fix: fix, message: message, nowSec: nowSec,
+            type: 0x02)
+    }
+
+    /// C10 frame types (MESHSAT-1584): an SOS start and its cancel under the run's own id.
+    public static let typeSosStart: UInt8 = 0x07
+    public static let typeSosCancel: UInt8 = 0x08
+    /// The 0x08's reason: the person cancelled it.
+    public static let cancelOperator: UInt8 = 0
+    /// The bridge id in a C10 frame: whole, up to the Bridge's maxBridgeIDLen (the Hub matches it).
+    static let maxFrameBridgeV2 = 63
+
+    /// The C10 start (type 0x07, HeMB-NG stage 2): the 0x02 body, then the run's sos_id (its 16
+    /// bytes) and its start (8, big-endian), byte for byte the Bridge's EncodeSatSOSStart. The
+    /// bridge id goes whole (the Hub takes the run only from the modem's own bridge).
+    public static func satFrameStart(  // swiftlint:disable:this function_parameter_count
+        bridgeId: String, deviceId: String, fix: Fix?, message: String, nowSec: Int64, sosId: [UInt8], runStartMs: Int64
+    ) -> [UInt8] {
+        precondition(sosId.count == 16, "sos_id is 16 bytes")
+        var out = sosBody(
+            bridgeId: truncateUtf8(bridgeId, maxBytes: maxFrameBridgeV2), deviceId: deviceId, fix: fix, message: message, nowSec: nowSec,
+            type: typeSosStart)
+        out += sosId
+        out += be64(UInt64(max(runStartMs, 0)))
+        return out
+    }
+
+    /// The C10 cancel (type 0x08): bridge id, sos_id (16), run_start_ms (8), Unix seconds (4) and
+    /// the reason (1), byte for byte the Bridge's EncodeSatSOSCancel.
+    public static func cancelFrame(bridgeId: String, sosId: [UInt8], runStartMs: Int64, nowSec: Int64, reason: UInt8 = cancelOperator)
+        -> [UInt8]
+    {
+        precondition(sosId.count == 16, "sos_id is 16 bytes")
+        let bridge = Array(truncateUtf8(bridgeId, maxBytes: maxFrameBridgeV2).utf8)
+        var out: [UInt8] = [0x4D, 0x53, 1, typeSosCancel, UInt8(bridge.count)]
+        out += bridge
+        out += sosId
+        out += be64(UInt64(max(runStartMs, 0)))
+        out += be32(UInt32(truncatingIfNeeded: nowSec))
+        out.append(reason)
+        return out
+    }
+
+    private static func sosBody(  // swiftlint:disable:this function_parameter_count
+        bridgeId: String, deviceId: String, fix: Fix?, message: String, nowSec: Int64, type: UInt8
+    ) -> [UInt8] {
+        let bridge = Array(bridgeId.utf8)
         let device = Array(truncateUtf8(deviceId, maxBytes: maxFrameId).utf8)
         let msg = Array(truncateUtf8(message, maxBytes: maxFrameMessage).utf8)
-        var out: [UInt8] = [0x4D, 0x53, 1, 0x02]
+        var out: [UInt8] = [0x4D, 0x53, 1, type]
         out.append(UInt8(bridge.count))
         out += bridge
         out.append(UInt8(device.count))
@@ -142,6 +189,10 @@ public enum SosMessages {
 
     private static func be32(_ v: UInt32) -> [UInt8] {
         [UInt8(v >> 24), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+    }
+
+    private static func be64(_ v: UInt64) -> [UInt8] {
+        (0..<8).map { UInt8(truncatingIfNeeded: v >> (8 * UInt64(7 - $0))) }
     }
 
     /// Cut `s` to at most `maxBytes` of UTF-8 without splitting a character.

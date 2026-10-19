@@ -134,6 +134,19 @@ final class FakeSosSettings: SosSettings, @unchecked Sendable {
     var sosName = "flaneur"
     var hubCallsign = "MSA"
     var sosContacts: [EmergencyContact] = []
+    private var caps = ""
+    var hubCapsJson: String {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return caps
+        }
+        set {
+            lock.lock()
+            caps = newValue
+            lock.unlock()
+        }
+    }
 }
 
 /// The delivery store of the engine tests, seen through the by-prefix queries.
@@ -162,6 +175,9 @@ final class FakeSosQueries: SosDeliveryQueries, @unchecked Sendable {
 final class FakeSosEnv: SosEnv, @unchecked Sendable {
     var dispatcher: Dispatcher?
     var hubReporter: HubReporter?
+    /// A test's Hub session (C10); nil: none, as hubReporter.
+    var hub: (any SosHubLink)?
+    var sosHub: (any SosHubLink)? { hub }
     var imei = "300434067943980"
     var paired = true
     var fix: SosMessages.Fix? = SosMessages.Fix(lat: 52.16207, lon: 4.50974, accuracyM: 8, timeMs: 1_000)

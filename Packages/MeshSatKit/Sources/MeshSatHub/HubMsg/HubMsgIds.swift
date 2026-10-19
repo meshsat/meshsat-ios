@@ -68,13 +68,35 @@ public enum HubMsgIds {
     public static func idValid(_ s: String, field: String, context c: Context = Context()) -> Bool {
         guard let b = parseCanonical(s), rfcVariant(b) else { return false }
         switch version(b) {
-        case 7: return true
+        case 7:
+            // An SOS id names its run: its time is the run's start (C10, r4), so the same run has
+            // the same id on every bearer and after a restart.
+            return field != "sos_id" || (c.runStartMs >= 0 && timeOfV7(b) == c.runStartMs)
         case 5:
             if field == "mid" && c.sender == "hub" && !c.name.isEmpty { return uuidV5(c.name) == s }
             if field == "sos_id" && !c.bridgeId.isEmpty && c.runStartMs >= 0 { return uuidV5("\(c.bridgeId):\(c.runStartMs)") == s }
             return false
         default: return false
         }
+    }
+
+    /// C10's rule for an sos_id carried with its run's start: a v7 whose first 48 bits are
+    /// runStartMs, or the old-format run's v5 under the bridge id the ingress authenticated.
+    public static func sosIdValid(_ sosId: String, bridgeId: String, runStartMs: Int64) -> Bool {
+        idValid(sosId, field: "sos_id", context: Context(bridgeId: bridgeId, runStartMs: runStartMs))
+    }
+
+    /// The sos_id of a run that starts at runStartMs (C10): a UUIDv7 of that start.
+    public static func newSosId(_ runStartMs: Int64) -> String { newV7(runStartMs) }
+
+    /// The sos_id of a run kept from before C10: UUIDv5 of "<bridge id>:<run_start_ms>".
+    public static func legacySosId(bridgeId: String, runStartMs: Int64) -> String { uuidV5("\(bridgeId):\(runStartMs)") }
+
+    /// The Unix millisecond time in a UUIDv7's first 48 bits.
+    public static func timeOfV7(_ b: [UInt8]) -> Int64 {
+        var ms: Int64 = 0
+        for i in 0..<6 { ms = ms << 8 | Int64(b[i]) }
+        return ms
     }
 
     /// The UUIDv5 of name under the namespace (RFC 9562 5.5: SHA-1, not a security use).

@@ -98,6 +98,8 @@ public final class HubReporter: @unchecked Sendable {
     private var onMsgInHook: (@Sendable (String) -> Void)?
     private var onMsgStatusHook: (@Sendable (String) -> Void)?
     private var onConnectedHook: (@Sendable () -> Void)?
+    private var onHubCapsHook: (@Sendable (String) -> Void)?
+    private var onSosAckHook: (@Sendable (String) -> Void)?
     /// Whether the current session's subscriptions hold, and the session it was set for (PH-R2).
     private var msgReadyValue = false
     private var readinessGen = 0
@@ -511,11 +513,13 @@ public final class HubReporter: @unchecked Sendable {
     private func trySubscribe(_ s: any MQTTSession) async -> Bool {
         let h = hooks()
         let msg = h.msgIn != nil || h.msgStatus != nil ? [topics.msg(config.bridgeId, "in"), topics.msg(config.bridgeId, "status")] : []
+        let sos =
+            (h.hubCaps != nil ? [topics.hubCaps(config.bridgeId)] : []) + (h.sosAck != nil ? [topics.sos(config.bridgeId, "ack")] : [])
         do {
             try await s.subscribe(
                 [topics.bridgeCmd(config.bridgeId)] + topics.takCotInFilters + [
                     topics.bridgeMOAck(config.bridgeId)
-                ] + msg,
+                ] + msg + sos,
                 qos: Self.qosAtLeastOnce)
             return true
         } catch {
@@ -594,6 +598,14 @@ public final class HubReporter: @unchecked Sendable {
             hooks().msgStatus?(payload)
             return
         }
+        if topic == topics.hubCaps(config.bridgeId) {
+            hooks().hubCaps?(payload)
+            return
+        }
+        if topic == topics.sos(config.bridgeId, "ack") {
+            hooks().sosAck?(payload)
+            return
+        }
         if topic.contains("/tak/cot/in") {
             // What this bridge exported itself comes back on the topic that names it as the sender.
             if topics.isOwnTakExport(topic: topic, bridgeId: config.bridgeId) { return }
@@ -647,13 +659,16 @@ public final class HubReporter: @unchecked Sendable {
         let msgIn: (@Sendable (String) -> Void)?
         let msgStatus: (@Sendable (String) -> Void)?
         let connected: (@Sendable () -> Void)?
+        let hubCaps: (@Sendable (String) -> Void)?
+        let sosAck: (@Sendable (String) -> Void)?
     }
 
     private func hooks() -> Hooks {
         lock.lock()
         defer { lock.unlock() }
         return Hooks(
-            command: onCommandHook, tak: onTakCotHook, msgIn: onMsgInHook, msgStatus: onMsgStatusHook, connected: onConnectedHook)
+            command: onCommandHook, tak: onTakCotHook, msgIn: onMsgInHook, msgStatus: onMsgStatusHook, connected: onConnectedHook,
+            hubCaps: onHubCapsHook, sosAck: onSosAckHook)
     }
 
     private func setSession(_ s: any MQTTSession) {
@@ -765,5 +780,33 @@ public final class HubReporter: @unchecked Sendable {
         guard chain.count > 1, let last = chain.last else { return outer }
         let inner = text(last)
         return inner != outer && !outer.contains(inner) ? "\(outer): \(inner)" : outer
+    }
+}
+
+// An SOS under its own identity (C10): outside the class body, which is at its length limit.
+extension HubReporter {
+    /// An SOS under its own identity (HeMB-NG C10, MESHSAT-1584): what arrives on this phone's
+    /// hub/caps (retained: what the Hub understands) and sos/ack (the Hub has a start or a cancel),
+    /// as it came. Set before start(): the subscriptions are made only when a handler is set.
+    public func setSosCallbacks(onCaps: (@Sendable (String) -> Void)?, onAck: (@Sendable (String) -> Void)?) {
+        lock.lock()
+        onHubCapsHook = onCaps
+        onSosAckHook = onAck
+        lock.unlock()
+    }
+
+    /// A start or a cancel of an SOS under its own identity (C10), on this phone's sos/event: QoS 1,
+    /// not retained, never queued (the SOS repeats it until the Hub's sos/ack, which is when the
+    /// Hub has it, not the broker's PUBACK). False when not connected or the publish failed.
+    public func publishSosEvent(_ event: JSONBody) async -> Bool {
+        guard let s = currentSession(), await s.isConnected else { return false }
+        do {
+            try await s.publish(
+                topic: topics.sos(config.bridgeId, "event"), payload: Array(event.text().utf8), qos: Self.qosAtLeastOnce, retain: false)
+            return true
+        } catch {
+            Self.log.warning("SOS event publish to the Hub failed: \(error)")
+            return false
+        }
     }
 }

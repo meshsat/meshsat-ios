@@ -24,6 +24,10 @@ final class SosSettingsAdapter: SosSettings, @unchecked Sendable {
     var sosName: String { settings.get(SettingsKey.sosName) }
     var hubCallsign: String { settings.get(SettingsKey.hubCallsign) }
     var sosContacts: [EmergencyContact] { settings.sosContacts }
+    var hubCapsJson: String {
+        get { settings.get(SettingsKey.hubCaps) }
+        set { settings.set(SettingsKey.hubCaps, newValue) }
+    }
 }
 
 /// The delivery DAO's by-prefix queries as the controller wants them.

@@ -46,6 +46,11 @@ extension GatewayController {
         // TAK CoT from the Hub: the message list and the map (GatewayController+Tak).
         reporter.setTakCotCallback { [self] xml in Task { await onTakCotInbound(xml) } }
         reporter.setMoAckCallback { [self] imei, momsn in Task { await onHubReceipt(imei: imei, momsn: momsn) } }
+        // An SOS under its own identity (C10): the Hub's caps are kept for a send with no Hub
+        // session; its acks end the SOS's repeats (MESHSAT-1584).
+        reporter.setSosCallbacks(
+            onCaps: { [self] payload in settings.set(SettingsKey.hubCaps, payload) },
+            onAck: { [self] payload in Task { await sos?.onAck(payload) } })
         if settings.get(SettingsKey.hubMsgEnabled) { initHubMsg(reporter) }
         reporter.start()
         setHubReporter(reporter)
