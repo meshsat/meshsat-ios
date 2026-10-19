@@ -39,6 +39,7 @@ let package = Package(
             name: "MeshSatStore",
             dependencies: [
                 .product(name: "MeshSatEngine", package: "MeshSatKit"),
+                .product(name: "MeshSatHub", package: "MeshSatKit"),
                 .product(name: "MeshSatNet", package: "MeshSatKit"),
                 .product(name: "MeshSatSatellite", package: "MeshSatKit"),
                 .product(name: "GRDB", package: "GRDB.swift"),
@@ -66,7 +67,8 @@ let package = Package(
                 .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager"),
             ]
         ),
-        .testTarget(name: "MeshSatAppleTests", dependencies: ["MeshSatBLE", "MeshSatStore", "MeshSatPlatform"]),
+        .testTarget(
+            name: "MeshSatAppleTests", dependencies: ["MeshSatBLE", "MeshSatStore", "MeshSatPlatform"], resources: [.copy("Fixtures")]),
     ],
     swiftLanguageModes: [.v6]
 )

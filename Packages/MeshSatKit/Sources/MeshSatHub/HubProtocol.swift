@@ -100,6 +100,10 @@ public struct HubTopics: Sendable, Equatable {
     /// servers (meshsat-hub MESHSAT-1458).
     public func takCotOut(_ bridgeId: String) -> String { bridge(bridgeId) + "/tak/cot/out" }
 
+    /// The Hub app route hub_msg (MESHSAT-1584): this phone publishes its own msg/out and msg/ack;
+    /// the Hub publishes msg/in and msg/status to it. The phone is a bridge principal (C4.1).
+    public func msg(_ bridgeId: String, _ kind: String) -> String { bridge(bridgeId) + "/msg/" + kind }
+
     /// What the Hub delivers back (meshsat-hub MESHSAT-1461), under the tenant's prefix like
     /// everything else: an event from one of the tenant's TAK servers on this topic, and an event
     /// another bridge of the tenant exported one level below it, with that bridge's id as the last

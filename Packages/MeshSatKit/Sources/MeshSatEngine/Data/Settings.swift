@@ -101,6 +101,8 @@ public enum SettingsKey {
     public static let hubTopicPrefix = Setting("hub_topic_prefix", default: "meshsat")
     /// Seconds, as a string.
     public static let hubHealthInterval = Setting("hub_health_interval", default: "30")
+    /// Texts to other MeshSat apps and kits through the Hub (hub_msg, MESHSAT-1584); read at gateway start.
+    public static let hubMsgEnabled = Setting("hub_msg_enabled", default: false)
     // Hub relay client (MESHSAT-1157): on by default whenever the Hub is configured.
     public static let hubRelayEnabled = Setting("hub_relay_enabled", default: true)
     /// The bridge id the phone tunnels to. Blank = relay not started.

@@ -3,6 +3,7 @@
 // the compose bar whose route follows who the chat is with (a mesh node over the mesh, a phone
 // number by SMS, the satellite conversation by satellite), and the per-conversation key.
 import MeshSatEngine
+import MeshSatHub
 import MeshSatWire
 import SwiftUI
 
@@ -29,7 +30,12 @@ public struct ConversationChatView: View {
     /// A satellite message that cannot fit one frame is stopped here, not after it has been
     /// queued and billed for (MESHSAT-1280).
     private var fitsTheLink: Bool {
-        transport != "iridium" || SatelliteLimits.fits(composeText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count)
+        let bytes = composeText.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count
+        switch transport {
+        case "iridium": return SatelliteLimits.fits(bytes)
+        case "hub": return bytes <= HubMsgWire.maxBody
+        default: return true
+        }
     }
 
     private var canSend: Bool { !composeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && fitsTheLink }
@@ -43,11 +49,14 @@ public struct ConversationChatView: View {
                     Text(Peers.detail(peer) ?? Words.transport(transport)).msText(.bodySmall, color: Words.transportColor(transport))
                 }
                 Spacer(minLength: 8)
-                MSIconButton(
-                    activeKey != nil ? MSIcon.lock : MSIcon.lockOpen, label: "Encryption key",
-                    tint: activeKey != nil ? MSColors.amber : MSColors.textMuted
-                ) {
-                    showKeySection.toggle()
+                // A Hub chat has no conversation key: the text goes over TLS to the Hub and from it.
+                if !Peers.isHub(peer) {
+                    MSIconButton(
+                        activeKey != nil ? MSIcon.lock : MSIcon.lockOpen, label: "Encryption key",
+                        tint: activeKey != nil ? MSColors.amber : MSColors.textMuted
+                    ) {
+                        showKeySection.toggle()
+                    }
                 }
             }
             .padding(.bottom, 8)
@@ -108,6 +117,7 @@ public struct ConversationChatView: View {
     private var placeholder: String {
         switch transport {
         case "iridium": "Message by satellite"
+        case "hub": "Message through the Hub"
         case "mesh": peer == Peers.meshAll ? "Message everyone on the mesh" : "Message on the mesh"
         default: "Text message"
         }
@@ -123,6 +133,13 @@ public struct ConversationChatView: View {
             if !SatelliteLimits.fits(bytes) { return SatelliteLimits.tooLong(bytes) }
             let size = bytes == 0 ? "" : " \(bytes) bytes, \(Words.count((bytes + 49) / 50, "credit"))."
             return (iridiumConnected ? "By satellite." : "By satellite, when the modem is back.") + size
+        case "hub":
+            if model.gateway.hubMsgRoute == nil { return "Messages through the Hub are off. Turn them on in Settings, Hub." }
+            if bytes > HubMsgWire.maxBody { return "Too long for the Hub: \(bytes) bytes, the limit is \(HubMsgWire.maxBody)." }
+            if model.interfaces["hub_0"]?.state != .online {
+                return "Through the Hub to its MeshSat app, once this phone is back on the Hub."
+            }
+            return "Through the Hub to its MeshSat app. Two checks once that app has it."
         case "mesh":
             if !meshConnected { return "On the mesh, when your node is connected." }
             return peer == Peers.meshAll ? "To everyone on the mesh channel." : "Directly to this node on the mesh."
@@ -135,6 +152,11 @@ public struct ConversationChatView: View {
         guard canSend else { return }
         let text = composeText.trimmingCharacters(in: .whitespacesAndNewlines)
         switch transport {
+        case "hub":
+            // Through the Hub to the contact's MeshSat app; the row shows what the Hub reports (MESHSAT-1584).
+            let gateway = model.gateway
+            let to = peer
+            Task { await gateway.sendHub(to: to, text: text) }
         case "sms":
             // The message appears in the chat with its state, and the Messages composer opens.
             model.queueSms(text, to: peer)
@@ -160,16 +182,31 @@ struct DeliveryMark: View {
     let forwardedTo: String
 
     var body: some View {
-        let (icon, tint): (Image, Color) =
-            switch forwardedTo {
-            case "iridium:queued", "sms:sending": (MSIcon.schedule, MSColors.textMuted)
-            case "iridium:unconfirmed": (MSIcon.helpOutline, MSColors.amber)
-            case "iridium:failed", "sms:failed": (MSIcon.errorOutline, MSColors.red)
-            case "iridium:delivered", "sms:delivered": (MSIcon.doneAll, MSColors.teal)
-            default: (MSIcon.done, MSColors.teal)
-            }
+        let (icon, tint) = forwardedTo.hasPrefix("hub:") ? Self.hubMark(forwardedTo) : Self.mark(forwardedTo)
         icon.resizable().scaledToFit().frame(width: 14, height: 14).foregroundStyle(tint)
             .accessibilityLabel(MessageDisplay.deliveryLabel(forwardedTo))
+    }
+
+    static func mark(_ s: String) -> (Image, Color) {
+        switch s {
+        case "iridium:queued", "sms:sending": (MSIcon.schedule, MSColors.textMuted)
+        case "iridium:unconfirmed": (MSIcon.helpOutline, MSColors.amber)
+        case "iridium:failed", "sms:failed": (MSIcon.errorOutline, MSColors.red)
+        case "iridium:delivered", "sms:delivered": (MSIcon.doneAll, MSColors.teal)
+        default: (MSIcon.done, MSColors.teal)
+        }
+    }
+
+    /// A Hub message's mark: two checks only on the recipient app's own word that it stored it.
+    static func hubMark(_ s: String) -> (Image, Color) {
+        switch s {
+        case HubMsgStatus.queued: (MSIcon.schedule, MSColors.textMuted)
+        case HubMsgStatus.accepted: (MSIcon.done, MSColors.textMuted)
+        case HubMsgStatus.forwarded: (MSIcon.done, MSColors.teal)
+        case HubMsgStatus.delivered: (MSIcon.doneAll, MSColors.teal)
+        case HubMsgStatus.busy, HubMsgStatus.unknown: (MSIcon.helpOutline, MSColors.amber)
+        default: (MSIcon.errorOutline, MSColors.red)
+        }
     }
 }
 

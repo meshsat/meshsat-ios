@@ -4,6 +4,7 @@
 // (MESHSAT-1249). Android's SMS permission banner has no iOS counterpart: there is no SMS
 // permission, the Messages composer is always the way.
 import MeshSatEngine
+import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatWire
 import SwiftUI
@@ -26,13 +27,18 @@ public struct MessagesScreen: View {
         selectedTab == "all" ? messages.conversations : messages.conversations.filter { $0.transport == selectedTab }
     }
 
-    private static let tabs = [("all", "All"), ("mesh", "Mesh"), ("iridium", "Satellite"), ("sms", "SMS")]
+    /// The Hub tab shows once the Hub route is on or a Hub message is stored (MESHSAT-1584).
+    private var tabs: [(String, String)] {
+        let hubShown = model.gateway.hubMsgRoute != nil || messages.conversations.contains { $0.transport == "hub" }
+        return [("all", "All"), ("mesh", "Mesh"), ("iridium", "Satellite")] + (hubShown ? [("hub", "Hub")] : []) + [("sms", "SMS")]
+    }
 
     private func chipColors(_ key: String) -> (Color, Color) {
         switch key {
         case "mesh": (MSColors.mesh.opacity(0.2), MSColors.mesh)
         case "iridium": (MSColors.iridium.opacity(0.2), MSColors.iridium)
         case "sms": (MSColors.cellular.opacity(0.2), MSColors.cellular)
+        case "hub": (MSColors.hub.opacity(0.2), MSColors.hub)
         default: (MSColors.surfaceLight, MSColors.offWhite)
         }
     }
@@ -41,11 +47,14 @@ public struct MessagesScreen: View {
         @Bindable var messages = messages
         VStack(alignment: .leading, spacing: 0) {
             Text("Messages").msText(.headlineMedium).padding(.bottom, 4)
-            HStack(spacing: 8) {
-                ForEach(Self.tabs, id: \.0) { key, label in
-                    let colors = chipColors(key)
-                    MSFilterChip(label, selected: selectedTab == key, selectedContainer: colors.0, selectedLabel: colors.1) {
-                        selectedTab = key
+            // It scrolls: five chips do not always fit a phone's width.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(tabs, id: \.0) { key, label in
+                        let colors = chipColors(key)
+                        MSFilterChip(label, selected: selectedTab == key, selectedContainer: colors.0, selectedLabel: colors.1) {
+                            selectedTab = key
+                        }
                     }
                 }
             }
@@ -172,7 +181,8 @@ enum MessageDisplay {
 
     /// The delivery badge of a forwarded message: an Iridium send shows where it is in the queue.
     static func deliveryLabel(_ forwardedTo: String) -> String {
-        switch forwardedTo {
+        if forwardedTo.hasPrefix("hub:") { return hubLabel(forwardedTo) }
+        return switch forwardedTo {
         case "iridium:queued": "Queued"
         case "iridium:unconfirmed": "May have been sent"
         case "iridium:sbd", "sms:sent": "Sent"
@@ -181,6 +191,30 @@ enum MessageDisplay {
         case "sms:sending": "Sending"
         case "iridium:failed", "sms:failed": "Failed"
         default: "Forwarded"
+        }
+    }
+}
+
+extension MessageDisplay {
+    /// What is known about a message sent through the Hub, from the events it reported (MESHSAT-1584).
+    static func hubLabel(_ s: String) -> String {
+        switch s {
+        case HubMsgStatus.queued: return "Queued"
+        case HubMsgStatus.accepted: return "Sent to the Hub"
+        case HubMsgStatus.forwarded: return "The Hub passed it on"
+        case HubMsgStatus.busy: return "Not stored yet, the other app was busy"
+        case HubMsgStatus.delivered: return "Delivered"
+        case HubMsgStatus.expired: return "Expired before it arrived"
+        case HubMsgStatus.unknown: return "Outcome unknown"
+        case HubMsgStatus.refusedPrefix + "not_sent": return "Not sent"
+        default:
+            if s.hasPrefix(HubMsgStatus.refusedPrefix) {
+                return "Refused by the Hub: " + s.dropFirst(HubMsgStatus.refusedPrefix.count).replacingOccurrences(of: "_", with: " ")
+            }
+            if s.hasPrefix(HubMsgStatus.failedPrefix) {
+                return "Failed: " + s.dropFirst(HubMsgStatus.failedPrefix.count).replacingOccurrences(of: "_", with: " ")
+            }
+            return "Sent to the Hub"
         }
     }
 }
@@ -247,6 +281,13 @@ struct NewMessageDialog: View {
     let onDismiss: () -> Void
     @Environment(GatewayModel.self) private var model
     @State private var number = ""
+    // Another MeshSat app through the Hub: a card that carries its bridge id, or the id typed in (MESHSAT-1584).
+    @State private var hubId = ""
+    @State private var cards: [Contact] = []
+
+    private var hubOn: Bool { model.gateway.hubMsgRoute != nil }
+    private var hubPeer: String { Peers.hubPeer(String(hubId.trimmingCharacters(in: .whitespaces).trimmingPrefix(Peers.hubPrefix))) }
+    private var hubOk: Bool { hubOn && !hubId.isEmpty && Peers.isHub(hubPeer) && !hubId.contains(where: \.isWhitespace) }
 
     private var numberOk: Bool {
         let n = number.trimmingCharacters(in: .whitespaces)
@@ -277,12 +318,30 @@ struct NewMessageDialog: View {
                             onPick(id)
                         }
                     }
+                    if hubOn {
+                        ForEach(cards.filter { !$0.bridgeId.isEmpty }, id: \.fingerprint) { c in
+                            NewMessageRow(title: c.name, detail: "Through the Hub to their MeshSat app, \(c.bridgeId)", color: MSColors.hub)
+                            {
+                                onPick(Peers.hubPeer(c.bridgeId))
+                            }
+                        }
+                        // An id, not words: no autocorrect, no capital first letter.
+                        MSOutlinedTextField(text: $hubId, label: "Or a MeshSat app's Hub bridge id", keyboard: .asciiCapable)
+                            .textInputAutocapitalization(.never)
+                            .padding(.top, 8)
+                    }
                     MSOutlinedTextField(text: $number, label: "Or a phone number, e.g. +31612345678", keyboard: .phonePad).padding(.top, 8)
                 }
             }
             .frame(maxHeight: 360)
+            .task {
+                do {
+                    for try await list in model.gateway.db.contacts.observeAll() { cards = list }
+                } catch {}
+            }
         } buttons: {
             MSTextButton("Cancel", color: MSColors.textSecondary, action: onDismiss)
+            if hubOk { MSTextButton("Message through the Hub") { onPick(hubPeer) } }
             MSTextButton("Text this number") { onPick(number.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "")) }
                 .disabled(!numberOk).opacity(numberOk ? 1 : 0.4)
         }

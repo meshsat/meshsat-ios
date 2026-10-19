@@ -192,6 +192,84 @@ final class ProvingTests: XCTestCase {
         openTab(app, "Setup")
     }
 
+    /// Setup > Hub > Connection details: "Messages through the Hub" on (hub_msg, MESHSAT-1584), then
+    /// the app started again, since the gateway reads the switch when it starts.
+    @MainActor
+    func testHubMsgSwitch() throws {
+        try gate("hubswitch")
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Hub")
+        tap(app, "Connection details")
+        // A toggle-trait control is a switch to XCUITest; older runners saw it as a button.
+        let name = "Messages through the Hub"
+        var tries = 0
+        func toggle() -> XCUIElement { app.switches[name].exists ? app.switches[name].firstMatch : app.buttons[name].firstMatch }
+        while !(toggle().exists && toggle().isHittable), tries < 6 {
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 1)
+            tries += 1
+        }
+        XCTAssertTrue(toggle().waitForExistence(timeout: 10), "the switch")
+        func isOn() -> Bool { ["On", "1"].contains(toggle().value as? String ?? "") }
+        Thread.sleep(forTimeInterval: 3)  // the screen before, for the screenshot
+        if !isOn() { toggle().tap() }
+        Thread.sleep(forTimeInterval: 3)
+        NSLog("MeshSatProve: hub_msg switch %@", (toggle().value as? String) ?? "?")
+        XCTAssertTrue(isOn(), "the switch is on")
+        app.terminate()
+        Thread.sleep(forTimeInterval: 3)
+        app.activate()
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 30), "the app again")
+        Thread.sleep(forTimeInterval: 15)  // the Hub connect, for the log
+    }
+
+    /// A text to another MeshSat app or kit through the Hub (MESHSAT_HUB_PEER = its bridge id), and
+    /// the two checks once that app has it.
+    @MainActor
+    func testHubMsgSend() throws {
+        try gate("hubmsg")
+        let peer = try XCTUnwrap(env["MESHSAT_HUB_PEER"], "MESHSAT_HUB_PEER")
+        let text = env["MESHSAT_TEXT"] ?? "iPhone to \(peer) through the Hub"
+        let app = attach()
+        // A dialog an earlier run left open sits over the tab: close it first.
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists && cancel.isHittable { cancel.tap() }
+        openTab(app, "Messages")
+        tap(app, "New message")
+        // The field's label is drawn over it, not its name: take the field nearest the label, even
+        // half under the dialog's scroll edge (a tap scrolls it into view).
+        let label = app.staticTexts["Or a MeshSat app's Hub bridge id"].firstMatch
+        XCTAssertTrue(label.waitForExistence(timeout: 10), "the bridge id field's label")
+        let fields = app.textFields.allElementsBoundByIndex.filter { $0.exists }
+        let idField = try XCTUnwrap(
+            fields.min { abs($0.frame.midY - label.frame.midY) < abs($1.frame.midY - label.frame.midY) }, "the bridge id field")
+        idField.tap()
+        idField.typeText(peer)
+        XCTAssertEqual(idField.value as? String, peer, "the bridge id as typed")
+        tap(app, "Message through the Hub")
+        let field = app.textViews.firstMatch.exists ? app.textViews.firstMatch : app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "composer")
+        field.tap()
+        field.typeText(text)
+        // The Send button is enabled once the text has reached the view's state, not at once.
+        let deadline = Date().addingTimeInterval(10)
+        var sendButton: XCUIElement?
+        while Date() < deadline, sendButton == nil {
+            sendButton = app.buttons.matching(NSPredicate(format: "label == %@", "Send")).allElementsBoundByIndex.first {
+                $0.exists && $0.isHittable && $0.isEnabled
+            }
+            if sendButton == nil { Thread.sleep(forTimeInterval: 0.5) }
+        }
+        try XCTUnwrap(sendButton, "an enabled Send button").tap()
+        XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 15), "the bubble")
+        let delivered = app.images["Delivered"].firstMatch
+        let ok = delivered.waitForExistence(timeout: 90)
+        NSLog("MeshSatProve: hub_msg to %@ delivered=%@", peer, ok ? "yes" : "no")
+        XCTAssertTrue(ok, "two checks")
+        Thread.sleep(forTimeInterval: 20)  // an answer from the far end, for the screenshots
+    }
+
     /// The alarm test from the Home SOS card: confirm, then send each text the composer opens.
     @MainActor
     func testAlarm() throws {

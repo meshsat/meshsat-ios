@@ -272,6 +272,21 @@ public struct SettingsHubSection: View {
             }
             MSOutlinedTextField(
                 text: $healthInterval, label: "Health interval (seconds)", focusedBorder: MSColors.teal, keyboard: .numberPad)
+            // Texts to other MeshSat apps and kits through the Hub (hub_msg, MESHSAT-1584).
+            HStack {
+                Text("Messages through the Hub").msText(.bodyMedium)
+                Spacer(minLength: 8)
+                MSSwitch(
+                    isOn: Binding(
+                        get: { settings.bool(SettingsKey.hubMsgEnabled) }, set: { settings.set(SettingsKey.hubMsgEnabled, $0) }),
+                    label: "Messages through the Hub")
+            }
+            Text(
+                (settings.bool(SettingsKey.hubMsgEnabled) == (model.gateway.hubMsgRoute != nil)
+                    ? "" : "Takes effect when the gateway restarts. ")
+                    + "Texts to another MeshSat app or kit in your Hub account, by its bridge id. Both ends need the internet."
+            )
+            .msText(.bodySmall, color: MSColors.textMuted)
             HStack {
                 Text("Reach a kit through the Hub").msText(.bodyMedium)
                 Spacer(minLength: 8)

@@ -88,6 +88,18 @@ public final class GatewayController: @unchecked Sendable {
         lock.unlock()
         hubReporters.send(r)
     }
+    private var hubMsgRouteValue: HubMsgRoute?
+    /// The Hub app route, when "Messages through the Hub" is on (hub_msg, MESHSAT-1584).
+    public var hubMsgRoute: HubMsgRoute? {
+        lock.lock()
+        defer { lock.unlock() }
+        return hubMsgRouteValue
+    }
+    func setHubMsgRoute(_ r: HubMsgRoute?) {
+        lock.lock()
+        hubMsgRouteValue = r
+        lock.unlock()
+    }
     private var hubRelayValue: RelayBridgeTransport?
     /// The Hub relay client, when a target bridge is configured (MESHSAT-1157).
     public var hubRelay: RelayBridgeTransport? {
@@ -265,6 +277,7 @@ public final class GatewayController: @unchecked Sendable {
         ackTracker?.stop()
         passScheduler?.stop()
         location.stop()
+        setHubMsgRoute(nil)
         if let hub = hubReporter {
             setHubReporter(nil)
             Task { await hub.stop() }

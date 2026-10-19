@@ -46,6 +46,7 @@ extension GatewayController {
         // TAK CoT from the Hub: the message list and the map (GatewayController+Tak).
         reporter.setTakCotCallback { [self] xml in Task { await onTakCotInbound(xml) } }
         reporter.setMoAckCallback { [self] imei, momsn in Task { await onHubReceipt(imei: imei, momsn: momsn) } }
+        if settings.get(SettingsKey.hubMsgEnabled) { initHubMsg(reporter) }
         reporter.start()
         setHubReporter(reporter)
         Self.log.info("Hub Reporter initialized: bridge=\(bridgeId)")

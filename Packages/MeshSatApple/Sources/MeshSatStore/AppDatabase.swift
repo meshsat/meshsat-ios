@@ -68,6 +68,10 @@ public final class AppDatabase: Sendable {
         m.registerMigration("v1: Android schema 18") { db in
             for statement in schemaV1 { try db.execute(sql: statement) }
         }
+        // The Hub app route hub_msg, Android Room v21's tables (MESHSAT-1584).
+        m.registerMigration("v2: hub_msg") { db in
+            for statement in schemaV2HubMsg { try db.execute(sql: statement) }
+        }
         return m
     }
 

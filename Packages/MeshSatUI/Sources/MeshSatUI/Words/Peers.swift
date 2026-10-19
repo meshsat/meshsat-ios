@@ -2,6 +2,7 @@
 // other party: a mesh node id ("!a1b2c3d4"), everyone on the mesh, a phone number, or the
 // satellite link (the modem's IMEI, which is what an incoming satellite message is filed under).
 import Foundation
+import MeshSatHub
 import MeshSatMeshtastic
 
 public enum Peers {
@@ -19,11 +20,18 @@ public enum Peers {
     public static func isSatellite(_ peer: String) -> Bool { peer == satellite || (peer.count == 15 && peer.allSatisfy { $0.isNumber }) }
     public static func isMesh(_ peer: String) -> Bool { peer == meshAll || isMeshNode(peer) }
 
+    /// Another MeshSat app or kit through the Hub: "bridge:<id>", the Hub's principal (MESHSAT-1584).
+    public static let hubPrefix = "bridge:"
+    public static func isHub(_ peer: String) -> Bool { !HubMsgWire.bridgeOf(peer).isEmpty }
+    /// The principal of a bridge id, as a conversation key.
+    public static func hubPeer(_ bridgeId: String) -> String { hubPrefix + bridgeId.trimmingCharacters(in: .whitespaces) }
+
     /// The node number of a mesh peer, or nil.
     public static func nodeNum(_ peer: String) -> UInt32? { isMeshNode(peer) ? UInt32(peer.dropFirst(), radix: 16) : nil }
 
     /// How a reply goes by default: the way this kind of peer is reached.
     public static func defaultTransport(_ peer: String) -> String {
+        if isHub(peer) { return "hub" }
         if isMesh(peer) { return "mesh" }
         if isSatellite(peer) || peer == legacySelf { return "iridium" }
         return "sms"
@@ -43,6 +51,7 @@ public enum Peers {
         }
         if isSatellite(peer) { return "Satellite" }
         if peer == legacySelf { return "Sent from this phone" }
+        if isHub(peer) { return String(peer.dropFirst(hubPrefix.count)) }
         return peer
     }
 
@@ -51,6 +60,7 @@ public enum Peers {
         if isMeshNode(peer) { return peer }
         if isSatellite(peer) { return "By satellite, through Rock7 to the Hub" }
         if peer == meshAll { return "The mesh channel" }
+        if isHub(peer) { return "Through the Hub to its MeshSat app" }
         return nil
     }
 }

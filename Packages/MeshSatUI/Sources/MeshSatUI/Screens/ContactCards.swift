@@ -11,6 +11,7 @@ import SwiftUI
 
 struct ContactCardsSection: View {
     @Environment(GatewayModel.self) private var model
+    @Environment(Router.self) private var router
     @State private var contacts: [Contact] = []
     @State private var showMyCard = false
     @State private var pending: (card: ContactQR.Card, trust: ContactQR.Trust)?
@@ -38,6 +39,10 @@ struct ContactCardsSection: View {
                         Text(c.fingerprint).msText(.bodySmall, mono: true, color: MSColors.textMuted)
                         Text(trustLine(c)).msText(.bodySmall, color: MSColors.textMuted)
                         HStack {
+                            // A card that carries a Hub bridge id can be messaged through the Hub (MESHSAT-1584).
+                            if !c.bridgeId.isEmpty && model.gateway.hubMsgRoute != nil {
+                                MSTextButton("Message") { router.navigate(.chat(peer: Peers.hubPeer(c.bridgeId))) }
+                            }
                             MSTextButton("Forget") { Task { try? await model.gateway.db.contacts.delete(c.fingerprint) } }
                         }
                     }
@@ -182,7 +187,8 @@ struct MyCardDialog: View {
         let name = String((myName.isEmpty ? "MeshSat phone" : myName).prefix(ContactQR.maxName))
         let card = ContactQR.Card(
             name: name, signingPubRaw: identity.signingPubRaw, meshNodeId: myNum != 0 ? MeshtasticProtocol.formatNodeId(myNum) : "",
-            bridgeId: "", issuedAtSec: Int64(Date().timeIntervalSince1970))
+            bridgeId: model.gateway.hubMsgRoute != nil ? (model.gateway.hubReporter?.bridgeId ?? "") : "",
+            issuedAtSec: Int64(Date().timeIntervalSince1970))
         guard let encoded = try? ContactQR.encode(card, identity: identity) else { return }
         text = encoded
         fingerprint = card.fingerprint

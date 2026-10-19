@@ -95,6 +95,9 @@ public final class HubReporter: @unchecked Sendable {
     private var onCommandHook: (@Sendable (HubCommand) -> Void)?
     private var onTakCotHook: (@Sendable (String) -> Void)?
     private var onMoAckHook: (@Sendable (_ imei: String, _ momsn: Int) -> Void)?
+    private var onMsgInHook: (@Sendable (String) -> Void)?
+    private var onMsgStatusHook: (@Sendable (String) -> Void)?
+    private var onConnectedHook: (@Sendable () -> Void)?
 
     public init(
         config: HubReporterConfig, host: any HubReporterHost, makeSession: @escaping @Sendable (HubReporterConfig) -> any MQTTSession,
@@ -127,6 +130,52 @@ public final class HubReporter: @unchecked Sendable {
         lock.lock()
         onMoAckHook = cb
         lock.unlock()
+    }
+
+    /// The Hub app route hub_msg (MESHSAT-1584): what arrives on this phone's msg/in and msg/status,
+    /// and each connect once subscribed (the session is clean: the route asks for what it missed).
+    /// Set before start(): the msg subscriptions are made only when a handler is set.
+    public func setMsgCallbacks(
+        onIn: (@Sendable (String) -> Void)?, onStatus: (@Sendable (String) -> Void)?, onConnected: (@Sendable () -> Void)?
+    ) {
+        lock.lock()
+        onMsgInHook = onIn
+        onMsgStatusHook = onStatus
+        onConnectedHook = onConnected
+        lock.unlock()
+    }
+
+    /// This phone's principal on the Hub.
+    public var principal: String { HubMsgWire.principal(config.bridgeId) }
+
+    /// How long a msg publish waits for the broker's PUBACK before it counts as unknown.
+    static let msgPublishWaitMs: UInt64 = 10_000
+
+    /// Publishes payload on this phone's msg/<kind> at QoS 1 and waits for the broker's PUBACK: ok
+    /// once it took it; notSent when nothing left the phone (not connected); unknown when the answer
+    /// did not come in time or the publish failed on the way, so it may have reached the Hub.
+    public func publishMsg(kind: String, payload: String) async -> HubMsgRoute.Published {
+        guard let s = currentSession(), await s.isConnected else { return .notSent }
+        let topic = topics.msg(config.bridgeId, kind)
+        let bytes = Array(payload.utf8)
+        return await withTaskGroup(of: HubMsgRoute.Published.self) { group in
+            group.addTask {
+                do {
+                    try await s.publish(topic: topic, payload: bytes, qos: Self.qosAtLeastOnce, retain: false)
+                    return .ok
+                } catch {
+                    Self.log.warning("hub_msg publish on msg/\(kind): \(error)")
+                    return .unknown
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: Self.msgPublishWaitMs * 1_000_000)
+                return .unknown
+            }
+            let first = await group.next() ?? .unknown
+            group.cancelAll()
+            return first
+        }
     }
 
     private func currentSession() -> (any MQTTSession)? {
@@ -390,16 +439,20 @@ public final class HubReporter: @unchecked Sendable {
     // MARK: Internals
 
     private func subscribeAndAnnounce(_ s: any MQTTSession) async {
+        let h = hooks()
+        let msg = h.msgIn != nil || h.msgStatus != nil ? [topics.msg(config.bridgeId, "in"), topics.msg(config.bridgeId, "status")] : []
         do {
             try await s.subscribe(
                 [topics.bridgeCmd(config.bridgeId)] + topics.takCotInFilters + [
                     topics.bridgeMOAck(config.bridgeId)
-                ],
+                ] + msg,
                 qos: Self.qosAtLeastOnce)
         } catch {
             Self.log.warning("Hub subscribe failed: \(error)")
         }
         await publishBirth(s)
+        // The session is clean: what the Hub said while it was away is asked for again (hub_msg).
+        h.connected?()
     }
 
     static func modemImeis(_ interfaces: [InterfaceInfo]) -> Set<String> {
@@ -457,6 +510,14 @@ public final class HubReporter: @unchecked Sendable {
     }
 
     func handleInbound(topic: String, payload: String) async {
+        if topic == topics.msg(config.bridgeId, "in") {
+            hooks().msgIn?(payload)
+            return
+        }
+        if topic == topics.msg(config.bridgeId, "status") {
+            hooks().msgStatus?(payload)
+            return
+        }
         if topic.contains("/tak/cot/in") {
             // What this bridge exported itself comes back on the topic that names it as the sender.
             if topics.isOwnTakExport(topic: topic, bridgeId: config.bridgeId) { return }
@@ -507,12 +568,16 @@ public final class HubReporter: @unchecked Sendable {
     private struct Hooks {
         let command: (@Sendable (HubCommand) -> Void)?
         let tak: (@Sendable (String) -> Void)?
+        let msgIn: (@Sendable (String) -> Void)?
+        let msgStatus: (@Sendable (String) -> Void)?
+        let connected: (@Sendable () -> Void)?
     }
 
     private func hooks() -> Hooks {
         lock.lock()
         defer { lock.unlock() }
-        return Hooks(command: onCommandHook, tak: onTakCotHook)
+        return Hooks(
+            command: onCommandHook, tak: onTakCotHook, msgIn: onMsgInHook, msgStatus: onMsgStatusHook, connected: onConnectedHook)
     }
 
     private func setSession(_ s: any MQTTSession) {
