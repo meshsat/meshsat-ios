@@ -252,12 +252,16 @@ final class ProvingTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10), "composer")
         field.tap()
         field.typeText(text)
-        // The Send button is enabled once the text has reached the view's state, not at once.
+        // The Send button is enabled once the text has reached the view's state, not at once. The
+        // keyboard's own Send key matches the label too, and on this multi-line field it does not
+        // send: take the app's button, the one outside the keyboard.
         let deadline = Date().addingTimeInterval(10)
         var sendButton: XCUIElement?
         while Date() < deadline, sendButton == nil {
+            let keyboard = app.keyboards.firstMatch
+            let keys = keyboard.exists ? keyboard.frame : .null
             sendButton = app.buttons.matching(NSPredicate(format: "label == %@", "Send")).allElementsBoundByIndex.first {
-                $0.exists && $0.isHittable && $0.isEnabled
+                $0.exists && $0.isHittable && $0.isEnabled && !keys.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY))
             }
             if sendButton == nil { Thread.sleep(forTimeInterval: 0.5) }
         }
