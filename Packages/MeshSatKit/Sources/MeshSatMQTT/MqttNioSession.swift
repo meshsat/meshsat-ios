@@ -47,6 +47,13 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
     public enum SessionError: Error, Equatable {
         case notConnected
         case tls(String)
+        /// The SUBACK refused a filter, or did not answer for each (MQTT 3.1.1 §3.9.3).
+        case subscribeRefused([String])
+    }
+
+    /// Whether a SUBACK granted every filter: one return code per filter, none a failure (PH-R2).
+    public static func allGranted(_ codes: [MQTTSuback.ReturnCode], filters: Int) -> Bool {
+        codes.count == filters && !codes.contains(.failure)
     }
 
     // MARK: Connect
@@ -237,7 +244,8 @@ public final class MqttNioSession: MQTTSession, @unchecked Sendable {
 
     public func subscribe(_ topics: [String], qos: Int) async throws {
         guard let c = currentClient(), c.isActive() else { throw SessionError.notConnected }
-        _ = try await c.subscribe(to: topics.map { MQTTSubscribeInfo(topicFilter: $0, qos: Self.qos(qos)) })
+        let suback = try await c.subscribe(to: topics.map { MQTTSubscribeInfo(topicFilter: $0, qos: Self.qos(qos)) })
+        guard Self.allGranted(suback.returnCodes, filters: topics.count) else { throw SessionError.subscribeRefused(topics) }
     }
 
     public func disconnect() async {

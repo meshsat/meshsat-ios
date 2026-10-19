@@ -12,6 +12,7 @@
 // A12); the Hub answers a repeat with every event of it under the same ids (C4).
 import Foundation
 import Logging
+import MeshSatNet
 
 public final class HubMsgRoute: @unchecked Sendable {
     /// What the route needs from the Hub session (HubReporter).
@@ -66,6 +67,8 @@ public final class HubMsgRoute: @unchecked Sendable {
     private var connect = 0
     private var owedAt = HubOpCursor()
     private var lastPrune: Int64 = 0
+    /// One pass at a time: the connect's and the periodic one wait for each other (PH-R1).
+    private let passLock = AsyncMutex()
 
     public init(
         store: HubMsgStore, pub: Publisher, now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
@@ -112,6 +115,9 @@ public final class HubMsgRoute: @unchecked Sendable {
     public func publishPending() async throws {
         guard await pub.isConnected() else { return }
         for op in try await store.unpublished(limit: Self.batch) {
+            // The connection the publish goes out on, taken before it: a reconnect while it is in
+            // flight must not make it count for the new connection (PH-R1).
+            let gen = generation()
             switch await pub.publishMsg(kind: "out", payload: op.submission) {
             case .ok:
                 let t = now()
@@ -119,7 +125,7 @@ public final class HubMsgRoute: @unchecked Sendable {
                 locked {
                     let a = asks[op.opId] ?? Ask()
                     a.at = t
-                    a.connect = connect
+                    a.connect = gen
                     asks[op.opId] = a
                 }
                 try await store.markPublished(op.opId, atMs: t)
@@ -211,7 +217,10 @@ public final class HubMsgRoute: @unchecked Sendable {
         }
     }
 
-    private func askedThisConnect(_ opId: String) -> Bool { locked { asks[opId]?.connect == connect } }
+    private func generation() -> Int { locked { connect } }
+
+    /// Whether opId was asked on connection gen already.
+    private func askedOn(_ opId: String, _ gen: Int) -> Bool { locked { asks[opId]?.connect == gen } }
 
     private func due(_ opId: String, _ t: Int64) -> Bool {
         locked {
@@ -227,7 +236,8 @@ public final class HubMsgRoute: @unchecked Sendable {
         }
     }
 
-    private func repeatSubmission(_ op: HubOp, _ t: Int64) async -> Bool {
+    /// Repeats op's submission, counted for connection gen, the one the pass began on.
+    private func repeatSubmission(_ op: HubOp, _ t: Int64, _ gen: Int) async -> Bool {
         // From here a failure to keep an answer counts against this repeat, one that comes before
         // the publish returns included.
         let a: Ask = locked {
@@ -243,7 +253,7 @@ public final class HubMsgRoute: @unchecked Sendable {
         locked {
             a.n += 1
             a.at = t
-            a.connect = connect
+            a.connect = gen
         }
         if op.publishedAt == 0 { try? await store.markPublished(op.opId, atMs: t) }
         return true
@@ -256,20 +266,24 @@ public final class HubMsgRoute: @unchecked Sendable {
     /// the chat row reads "outcome unknown".
     public func requestReplays() async {
         let t = now()
+        // Everything this pass does counts for the connection it began on (PH-R1).
+        let gen = generation()
         _ = try? await store.resolveKeptMissing()
         await giveUpPastBound(t)
         guard await pub.isConnected() else { return }
-        var asked: Set<String> = []
+        var asked: Set<String> = []  // repeated in this pass; one not due is not among them
         // An owed operation is asked as its wait allows; the walk asks each operation once per
-        // connect, since what the Hub said while the phone was away is gone.
+        // connect, since what the Hub said while the phone was away is gone, whatever its wait.
         func ask(_ op: HubOp, walking: Bool = false) async -> Bool {
-            guard asked.insert(op.opId).inserted else { return true }
+            if asked.contains(op.opId) { return true }
             if walking {
-                if askedThisConnect(op.opId) { return true }
-                return await repeatSubmission(op, t)
+                if askedOn(op.opId, gen) { return true }
+            } else if !due(op.opId, t) {
+                return true
             }
-            if !due(op.opId, t) { return true }
-            return await repeatSubmission(op, t)
+            let ok = await repeatSubmission(op, t, gen)
+            if ok { asked.insert(op.opId) }
+            return ok
         }
 
         let cur = locked { owedAt }
@@ -301,16 +315,28 @@ public final class HubMsgRoute: @unchecked Sendable {
             if await stillMissing(id) { _ = await ask(op) }
         }
 
-        let (done, wcur) = locked { (walkDone, walk) }
-        if done { return }
+        // The walk belongs to one connection: a pass that began before a reconnect leaves the new
+        // connection's walk alone, its position and its end included (PH-R1).
+        let (stale, done, wcur) = locked { (connect != gen, walkDone, walk) }
+        if stale || done { return }
         guard let ops = try? await store.toReconcile(nowMs: t, withinMs: Self.replayWithinMs, after: wcur, limit: Self.walkBatch) else {
             return
         }
         for op in ops {
+            if generation() != gen { return }
             if await !ask(op, walking: true) { return }  // the walk stays here and goes on from it at the next pass
-            locked { walk = HubOpCursor(key: op.createdAt, opId: op.opId) }
+            let moved: Bool = locked {
+                guard connect == gen else { return false }
+                walk = HubOpCursor(key: op.createdAt, opId: op.opId)
+                return true
+            }
+            if !moved { return }
         }
-        if ops.count < Self.walkBatch { locked { walkDone = true } }
+        if ops.count < Self.walkBatch {
+            locked {
+                if connect == gen { walkDone = true }
+            }
+        }
     }
 
     /// Strikes from an operation's in-memory missing events those kept by now; whether any is left.
@@ -382,6 +408,10 @@ public final class HubMsgRoute: @unchecked Sendable {
 
     /// What the gateway runs at each connect and every passMs: the queue, the repeats, and the hourly prune.
     public func pass() async {
+        await passLock.withLock { await passBody() }
+    }
+
+    private func passBody() async {
         try? await publishPending()
         await requestReplays()
         let t = now()

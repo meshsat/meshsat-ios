@@ -98,6 +98,12 @@ public final class HubReporter: @unchecked Sendable {
     private var onMsgInHook: (@Sendable (String) -> Void)?
     private var onMsgStatusHook: (@Sendable (String) -> Void)?
     private var onConnectedHook: (@Sendable () -> Void)?
+    /// Whether the current session's subscriptions hold, and the session it was set for (PH-R2).
+    private var msgReadyValue = false
+    private var readinessGen = 0
+    /// The first wait before a refused subscribe is tried again on the same session, and the longest.
+    public static let resubscribeMinMs: Int64 = 2_000
+    public static let resubscribeMaxMs: Int64 = 60_000
 
     public init(
         config: HubReporterConfig, host: any HubReporterHost, makeSession: @escaping @Sendable (HubReporterConfig) -> any MQTTSession,
@@ -155,7 +161,8 @@ public final class HubReporter: @unchecked Sendable {
     /// once it took it; notSent when nothing left the phone (not connected); unknown when the answer
     /// did not come in time or the publish failed on the way, so it may have reached the Hub.
     public func publishMsg(kind: String, payload: String) async -> HubMsgRoute.Published {
-        guard let s = currentSession(), await s.isConnected else { return .notSent }
+        // Nothing for the route goes out before this session's subscriptions hold (PH-R2).
+        guard isMsgReady, let s = currentSession(), await s.isConnected else { return .notSent }
         let topic = topics.msg(config.bridgeId, kind)
         let bytes = Array(payload.utf8)
         return await withTaskGroup(of: HubMsgRoute.Published.self) { group in
@@ -264,7 +271,7 @@ public final class HubReporter: @unchecked Sendable {
         state.send(.connected)
         lastError.send("")
         Self.log.info("Connected to Hub at \(config.hubUrl)")
-        await subscribeAndAnnounce(s)
+        await establish(s)
         startHealthLoop()
         return true
     }
@@ -283,6 +290,7 @@ public final class HubReporter: @unchecked Sendable {
                 switch e {
                 case .connectionLost(let why):
                     Self.log.warning("Hub connection lost: \(why)")
+                    _ = invalidateReadiness()
                     state.send(.disconnected)
                 case .reconnected:
                     if isStopped || currentSession() !== s {
@@ -293,7 +301,7 @@ public final class HubReporter: @unchecked Sendable {
                     // A clean session: the broker forgot the subscriptions and the Hub marked
                     // the bridge offline on the will, so do what the first connect did (MESHSAT-1235).
                     state.send(.connected)
-                    await subscribeAndAnnounce(s)
+                    await establish(s)
                 }
             }
         }
@@ -438,7 +446,69 @@ public final class HubReporter: @unchecked Sendable {
 
     // MARK: Internals
 
-    private func subscribeAndAnnounce(_ s: any MQTTSession) async {
+    /// Connected AND every subscription of this session granted: what the Hub app route may use.
+    /// A transport connect alone is not enough, since the route's answers come on msg/status.
+    public var isMsgReady: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return msgReadyValue
+    }
+
+    /// A session begins, is lost or comes back: what was subscribed no longer holds.
+    private func invalidateReadiness() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        msgReadyValue = false
+        readinessGen += 1
+        return readinessGen
+    }
+
+    private func currentReadinessGen() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return readinessGen
+    }
+
+    /// Marks session ready, unless a newer one began meanwhile.
+    private func markReady(_ session: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard readinessGen == session else { return false }
+        msgReadyValue = true
+        return true
+    }
+
+    /// Subscribes for this session until every filter is granted, then announces: the birth and the
+    /// route's walk. Not ready, and the walk not started, before that; a refused subscribe is tried
+    /// again on the same session, backing off, until it holds or the session is gone (PH-R2).
+    private func establish(_ s: any MQTTSession) async {
+        let session = invalidateReadiness()
+        if await trySubscribe(s) {
+            await announce(s, session)
+            return
+        }
+        let retry = Task { [self] in
+            var wait = Self.resubscribeMinMs
+            while !Task.isCancelled {
+                await clock.sleep(ms: wait)
+                guard !isStopped, currentSession() === s, currentReadinessGen() == session, await s.isConnected else { return }
+                if await trySubscribe(s) {
+                    await announce(s, session)
+                    return
+                }
+                wait = min(wait * 2, Self.resubscribeMaxMs)
+            }
+        }
+        keepTask(retry)
+    }
+
+    private func keepTask(_ task: Task<Void, Never>) {
+        lock.lock()
+        tasks.append(task)
+        lock.unlock()
+    }
+
+    private func trySubscribe(_ s: any MQTTSession) async -> Bool {
         let h = hooks()
         let msg = h.msgIn != nil || h.msgStatus != nil ? [topics.msg(config.bridgeId, "in"), topics.msg(config.bridgeId, "status")] : []
         do {
@@ -447,12 +517,18 @@ public final class HubReporter: @unchecked Sendable {
                     topics.bridgeMOAck(config.bridgeId)
                 ] + msg,
                 qos: Self.qosAtLeastOnce)
+            return true
         } catch {
-            Self.log.warning("Hub subscribe failed: \(error)")
+            Self.log.warning("Hub subscribe refused or failed, trying again: \(error)")
+            return false
         }
+    }
+
+    private func announce(_ s: any MQTTSession, _ session: Int) async {
+        guard markReady(session) else { return }
         await publishBirth(s)
         // The session is clean: what the Hub said while it was away is asked for again (hub_msg).
-        h.connected?()
+        hooks().connected?()
     }
 
     static func modemImeis(_ interfaces: [InterfaceInfo]) -> Set<String> {

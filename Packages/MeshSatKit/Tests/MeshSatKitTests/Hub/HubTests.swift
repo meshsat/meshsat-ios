@@ -193,10 +193,37 @@ final class FakeMQTTSession: MQTTSession, @unchecked Sendable {
 
     /// Set to make the broker drop the session while its subscriptions are being placed.
     var dropOnSubscribe = false
+    /// Runs once inside the next subscribe, after the broker granted it (a reconnect in flight).
+    var onSubscribe: (@Sendable () async -> Void)?
+    /// How many subscribes to come the broker refuses (a SUBACK failure, PH-R2).
+    private var refuseLeft = 0
+    private var subscribeCalls = 0
+    var refuseSubscribes: Int {
+        get { locked { refuseLeft } }
+        set { locked { refuseLeft = newValue } }
+    }
+    var subscribeAttempts: Int { locked { subscribeCalls } }
 
     func subscribe(_ topics: [String], qos: Int) async throws {
-        locked { subscribedList.append(contentsOf: topics) }
+        try locked {
+            subscribeCalls += 1
+            if refuseLeft > 0 {
+                refuseLeft -= 1
+                throw NSError(domain: "fake", code: 0x80, userInfo: [NSLocalizedDescriptionKey: "SUBACK refused"])
+            }
+            subscribedList.append(contentsOf: topics)
+        }
+        if let hook = onSubscribe {
+            onSubscribe = nil
+            await hook()
+        }
         if dropOnSubscribe { drop("dropped while subscribing") }
+    }
+
+    /// The client got back in on its own after a drop (a clean session: nothing subscribed).
+    func reconnect() {
+        locked { connected = true }
+        events.send(.reconnected)
     }
 
     func disconnect() async { locked { connected = false } }
