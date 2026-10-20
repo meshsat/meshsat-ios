@@ -98,15 +98,20 @@ final class HubMsgReadinessTests: XCTestCase {
         r.start()
         let ready = await waitUntil { r.isMsgReady && connected.value == 1 }
         XCTAssertTrue(ready)
-        session.refuseSubscribes = 1
+        // Refused until the test lets it through: with a single refusal the 20 ms retry could
+        // succeed and walk before the assertion below ran, which failed 1 run in 10 on a loaded
+        // host (r16 review) without the reporter doing anything wrong.
+        session.refuseSubscribes = 1_000
         session.drop("the broker went away")
         let lost = await waitUntil { !r.isMsgReady }
         XCTAssertTrue(lost, "a lost session is not ready")
         let attempts = session.subscribeAttempts
         session.reconnect()
-        let refused = await waitUntil { session.subscribeAttempts > attempts }
-        XCTAssertTrue(refused)
+        let refused = await waitUntil { session.subscribeAttempts > attempts + 1 }
+        XCTAssertTrue(refused, "a refused resubscribe is tried again")
+        XCTAssertFalse(r.isMsgReady, "ready on a refused resubscribe")
         XCTAssertEqual(1, connected.value, "no walk on a refused resubscribe")
+        session.refuseSubscribes = 0
         let again = await waitUntil { r.isMsgReady }
         XCTAssertTrue(again, "tried again on the same session")
         let walked = await waitUntil { connected.value == 2 }
