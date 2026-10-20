@@ -94,10 +94,10 @@ public final class SosController: @unchecked Sendable {
     private var watchTask: Task<Void, Never>?
     private var prevTask: Task<Void, Never>?
     private var prevRunning = false
-    /// The most earlier runs whose cancellation is still followed.
-    static let prevMax = 8
     /// Earlier runs whose cancellation is still owed (r16 review C10-R4), under the mutex: a new
     /// SOS does not end the older one's obligation, which goes on until its own ack or its day.
+    /// All of them, however many SOS follow: a run leaves only by its ack or its day, never to
+    /// make room (C10-R7).
     private var prev: [SosRun] = []
 
     /// The run with id: the current one, or an earlier one still owed its cancellation (mutex).
@@ -257,10 +257,9 @@ public final class SosController: @unchecked Sendable {
         guard let current = run.value, !current.test, !current.active, cancelOwed(current), !prev.contains(where: { $0.id == current.id })
         else { return }
         prev.append(current)
-        if prev.count > Self.prevMax { prev.removeFirst(prev.count - Self.prevMax) }
         savePrev()
         followPrev()
-        log("A new SOS starts; the last one's cancellation is still followed")
+        log("A new SOS starts; the last one's cancellation is still followed (\(prev.count) owed)")
     }
 
     /// Start an SOS, or a test of the alarm. A real SOS replaces a test that is still running.
@@ -575,12 +574,19 @@ public final class SosController: @unchecked Sendable {
             var repeats: [Int64: (published: Int, next: Int64)] = [:]
             while !Task.isCancelled {
                 await mutex.acquire()
+                // Stopped while it waited: from here a stopped controller neither publishes nor
+                // writes, the new one owns the runs (it would also read the new one's session).
+                if Task.isCancelled {
+                    mutex.release()
+                    break
+                }
                 let runs = prev
                 mutex.release()
                 if runs.isEmpty { break }
                 let reporter = env.sosHub
                 let t = now()
                 for r in runs {
+                    if Task.isCancelled { break }
                     await followCancelOldWay(r, reporter)
                     if SosV2.cancelPending(r) {
                         let st = repeats[r.id] ?? (0, 0)
@@ -590,6 +596,10 @@ public final class SosController: @unchecked Sendable {
                     }
                 }
                 await mutex.acquire()
+                if Task.isCancelled {
+                    mutex.release()
+                    break
+                }
                 let before = prev.count
                 prev.removeAll { !cancelOwed($0) }
                 if prev.count != before { savePrev() }

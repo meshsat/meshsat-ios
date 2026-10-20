@@ -5,7 +5,8 @@
 // comes after the local cancel. Android's SosControllerC10Test is the same set. The review's
 // acceptance cases follow at the end (the Bridge's sos_r17_test.go is the same set): a start
 // publish that timed out after the Hub took it, a restart inside the first start publish, and the
-// last SOS's satellite start going out only after the next SOS began.
+// last SOS's satellite start going out only after the next SOS began. Last, the r17 review's
+// C10-R7 case (the Bridge's sos_r18_test.go): nine owed cancels outlive the next SOS and a restart.
 import MeshSatNet
 import MeshSatWire
 import XCTest
@@ -330,5 +331,46 @@ final class SosR16Tests: XCTestCase {
         try? await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(rows(a.refPrefix + "cancel:sat").count, 1, "one frame for A's one bearer")
         sos.stop()
+    }
+
+    /// R7 (the r17 review's acceptance case): more than eight earlier runs owe their cancel when
+    /// the next SOS starts, the app restarts, then the Hub comes back. Every owed cancel is
+    /// published and completes on its own ack, and the newest SOS stays on.
+    func testNineOwedCancelsOutliveARestartAndAllComplete() async throws {
+        setUpWorld(up: false)
+        let sos = controller()
+        var owed: [SosRun] = []
+        for _ in 0..<9 {
+            await sos.start(test: false, trigger: "button")
+            let r = try XCTUnwrap(sos.run.value)
+            try await satWent(r)  // its 0x07 went by satellite, so the cancel is owed
+            await sos.cancel()
+            XCTAssertEqual(sos.run.value?.cancelV2Owed, true, "run \(r.id) owes its cancel")
+            owed.append(r)
+            clock.add(1_000)
+        }
+        await sos.start(test: false, trigger: "button")
+        let newest = try XCTUnwrap(sos.run.value)
+        for r in owed {
+            XCTAssertTrue(settings.sosPrevRunsJson.contains(r.sosId), "run \(r.id) is not kept")
+        }
+        sos.stop()  // a restart before the Hub is back
+        // The new process's own session: the old one stays down, so a round the stopped
+        // controller still had under way cannot publish for the new one.
+        let fresh = FakeSosHub(up: false)
+        env.hub = fresh
+        let after = controller()
+        fresh.up = true
+        await eventually("every owed cancel published") { owed.allSatisfy { cancelPublished(fresh, $0) } }
+        XCTAssertFalse(cancelPublished(fresh, newest), "the newest SOS was cancelled")
+        for r in owed {
+            await ack(after, r, "cancel", "cancelled")
+        }
+        await eventually("every earlier run forgotten once acked") {
+            owed.allSatisfy { !settings.sosPrevRunsJson.contains($0.sosId) }
+        }
+        XCTAssertEqual(after.run.value?.id, newest.id)
+        XCTAssertEqual(after.run.value?.active, true, "the newest SOS is not on")
+        after.stop()
     }
 }
