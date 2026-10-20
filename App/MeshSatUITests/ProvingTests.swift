@@ -296,4 +296,50 @@ final class ProvingTests: XCTestCase {
             app.buttons["Stop test"].firstMatch.tap()
         }
     }
+
+    /// A real SOS from the Home card, held for 3 seconds. It refuses to hold the button unless the
+    /// card says the SOS goes by the Hub and nowhere else: a proof must never text a person, or put
+    /// an SOS on the mesh or a satellite. The Hub pages its on-call chain once.
+    @MainActor
+    func testSosStart() throws {
+        try gate("sos-start")
+        let app = attach()
+        openTab(app, "Home")
+        let hubOnly = app.staticTexts["Sends your position by the Hub, and keeps trying until you cancel."].firstMatch
+        var swipes = 0
+        while !(hubOnly.exists && hubOnly.isHittable), swipes < 6 {
+            app.swipeUp()
+            swipes += 1
+            Thread.sleep(forTimeInterval: 0.8)
+        }
+        guard hubOnly.exists else { return XCTFail("the SOS card does not say the Hub only: not holding the button") }
+        let hold = app.buttons["Hold 3 seconds for SOS"].firstMatch
+        XCTAssertTrue(hold.waitForExistence(timeout: 5))
+        hold.press(forDuration: 3.6)
+        let on = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "SOS is on")).firstMatch
+        let started = on.waitForExistence(timeout: 10)
+        NSLog("MeshSatProve: sos started=%@", started ? "yes" : "no")
+        XCTAssertTrue(started, "SOS is on")
+        Thread.sleep(forTimeInterval: 15)  // the Hub's ack, for the screenshot and the log
+    }
+
+    /// Cancels the SOS from the Home card and its confirmation.
+    @MainActor
+    func testSosCancel() throws {
+        try gate("sos-cancel")
+        let app = attach()
+        openTab(app, "Home")
+        tap(app, "Cancel SOS")
+        XCTAssertTrue(app.staticTexts["Cancel the SOS?"].firstMatch.waitForExistence(timeout: 5), "the confirmation")
+        // The dialog's button is drawn over the card's, so it is the last hittable one.
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Cancel SOS")).allElementsBoundByIndex.last {
+            $0.exists && $0.isHittable
+        }
+        guard let confirm else { return XCTFail("no Cancel SOS in the confirmation") }
+        confirm.tap()
+        let off = app.staticTexts["Cancel the SOS?"].firstMatch.waitForNonExistence(timeout: 5)
+        NSLog("MeshSatProve: sos cancel confirmed=%@", off ? "yes" : "no")
+        XCTAssertTrue(off)
+        Thread.sleep(forTimeInterval: 15)  // the Hub's ack, for the screenshot and the log
+    }
 }
