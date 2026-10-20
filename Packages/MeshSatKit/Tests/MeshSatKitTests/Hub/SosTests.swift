@@ -134,6 +134,19 @@ final class FakeSosSettings: SosSettings, @unchecked Sendable {
     var sosName = "flaneur"
     var hubCallsign = "MSA"
     var sosContacts: [EmergencyContact] = []
+    private var prevRuns = ""
+    var sosPrevRunsJson: String {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return prevRuns
+        }
+        set {
+            lock.lock()
+            prevRuns = newValue
+            lock.unlock()
+        }
+    }
     private var caps = ""
     var hubCapsJson: String {
         get {

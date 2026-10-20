@@ -144,6 +144,8 @@ public enum SettingsKey {
     /// The last hub/caps the Hub sent, as it came (C10, MESHSAT-1584): kept, because an SOS may
     /// have to go by satellite with no Hub session at all.
     public static let hubCaps = Setting("hub_caps", default: "")
+    /// Earlier SOS runs whose cancellation is still owed (C10, r16 review R4), as a JSON array.
+    public static let sosPrevRuns = Setting("sos_prev_runs", default: "")
 }
 
 /// Values that live only in the secure store (Android: SecureKeyStore in the Keystore; iOS: the

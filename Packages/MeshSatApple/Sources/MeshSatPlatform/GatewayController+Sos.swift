@@ -28,6 +28,10 @@ final class SosSettingsAdapter: SosSettings, @unchecked Sendable {
         get { settings.get(SettingsKey.hubCaps) }
         set { settings.set(SettingsKey.hubCaps, newValue) }
     }
+    var sosPrevRunsJson: String {
+        get { settings.get(SettingsKey.sosPrevRuns) }
+        set { settings.set(SettingsKey.sosPrevRuns, newValue) }
+    }
 }
 
 /// The delivery DAO's by-prefix queries as the controller wants them.

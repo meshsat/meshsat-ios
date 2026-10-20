@@ -36,8 +36,14 @@ final class FakeDeliveryStore: DeliveryStore, @unchecked Sendable {
     func all() -> [MessageDelivery] { locked { rows.keys.sorted().compactMap { rows[$0] } } }
     private func note(_ s: String) { locked { calls.append(s) } }
 
+    /// An insert whose msg_ref ends so fails, as a database that refuses it (C10-R3).
+    private var failSuffix: String?
+    func failInserts(endingWith suffix: String?) { locked { failSuffix = suffix } }
+    struct InjectedInsertFailure: Error {}
+
     func insert(_ delivery: MessageDelivery) async throws -> Int64 {
-        locked {
+        if let suffix = locked({ failSuffix }), delivery.msgRef.hasSuffix(suffix) { throw InjectedInsertFailure() }
+        return locked {
             let id = Int64(rows.count + 1)
             var d = delivery
             d.id = id

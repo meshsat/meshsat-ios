@@ -65,6 +65,9 @@ public protocol SosSettings: AnyObject, Sendable {
     /// The last hub/caps the Hub sent, as it came (C10): kept, because an SOS may have to go by
     /// satellite with no Hub session at all.
     var hubCapsJson: String { get set }
+    /// Earlier runs whose cancellation is still owed (C10, r16 review R4), as a JSON array of
+    /// runs: a new SOS does not end the last one's obligation.
+    var sosPrevRunsJson: String { get set }
 }
 
 public final class SosController: @unchecked Sendable {
@@ -89,6 +92,46 @@ public final class SosController: @unchecked Sendable {
     private let lock = NSLock()
     private var hubTask: Task<Void, Never>?
     private var watchTask: Task<Void, Never>?
+    private var prevTask: Task<Void, Never>?
+    private var prevRunning = false
+    /// The most earlier runs whose cancellation is still followed.
+    static let prevMax = 8
+    /// Earlier runs whose cancellation is still owed (r16 review C10-R4), under the mutex: a new
+    /// SOS does not end the older one's obligation, which goes on until its own ack or its day.
+    private var prev: [SosRun] = []
+
+    /// The run with id: the current one, or an earlier one still owed its cancellation (mutex).
+    private func findLocked(_ id: Int64) -> SosRun? {
+        if let r = run.value, r.id == id { return r }
+        return prev.first { $0.id == id }
+    }
+
+    /// Changes the run with id and keeps it, current or earlier (mutex); nil when not kept.
+    @discardableResult private func updateLocked(_ id: Int64, _ change: (inout SosRun) -> Void) -> SosRun? {
+        if var r = run.value, r.id == id {
+            change(&r)
+            save(r)
+            return r
+        }
+        guard let i = prev.firstIndex(where: { $0.id == id }) else { return nil }
+        change(&prev[i])
+        savePrev()
+        return prev[i]
+    }
+
+    private func savePrev() { settings.sosPrevRunsJson = "[" + prev.map { $0.toJson() }.joined(separator: ",") + "]" }
+
+    /// The run's cancellation is still owed to the Hub, the old way or under C10.
+    private func cancelOwed(_ r: SosRun) -> Bool { needsCancelPublish(r) || SosV2.cancelPending(r) }
+
+    private static func runs(fromJson s: String) -> [SosRun] {
+        guard let data = s.data(using: .utf8), let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return arr.compactMap { o in
+            (try? JSONSerialization.data(withJSONObject: o)).flatMap { SosRun.fromJson(String(decoding: $0, as: UTF8.self)) }
+        }
+    }
 
     public init(
         deliveries: any SosDeliveryQueries, settings: any SosSettings, env: any SosEnv,
@@ -106,6 +149,8 @@ public final class SosController: @unchecked Sendable {
 
     /// Pick up an SOS that was in progress when the app stopped.
     public func restore() {
+        prev = Self.runs(fromJson: settings.sosPrevRunsJson)
+        if !prev.isEmpty { followPrev() }
         var saved = SosRun.fromJson(settings.sosRunJson)
         // A run kept from before C10 takes the old-format id, the same on every route (MESHSAT-1584).
         let bridge = env.sosHub?.bridgeId ?? ""
@@ -130,22 +175,32 @@ public final class SosController: @unchecked Sendable {
         guard let a = SosV2.parseAck(payload) else { return }
         await mutex.acquire()
         defer { mutex.release() }
-        guard var r = run.value, !r.sosId.isEmpty, r.sosId == a.sosId else {
-            log("An ack for an SOS that is not this phone's last, ignored")
+        guard let r = ([run.value].compactMap { $0 } + prev).first(where: { !$0.sosId.isEmpty && $0.sosId == a.sosId }) else {
+            log("An ack for an SOS this phone no longer follows, ignored")
             return
         }
         let t = now()
         switch a.kind {
         case "start":
-            if r.hubSentAt == nil { r.hubSentAt = t }
-            r.hubV2 = true
-            r.hubState = a.state
-            save(r)
+            // The Hub has the start of a run cancelled here: it is owed the cancel, even when the
+            // cancel was made before anything said the start had left (C10-R5).
+            let owe = r.cancelledAt != nil && r.cancelHubAckedAt == nil && !r.cancelGaveUp && !r.cancelV2Owed
+            let next = updateLocked(r.id) {
+                if $0.hubSentAt == nil { $0.hubSentAt = t }
+                $0.hubV2 = true
+                $0.hubState = a.state
+                if owe { $0.cancelV2Owed = true }
+            }
+            if owe, let next {
+                if next.id == run.value?.id { follow(next) } else { followPrev() }
+            }
         case "cancel":
             guard r.cancelledAt != nil, r.cancelHubAckedAt == nil else { return }
-            r.cancelHubAckedAt = t
-            save(r)
+            updateLocked(r.id) { $0.cancelHubAckedAt = t }
             try? await deliveries.cancelWaitingByRefPrefix(r.refPrefix + "cancel:sat")
+            let before = prev.count
+            prev.removeAll { $0.id == r.id && !cancelOwed($0) }
+            if prev.count != before { savePrev() }
             log("SOS \(r.id) cancelled: the Hub has the cancellation")
         default: break
         }
@@ -161,11 +216,14 @@ public final class SosController: @unchecked Sendable {
         lock.lock()
         let h = hubTask
         let w = watchTask
+        let p = prevTask
         hubTask = nil
         watchTask = nil
+        prevTask = nil
         lock.unlock()
         h?.cancel()
         w?.cancel()
+        p?.cancel()
     }
 
     /// The dispatcher asks before it sends a delivery: an SOS delivery of a run that has been
@@ -183,17 +241,26 @@ public final class SosController: @unchecked Sendable {
         guard let (runId, isCancel) = SosRun.parseRef(del.msgRef), !isCancel else { return }
         await mutex.acquire()
         defer { mutex.release() }
-        guard var r = run.value, r.id == runId, !r.test, r.cancelledAt != nil else { return }
+        guard let r = findLocked(runId), !r.test, r.cancelledAt != nil else { return }
         if isSatV2(r, del) {
             // The 0x07 went after the cancel: the Hub is owed the cancel under the run's id.
-            if !r.cancelV2Owed {
-                r.cancelV2Owed = true
-                save(r)
-                follow(r)
+            if !r.cancelV2Owed, let owed = updateLocked(r.id, { $0.cancelV2Owed = true }) {
+                if owed.id == run.value?.id { follow(owed) } else { followPrev() }
             }
             return
         }
         await enqueueCancel(r, del)
+    }
+
+    /// The run a new one replaces keeps its owed cancellation (C10-R4), under the mutex.
+    private func keepOwedLocked() {
+        guard let current = run.value, !current.test, !current.active, cancelOwed(current), !prev.contains(where: { $0.id == current.id })
+        else { return }
+        prev.append(current)
+        if prev.count > Self.prevMax { prev.removeFirst(prev.count - Self.prevMax) }
+        savePrev()
+        followPrev()
+        log("A new SOS starts; the last one's cancellation is still followed")
     }
 
     /// Start an SOS, or a test of the alarm. A real SOS replaces a test that is still running.
@@ -207,7 +274,8 @@ public final class SosController: @unchecked Sendable {
             }
             await finishLocked(current)
         }
-        let t = now()
+        keepOwedLocked()
+        let t = max(now(), (prev.map { $0.id }.max() ?? 0) + 1, (run.value?.id ?? 0) + 1)
         let loc = env.location()
         let fix = loc?.fix
         var name = settings.sosName
@@ -346,7 +414,8 @@ public final class SosController: @unchecked Sendable {
         // A route that carried the SOS, or may be carrying it right now, is told it is over. Under
         // C10 the satellite's is the 0x08 (the follow loop queues it, after the grace) and the
         // Hub's the v2 event, both under the run's id.
-        var owed = r.hubV2 && r.hubPublishedAt != nil
+        // hubV2 is kept before the first start publish: one under way may reach the Hub (C10-R5).
+        var owed = r.hubV2
         for del in (try? await deliveries.getByRefPrefix(r.refPrefix)) ?? [] where startWent(del) {
             if isSatV2(cancelled, del) { owed = true } else { await enqueueCancel(cancelled, del) }
         }
@@ -387,13 +456,11 @@ public final class SosController: @unchecked Sendable {
         !r.test && r.cancelledAt != nil && r.hubSentAt != nil && !r.hubV2 && r.cancelHubSentAt == nil
     }
 
-    /// Save a change to the current run if it is still this one (under the mutex).
+    /// Save a change to the run with runId, current or earlier (under the mutex).
     private func update(runId: Int64, _ change: (inout SosRun) -> Void) async {
         await mutex.acquire()
         defer { mutex.release() }
-        guard var r = run.value, r.id == runId else { return }
-        change(&r)
-        save(r)
+        updateLocked(runId, change)
     }
 
     /// Keep the Hub informed and the notification current while this run needs it.
@@ -408,8 +475,13 @@ public final class SosController: @unchecked Sendable {
                 let reporter = env.sosHub
                 let t = now()
                 if r.hubWanted, r.hubSentAt == nil, r.active, let reporter, SosV2.hubLegV2(r, capsV2: capsV2) {
-                    // C10: the v2 start, again and again until the Hub's ack (onAck).
-                    if t >= nextStart,
+                    // C10: the v2 start, again and again until the Hub's ack (onAck). The attempt is
+                    // kept before the publish: once it is under way the start may reach the Hub
+                    // whatever the answer, so a cancel from now on owes the cancel (C10-R5).
+                    var attempt = false
+                    if t >= nextStart { attempt = await reporter.isConnected }
+                    if attempt, !r.hubV2 { await update(runId: r.id) { $0.hubV2 = true } }
+                    if attempt,
                         await reporter.publishSosEvent(
                             SosV2.startEvent(r, text: SosMessages.meshText(name: r.name, fix: r.fix, nowMs: r.id)))
                     {
@@ -430,12 +502,7 @@ public final class SosController: @unchecked Sendable {
                         lon: r.fix?.lon, asMessage: !r.test)
                     if sent { await update(runId: r.id) { $0.hubSentAt = now() } }
                 }
-                if needsCancelPublish(r), let reporter {
-                    let sent = await reporter.publishSos(
-                        deviceId: r.deviceId, id: r.hubAlertId + "-cancelled", text: SosMessages.cancelText(name: r.name), sos: false,
-                        type: "cancelled", lat: r.fix?.lat, lon: r.fix?.lon, asMessage: true)
-                    if sent { await update(runId: r.id) { $0.cancelHubSentAt = now() } }
-                }
+                await followCancelOldWay(r, reporter)
                 if SosV2.cancelPending(r),
                     let n = await followCancelV2(r, nowMs: t, hub: reporter, published: cancelPublished, next: nextCancel)
                 {
@@ -452,7 +519,7 @@ public final class SosController: @unchecked Sendable {
                 }
                 guard let current = run.value else { break }
                 let hubDone = !current.hubWanted || current.hubSentAt != nil || !current.active
-                if !current.active, !needsCancelPublish(current), !SosV2.cancelPending(current), hubDone { break }
+                if !current.active, !cancelOwed(current), hubDone { break }
                 guard (try? await sleep(Self.hubRetryMs)) != nil else { break }
             }
         }
@@ -468,6 +535,69 @@ public final class SosController: @unchecked Sendable {
         hubTask = hub
         watchTask = watch
         lock.unlock()
+    }
+
+    /// The old-way cancellation, once, for a start that went the old way.
+    private func followCancelOldWay(_ r: SosRun, _ reporter: (any SosHubLink)?) async {
+        guard needsCancelPublish(r), let reporter else { return }
+        let sent = await reporter.publishSos(
+            deviceId: r.deviceId, id: r.hubAlertId + "-cancelled", text: SosMessages.cancelText(name: r.name), sos: false,
+            type: "cancelled", lat: r.fix?.lat, lon: r.fix?.lon, asMessage: true)
+        if sent { await update(runId: r.id) { $0.cancelHubSentAt = now() } }
+    }
+
+    private func claimPrevLoop() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if prevRunning { return false }
+        prevRunning = true
+        return true
+    }
+
+    private func releasePrevLoop() {
+        lock.lock()
+        prevRunning = false
+        lock.unlock()
+    }
+
+    private func setPrevTask(_ t: Task<Void, Never>) {
+        lock.lock()
+        prevTask = t
+        lock.unlock()
+    }
+
+    /// Follows the cancellations earlier runs still owe (C10-R4): one loop over all of them, each
+    /// with its own repeat, until each is acked or given up; then it is no longer kept.
+    private func followPrev() {
+        guard claimPrevLoop() else { return }
+        let task = Task { [self] in
+            defer { releasePrevLoop() }
+            var repeats: [Int64: (published: Int, next: Int64)] = [:]
+            while !Task.isCancelled {
+                await mutex.acquire()
+                let runs = prev
+                mutex.release()
+                if runs.isEmpty { break }
+                let reporter = env.sosHub
+                let t = now()
+                for r in runs {
+                    await followCancelOldWay(r, reporter)
+                    if SosV2.cancelPending(r) {
+                        let st = repeats[r.id] ?? (0, 0)
+                        if let n = await followCancelV2(r, nowMs: t, hub: reporter, published: st.published, next: st.next) {
+                            repeats[r.id] = n
+                        }
+                    }
+                }
+                await mutex.acquire()
+                let before = prev.count
+                prev.removeAll { !cancelOwed($0) }
+                if prev.count != before { savePrev() }
+                mutex.release()
+                guard (try? await sleep(Self.hubRetryMs)) != nil else { break }
+            }
+        }
+        setPrevTask(task)
     }
 
     /// One round of the cancel under the run's identity (C10): after a day it is given up and the
@@ -492,16 +622,28 @@ public final class SosController: @unchecked Sendable {
         }
         let sat = ((try? await deliveries.getByRefPrefix(r.refPrefix + "sat")) ?? []).first { $0.msgRef == r.refPrefix + "sat" }
         if SosV2.cancelFrameDue(r, nowMs: t, hubUp: up, satStartWent: sat.map(startWent) ?? false) {
+            // The frame is owed until its row exists: a failed enqueue is tried again next round,
+            // and a row already under its reference (a crash before the run was kept) counts, so
+            // the satellite never gets two (C10-R3).
             await mutex.acquire()
-            if var cur = run.value, cur.id == r.id, !cur.cancelFrameDone, let id = HubMsgIds.parseCanonical(cur.sosId) {
-                let bridge = cur.bridgeId.isEmpty ? (hub?.bridgeId ?? "") : cur.bridgeId
-                let frame = SosMessages.cancelFrame(bridgeId: bridge, sosId: id, runStartMs: cur.id, nowSec: (cur.cancelledAt ?? t) / 1000)
-                let text = SosMessages.cancelText(name: cur.name)
-                _ = await env.dispatcher?.enqueueDirect(
-                    destInterface: "iridium_0", payload: frame, textPreview: text, msgRef: cur.refPrefix + "cancel:sat", priority: 0)
-                cur.cancelFrameDone = true
-                save(cur)
-                log("SOS \(cur.id) cancelled: the cancel frame is queued on the satellite")
+            if let cur = findLocked(r.id), !cur.cancelFrameDone, let id = HubMsgIds.parseCanonical(cur.sosId) {
+                let ref = cur.refPrefix + "cancel:sat"
+                var queued = ((try? await deliveries.getByRefPrefix(ref)) ?? []).contains { $0.msgRef == ref }
+                if !queued {
+                    let bridge = cur.bridgeId.isEmpty ? (hub?.bridgeId ?? "") : cur.bridgeId
+                    let frame = SosMessages.cancelFrame(
+                        bridgeId: bridge, sosId: id, runStartMs: cur.id, nowSec: (cur.cancelledAt ?? t) / 1000)
+                    let text = SosMessages.cancelText(name: cur.name)
+                    queued =
+                        await env.dispatcher?.enqueueDirect(
+                            destInterface: "iridium_0", payload: frame, textPreview: text, msgRef: ref, priority: 0) != nil
+                }
+                if queued {
+                    updateLocked(cur.id) { $0.cancelFrameDone = true }
+                    log("SOS \(cur.id) cancelled: the cancel frame is queued on the satellite")
+                } else {
+                    log("SOS \(cur.id) cancelled: the cancel frame could not be queued; tried again")
+                }
             }
             mutex.release()
         }
