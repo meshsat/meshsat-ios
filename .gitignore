@@ -33,3 +33,6 @@ fastlane/screenshots/
 .env
 .idea/
 *.swp
+
+# A crashed Linux test run leaves a core dump beside the package (MESHSAT-1627)
+core.[0-9]*
