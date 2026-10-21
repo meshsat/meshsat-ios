@@ -359,12 +359,17 @@ public struct InterfaceInfo: Sendable, Equatable {
     public var status: String
     public var port: String
     public var imei: String
-    public init(name: String, type: String, status: String, port: String = "", imei: String = "") {
+    /// "sealed" or "plain": what the interface's send chain makes of a payload (HeMB-NG S3-2), as
+    /// the Bridge declares it; empty declares nothing. egress_sealed is the older form of sealed.
+    /// [MESHSAT-1624]
+    public var egressFormat: String
+    public init(name: String, type: String, status: String, port: String = "", imei: String = "", egressFormat: String = "") {
         self.name = name
         self.type = type
         self.status = status
         self.port = port
         self.imei = imei
+        self.egressFormat = egressFormat
     }
     public func toJson() -> JSONBody {
         var j = JSONBody()
@@ -373,6 +378,8 @@ public struct InterfaceInfo: Sendable, Equatable {
         j.put("status", status)
         if !port.isEmpty { j.put("port", port) }
         if !imei.isEmpty { j.put("imei", imei) }
+        if !egressFormat.isEmpty { j.put("egress_format", egressFormat) }
+        if egressFormat == "sealed" { j.put("egress_sealed", true) }
         return j
     }
 }
@@ -417,10 +424,14 @@ public struct BridgeBirth: Sendable, Equatable {
     public var capabilities: [String]
     public var cotCallsign: String
     public var uptimeSec: Int64
+    /// The birth's stamp (BirthStamper), which the Hub orders this phone's births by; empty = now.
+    /// [MESHSAT-1624]
+    public var timestamp: String
     public init(
         bridgeId: String, version: String, hostname: String, mode: String = "ios", tenantId: String = "default",
         location: HubLocation? = nil,
-        interfaces: [InterfaceInfo] = [], capabilities: [String] = [], cotCallsign: String = "", uptimeSec: Int64 = 0
+        interfaces: [InterfaceInfo] = [], capabilities: [String] = [], cotCallsign: String = "", uptimeSec: Int64 = 0,
+        timestamp: String = ""
     ) {
         self.bridgeId = bridgeId
         self.version = version
@@ -432,6 +443,7 @@ public struct BridgeBirth: Sendable, Equatable {
         self.capabilities = capabilities
         self.cotCallsign = cotCallsign
         self.uptimeSec = uptimeSec
+        self.timestamp = timestamp
     }
     public func toJson(now: Date = Date()) -> JSONBody {
         var j = JSONBody()
@@ -447,7 +459,7 @@ public struct BridgeBirth: Sendable, Equatable {
         j.put("cot_type", HubProtocol.cotMobile)
         j.put("cot_callsign", cotCallsign.isEmpty ? hostname : cotCallsign)
         j.put("uptime_sec", uptimeSec)
-        j.put("timestamp", HubProtocol.isoTimestamp(now))
+        j.put("timestamp", timestamp.isEmpty ? HubProtocol.isoTimestamp(now) : timestamp)
         return j
     }
 }

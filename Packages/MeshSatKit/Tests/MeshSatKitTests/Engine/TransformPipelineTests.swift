@@ -61,7 +61,7 @@ final class TransformPipelineTests: XCTestCase {
         XCTAssertEqual(
             bad.errors,
             [
-                "encrypt transform requires a 'key' param",
+                "encrypt transform requires a 'key' or 'key_ref' param",
                 "Text-only transport (SMS) requires base64 as the final transform after encrypt/compress",
             ])
         let sms = TransformPipeline.validate(

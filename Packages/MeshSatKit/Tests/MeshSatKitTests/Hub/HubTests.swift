@@ -184,9 +184,20 @@ final class FakeMQTTSession: MQTTSession, @unchecked Sendable {
         }
     }
 
+    /// How many bridge births to come the broker fails to take (MESHSAT-1624).
+    private var refuseBirthsLeft = 0
+    var refuseBirths: Int {
+        get { locked { refuseBirthsLeft } }
+        set { locked { refuseBirthsLeft = newValue } }
+    }
+
     func publish(topic: String, payload: [UInt8], qos: Int, retain: Bool) async throws {
         try locked {
             guard connected else { throw NSError(domain: "fake", code: 2, userInfo: [NSLocalizedDescriptionKey: "not connected"]) }
+            if refuseBirthsLeft > 0, topic.hasSuffix("/birth") {
+                refuseBirthsLeft -= 1
+                throw NSError(domain: "fake", code: 3, userInfo: [NSLocalizedDescriptionKey: "publish failed"])
+            }
             publishedList.append(Published(topic: topic, payload: String(decoding: payload, as: UTF8.self), qos: qos, retain: retain))
         }
     }

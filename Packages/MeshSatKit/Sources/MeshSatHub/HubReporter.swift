@@ -1,8 +1,9 @@
 // Mirrors hub/HubReporter.kt: the meshsat-uplink/v1 reporter, the phone as a mobile field
-// node in the Hub fleet. Publishes the bridge birth (retained, signed when there is a key),
-// death (a last will and on stop), health on an interval, device births and deaths, positions,
-// messages on mo/decoded, SOS events; subscribes to the command topic, the TAK broadcast and
-// the MO receipts. Runs over an MQTTSession, so the tests drive it with a fake broker.
+// node in the Hub fleet. Publishes the bridge birth (retained, signed when there is a key,
+// stamped later than every birth before it, MESHSAT-1624), death (a last will and on stop),
+// health on an interval, device births and deaths, positions, messages on mo/decoded, SOS
+// events; subscribes to the command topic, the TAK broadcast and the MO receipts. Runs over an
+// MQTTSession, so the tests drive it with a fake broker.
 import Foundation
 import Logging
 import MeshSatNet
@@ -90,7 +91,7 @@ public final class HubReporter: @unchecked Sendable {
     private var stopped = false
     private var tasks: [Task<Void, Never>] = []
     private var activeDevices: Set<String> = []
-    private var announcedImeis: Set<String> = []
+    private let births: HubBirthState
     private let startedAt: Int64
     private var onCommandHook: (@Sendable (HubCommand) -> Void)?
     private var onTakCotHook: (@Sendable (String) -> Void)?
@@ -107,15 +108,18 @@ public final class HubReporter: @unchecked Sendable {
     public static let resubscribeMinMs: Int64 = 2_000
     public static let resubscribeMaxMs: Int64 = 60_000
 
+    /// `birthStamps` keeps the last birth's stamp across restarts (HeMB-NG S3-2); nil keeps it for
+    /// this process only. Births are stamped from `clock`.
     public init(
         config: HubReporterConfig, host: any HubReporterHost, makeSession: @escaping @Sendable (HubReporterConfig) -> any MQTTSession,
-        clock: any DriverClock = SystemDriverClock()
+        clock: any DriverClock = SystemDriverClock(), birthStamps: (any BirthStampStore)? = nil
     ) {
         self.config = config
         self.host = host
         self.makeSession = makeSession
         self.clock = clock
         self.startedAt = clock.nowMs()
+        self.births = HubBirthState(store: birthStamps)
     }
 
     // MARK: Hooks
@@ -535,30 +539,6 @@ public final class HubReporter: @unchecked Sendable {
         hooks().connected?()
     }
 
-    static func modemImeis(_ interfaces: [InterfaceInfo]) -> Set<String> {
-        Set(interfaces.map(\.imei).filter { !$0.isEmpty })
-    }
-
-    private func publishBirth(_ s: any MQTTSession) async {
-        let birth = buildBirthCertificate()
-        setAnnounced(Self.modemImeis(birth.interfaces))
-        var json = birth.toJson()
-        if !config.clientCertPem.isEmpty && !config.clientKeyPem.isEmpty {
-            let signed = BirthSigner.sign(&json, certPem: config.clientCertPem, keyPem: config.clientKeyPem)
-            Self.log.info("Birth \(signed ? "signed" : "unsigned"): \(config.bridgeId)")
-        }
-        try? await s.publish(
-            topic: topics.bridgeBirth(config.bridgeId), payload: Array(json.text().utf8), qos: Self.qosAtLeastOnce, retain: true)
-        Self.log.info("Published bridge birth: \(config.bridgeId)")
-    }
-
-    func buildBirthCertificate() -> BridgeBirth {
-        BridgeBirth(
-            bridgeId: config.bridgeId, version: host.appVersion, hostname: host.deviceModel, mode: "ios", tenantId: "default",
-            location: host.location(), interfaces: host.interfaces(), capabilities: host.capabilities(),
-            cotCallsign: config.callsign.isEmpty ? host.deviceModel : config.callsign, uptimeSec: uptimeSec())
-    }
-
     private func startHealthLoop() {
         let task = Task { [self] in
             while !Task.isCancelled {
@@ -566,16 +546,18 @@ public final class HubReporter: @unchecked Sendable {
                 if Task.isCancelled { break }
                 guard let s = currentSession(), await s.isConnected else { continue }
                 // The Hub links a satellite device to this bridge only from a birth, and a modem
-                // is often paired after the connect: re-announce when the set changes (MESHSAT-1235).
-                if Self.modemImeis(host.interfaces()) != announced() {
-                    Self.log.info("Modem set changed, re-publishing birth")
+                // is often paired after the connect: re-announce when the set changes (MESHSAT-1235),
+                // and so when its chain does (MESHSAT-1624).
+                if Self.modemDeclarations(declaredInterfaces()) != births.announced {
+                    Self.log.info("Modem set or chain changed, re-publishing birth")
                     await publishBirth(s)
                 }
                 await publishHealth(s)
             }
         }
+        let retry = birthRetryLoop()
         lock.lock()
-        tasks.append(task)
+        tasks.append(contentsOf: [task, retry])
         lock.unlock()
     }
 
@@ -700,18 +682,6 @@ public final class HubReporter: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func setAnnounced(_ imeis: Set<String>) {
-        lock.lock()
-        announcedImeis = imeis
-        lock.unlock()
-    }
-
-    private func announced() -> Set<String> {
-        lock.lock()
-        defer { lock.unlock() }
-        return announcedImeis
-    }
-
     /// Bytes on a topic (MqttTransport.publishRaw on Android): false when not connected or refused.
     public func publishRaw(topic: String, payload: [UInt8], qos: Int = 1, retain: Bool = false) async -> Bool {
         guard let s = currentSession(), await s.isConnected else { return false }
@@ -808,5 +778,139 @@ extension HubReporter {
             Self.log.warning("SOS event publish to the Hub failed: \(error)")
             return false
         }
+    }
+}
+
+// The birth's stamp and what it declares (HeMB-NG S3-2, MESHSAT-1624): outside the class body,
+// which is at its length limit.
+extension HubReporter {
+    /// How often a birth that did not go out is tried again while connected, as on the Bridge.
+    public static let birthRetryMs: Int64 = 10_000
+
+    /// What the 9704's send chain makes of a message, as the birth declares it on each iridium_imt
+    /// interface (egress_format): "sealed", "plain", or nil to declare nothing, which leaves the
+    /// Hub's stored declaration as it is. The Hub keeps a sealed modem's messages opaque. Without
+    /// a provider the host's interfaces go as they are.
+    public func setImtEgressFormat(_ provider: (@Sendable () -> String?)?) {
+        births.setImtEgressFormat(provider)
+    }
+
+    /// Each modem a birth names with what it declares ("imei:format"), which the health loop
+    /// compares to re-announce: a modem paired late, or a chain switched between plain and sealed.
+    static func modemDeclarations(_ interfaces: [InterfaceInfo]) -> Set<String> {
+        Set(interfaces.filter { !$0.imei.trimmingCharacters(in: .whitespaces).isEmpty }.map { "\($0.imei):\($0.egressFormat)" })
+    }
+
+    /// The host's interfaces, each iridium_imt one carrying the provider's declaration.
+    func declaredInterfaces() -> [InterfaceInfo] {
+        let interfaces = host.interfaces()
+        guard let provider = births.imtEgressFormat() else { return interfaces }
+        let format = provider() ?? ""
+        return interfaces.map { i in
+            guard i.type == HubProtocol.deviceIridiumImt else { return i }
+            var declared = i
+            declared.egressFormat = format
+            return declared
+        }
+    }
+
+    /// Stamps, signs and publishes one birth. One whose stamp could not be read or stored does
+    /// not go out, and neither does one the broker did not take: each is tried again every
+    /// `birthRetryMs` while connected, as on the Bridge.
+    private func publishBirth(_ s: any MQTTSession) async {
+        let stamp: BirthStamp
+        do {
+            stamp = try births.stamper.next(nowNanos: clock.nowMs() * 1_000_000)
+        } catch {
+            births.setPending(true)
+            Self.log.warning("Birth not published, tried again in \(Self.birthRetryMs / 1000) s: \(error)")
+            return
+        }
+        let birth = buildBirthCertificate(stamp: stamp)
+        births.setAnnounced(Self.modemDeclarations(birth.interfaces))
+        var json = birth.toJson()
+        if !config.clientCertPem.isEmpty && !config.clientKeyPem.isEmpty {
+            let signed = BirthSigner.sign(&json, certPem: config.clientCertPem, keyPem: config.clientKeyPem)
+            Self.log.info("Birth \(signed ? "signed" : "unsigned"): \(config.bridgeId)")
+        }
+        do {
+            try await s.publish(
+                topic: topics.bridgeBirth(config.bridgeId), payload: Array(json.text().utf8), qos: Self.qosAtLeastOnce, retain: true)
+            births.setPending(false)
+            Self.log.info("Published bridge birth: \(config.bridgeId)")
+        } catch {
+            births.setPending(true)
+            Self.log.warning("Birth not published, tried again in \(Self.birthRetryMs / 1000) s: \(error)")
+        }
+    }
+
+    func buildBirthCertificate(stamp: BirthStamp) -> BridgeBirth {
+        BridgeBirth(
+            bridgeId: config.bridgeId, version: host.appVersion, hostname: host.deviceModel, mode: "ios", tenantId: "default",
+            location: host.location(), interfaces: declaredInterfaces(), capabilities: host.capabilities(),
+            cotCallsign: config.callsign.isEmpty ? host.deviceModel : config.callsign, uptimeSec: uptimeSec(),
+            timestamp: BirthStamper.format(stamp))
+    }
+
+    /// Tries a birth that did not go out again every `birthRetryMs` while connected.
+    private func birthRetryLoop() -> Task<Void, Never> {
+        Task { [self] in
+            while !Task.isCancelled {
+                await clock.sleep(ms: Self.birthRetryMs)
+                if Task.isCancelled { break }
+                guard births.isPending, let s = currentSession(), await s.isConnected else { continue }
+                await publishBirth(s)
+            }
+        }
+    }
+}
+
+/// The birth's stamper, whether a birth is owed, what the last one declared and the 9704's
+/// declaration, beside the reporter's own state.
+private final class HubBirthState: @unchecked Sendable {
+    let stamper: BirthStamper
+    private let lock = NSLock()
+    private var pending = false
+    private var announcedValue: Set<String> = []
+    private var imtEgressFormatValue: (@Sendable () -> String?)?
+
+    init(store: (any BirthStampStore)?) {
+        stamper = BirthStamper(store: store)
+    }
+
+    var isPending: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending
+    }
+
+    func setPending(_ value: Bool) {
+        lock.lock()
+        pending = value
+        lock.unlock()
+    }
+
+    var announced: Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return announcedValue
+    }
+
+    func setAnnounced(_ value: Set<String>) {
+        lock.lock()
+        announcedValue = value
+        lock.unlock()
+    }
+
+    func imtEgressFormat() -> (@Sendable () -> String?)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return imtEgressFormatValue
+    }
+
+    func setImtEgressFormat(_ provider: (@Sendable () -> String?)?) {
+        lock.lock()
+        imtEgressFormatValue = provider
+        lock.unlock()
     }
 }

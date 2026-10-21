@@ -14,7 +14,8 @@
 //   MeshSatSatellite  satellite/ (SGP4, TLE, passes, scheduler) + bundled TLEs
 //   MeshSatProto      generated Swift for Vendor/protos (Meshtastic, TAK)
 //   MeshSatMeshtastic ble/MeshtasticProtocol, GattOpQueue, the Iridium pipe
-//                     contract and streams, bt/IridiumSpp as IridiumATDriver
+//                     contract and streams, bt/IridiumSpp as IridiumATDriver,
+//                     bt/Iridium9704Spp as Iridium9704Driver
 //   MeshSatEngine     engine/, rules/, dedup/, ratelimit/, sos/, config/, data/ records
 //   MeshSatHub        hub/HubReporter, crypto/Provision*, hub/relay/
 //   MeshSatMQTT       mqtt/ on mqtt-nio

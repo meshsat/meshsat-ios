@@ -1,6 +1,7 @@
 // Mirrors crypto/AesGcmCrypto.kt: AES-256-GCM as the Bridge's transform pipeline and the Hub
 // expect it. Wire format [12-byte nonce][ciphertext + 16-byte tag]; base64 of that on text
-// channels (SMS). The 64-hex-character key is shared between the Bridge and the apps.
+// channels (SMS). The 64-hex-character key is shared between the Bridge and the apps. The
+// kits' satellite H chain uses the same format with no base64 (SatelliteChain).
 import Crypto
 import Foundation
 
@@ -26,8 +27,22 @@ public enum AesGcmCrypto {
 
     /// [nonce][ciphertext + tag].
     public static func encrypt(_ plaintext: [UInt8], hexKey: String) throws -> [UInt8] {
-        let nonce = AES.GCM.Nonce()
-        let sealed = try AES.GCM.seal(plaintext, using: try key(hexKey), nonce: nonce)
+        try encrypt(plaintext, hexKey: hexKey, fixedNonce: nil)
+    }
+
+    /// `encrypt` with a fixed nonce: only the shared test vectors use one, to compare bytes with
+    /// the Bridge's; every send draws a fresh random nonce. Package scope, so the app cannot
+    /// reach it. [MESHSAT-1624]
+    package static func encrypt(_ plaintext: [UInt8], hexKey: String, fixedNonce: [UInt8]?) throws -> [UInt8] {
+        let symmetricKey = try key(hexKey)
+        let nonce: AES.GCM.Nonce
+        if let fixedNonce {
+            guard fixedNonce.count == nonceSize else { throw KeyError(description: "nonce must be \(nonceSize) bytes") }
+            nonce = try AES.GCM.Nonce(data: fixedNonce)
+        } else {
+            nonce = AES.GCM.Nonce()
+        }
+        let sealed = try AES.GCM.seal(plaintext, using: symmetricKey, nonce: nonce)
         return Array(nonce) + Array(sealed.ciphertext) + Array(sealed.tag)
     }
 

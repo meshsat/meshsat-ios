@@ -1,7 +1,8 @@
 // MeshSatMeshtastic: the platform-free half of MeshSat Android's ble/ and bt/ packages.
 // ble/MeshtasticProtocol + MeshtasticProtoAdapter, ble/NodeProfile, ble/NodeBattery,
-// ble/GattOpQueue, ble/IridiumPipeStreams and bt/IridiumSpp (the 9603 AT driver, here
-// IridiumATDriver over a ModemLink) are ported into this module. CoreBluetooth itself is in
+// ble/GattOpQueue, ble/IridiumPipeStreams, bt/IridiumSpp (the 9603 AT driver, here
+// IridiumATDriver over a ModemLink) and bt/Iridium9704Spp (the 9704 JSPR driver, here
+// Iridium9704Driver over the same link) are ported into this module. CoreBluetooth itself is in
 // Packages/MeshSatApple (MeshSatBLE).
 import Foundation
 import MeshSatNet

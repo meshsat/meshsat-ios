@@ -1,7 +1,10 @@
 // Mirrors engine/TransformSpec.kt and engine/TransformPipeline.kt (a port of the Bridge's
 // internal/engine/transform.go): ordered transforms on a payload, base64 for text-only
-// channels, AES-256-GCM with a key, MSVQ-SC with an encoder for sending and the codebook for
-// receiving.
+// channels, AES-256-GCM with a "key" or a "key_ref" resolved through `keyResolver`, MSVQ-SC
+// with an encoder for sending and the codebook for receiving, and SMAZ2 with the "dict"
+// param's table, byte for byte as the Bridge ("smaz2", and "smaz2g" with its mode byte,
+// HeMB-NG S3-1). An encrypt or decrypt that fails is a TransformError, never a guess.
+// [MESHSAT-1624]
 import Foundation
 import MeshSatMsvqsc
 import MeshSatWire
@@ -44,8 +47,39 @@ public final class TransformPipeline: @unchecked Sendable {
     private let lock = NSLock()
     private var encoderValue: (any MsvqscEncoding)?
     private var codebookValue: MsvqscCodebook?
+    private var keyResolverValue: (@Sendable (String) -> String?)?
+    private var fixedNonceValue: [UInt8]?
 
     public init() {}
+
+    /// Resolves an encrypt step's "key_ref" ("channel:address", e.g. "iridium:shared") to its
+    /// 64-hex AES key, nil when there is none: the step then fails, it never runs without a key.
+    public var keyResolver: (@Sendable (String) -> String?)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return keyResolverValue
+        }
+        set {
+            lock.lock()
+            keyResolverValue = newValue
+            lock.unlock()
+        }
+    }
+
+    /// A fixed nonce for the encrypt step, set only by the shared test vectors.
+    package var fixedNonce: [UInt8]? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return fixedNonceValue
+        }
+        set {
+            lock.lock()
+            fixedNonceValue = newValue
+            lock.unlock()
+        }
+    }
 
     public var msvqscEncoder: (any MsvqscEncoding)? {
         get {
@@ -75,24 +109,49 @@ public final class TransformPipeline: @unchecked Sendable {
 
     /// Sending: the transforms in order (compress, encrypt, base64).
     public func applyEgress(_ data: [UInt8], transformsJson: String?) throws -> [UInt8] {
+        try applyEgress(data, try TransformSpec.parseList(transformsJson))
+    }
+
+    /// `applyEgress` on a parsed chain.
+    public func applyEgress(_ data: [UInt8], _ transforms: [TransformSpec]) throws -> [UInt8] {
         var result = data
-        for t in try TransformSpec.parseList(transformsJson) { result = try apply(t, result) }
+        for t in transforms { result = try apply(t, result) }
         return result
     }
 
     /// Receiving: the transforms in reverse (decode, decrypt, decompress).
     public func applyIngress(_ data: [UInt8], transformsJson: String?) throws -> [UInt8] {
+        try applyIngress(data, try TransformSpec.parseList(transformsJson))
+    }
+
+    /// `applyIngress` on a parsed chain.
+    public func applyIngress(_ data: [UInt8], _ transforms: [TransformSpec]) throws -> [UInt8] {
         var result = data
-        for t in try TransformSpec.parseList(transformsJson).reversed() { result = try reverse(t, result) }
+        for t in transforms.reversed() { result = try reverse(t, result) }
         return result
+    }
+
+    private static func isBlank(_ s: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private func encryptKey(_ t: TransformSpec) throws -> String {
+        if let key = t.params["key"], !Self.isBlank(key) { return key }
+        guard let ref = t.params["key_ref"] else { throw TransformError("encrypt transform requires a 'key' or 'key_ref' param") }
+        guard let key = keyResolver?(ref), !Self.isBlank(key) else { throw TransformError("encrypt transform: no key for '\(ref)'") }
+        return key
     }
 
     private func apply(_ t: TransformSpec, _ data: [UInt8]) throws -> [UInt8] {
         switch t.type {
         case "base64": return Array(Base64Std.encode(data).utf8)
         case "encrypt":
-            guard let key = t.params["key"] else { throw TransformError("encrypt transform requires a 'key' param") }
-            return try AesGcmCrypto.encrypt(data, hexKey: key)
+            let key = try encryptKey(t)
+            do {
+                return try AesGcmCrypto.encrypt(data, hexKey: key, fixedNonce: fixedNonce)
+            } catch {
+                throw TransformError("encrypt: \(type(of: error))")
+            }
+        case "smaz2": return Smaz2Bytes.compress(data, dict: Smaz2Dict.of(t.params["dict"]))
+        case "smaz2g": return Smaz2g.encode(data, dict: Smaz2Dict.of(t.params["dict"]))
         case "msvqsc":
             guard let encoder = msvqscEncoder else { return data }  // no encoder: passed through, as Android
             guard let wire = encoder.encode(String(decoding: data, as: UTF8.self), maxStages: Self.maxStages(t.params)) else {
@@ -111,8 +170,21 @@ public final class TransformPipeline: @unchecked Sendable {
             }
             return decoded
         case "encrypt":
-            guard let key = t.params["key"] else { throw TransformError("encrypt transform requires a 'key' param") }
-            return try AesGcmCrypto.decrypt(data, hexKey: key)
+            let key = try encryptKey(t)
+            do {
+                return try AesGcmCrypto.decrypt(data, hexKey: key)
+            } catch {
+                // A wrong key, a changed tag or ciphertext, a cut message: never a guess.
+                throw TransformError("decrypt: \(type(of: error))")
+            }
+        case "smaz2", "smaz2g":
+            let dict = Smaz2Dict.of(t.params["dict"])
+            do {
+                if t.type == "smaz2" { return try Smaz2Bytes.decompress(data, dict: dict) }
+                return try Smaz2g.decode(data, dict: dict)
+            } catch let e as Smaz2Error {
+                throw TransformError(e.description)
+            }
         case "msvqsc":
             guard let codebook = msvqscCodebook else { throw TransformError("msvqsc: codebook not available for decode") }
             return Array(try codebook.decode(data).utf8)
@@ -144,10 +216,10 @@ public final class TransformPipeline: @unchecked Sendable {
             case "encrypt":
                 hasBinaryOutput = true
                 endsWithBase64 = false
-                if (t.params["key"] ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
-                    errors.append("encrypt transform requires a 'key' param")
+                if isBlank(t.params["key"] ?? ""), isBlank(t.params["key_ref"] ?? "") {
+                    errors.append("encrypt transform requires a 'key' or 'key_ref' param")
                 }
-            case "msvqsc":
+            case "msvqsc", "smaz2", "smaz2g":
                 hasBinaryOutput = true
                 endsWithBase64 = false
             case "base64":

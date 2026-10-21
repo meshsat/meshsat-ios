@@ -56,6 +56,9 @@ public enum IridiumPipeContract {
         public static let modemAnswers = Flags(rawValue: 1 << 2)
         /// The node's inbound buffer is nearly full.
         public static let inboundCongested = Flags(rawValue: 1 << 3)
+        /// The modem speaks JSPR, a RockBLOCK 9704 (8 Oct 2026): the client picks its 9704
+        /// driver by it; clear on a 9603 and on an older node. [MESHSAT-1624]
+        public static let modemIsJspr = Flags(rawValue: 1 << 4)
     }
 
     public struct Status: Sendable, Equatable {

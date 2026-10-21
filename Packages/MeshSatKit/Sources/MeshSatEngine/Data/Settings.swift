@@ -146,6 +146,16 @@ public enum SettingsKey {
     public static let hubCaps = Setting("hub_caps", default: "")
     /// Earlier SOS runs whose cancellation is still owed (C10, r16 review R4), as a JSON array.
     public static let sosPrevRuns = Setting("sos_prev_runs", default: "")
+
+    // The node's 9704 and the kits' satellite chain (MESHSAT-1507, MESHSAT-1623; here MESHSAT-1624)
+    /// Which modem the node carries: "auto" takes the node's STATUS flag (modemIsJspr), "9603" or
+    /// "9704" override it.
+    public static let nodeModem = Setting("node_modem", default: "auto")
+    /// The 9704's satellite chain: "" sends the text as it is and declares nothing, as before;
+    /// "plain" the same, declared; "sealed" the kits' encrypted H chain (SatelliteChain).
+    public static let satelliteChain = Setting("satellite_chain", default: "")
+    /// The last Hub birth's stamp, RFC 3339 (BirthStamper): births are ordered across restarts.
+    public static let hubLastBirthStamp = Setting("hub_last_birth_stamp", default: "")
 }
 
 /// Values that live only in the secure store (Android: SecureKeyStore in the Keystore; iOS: the
