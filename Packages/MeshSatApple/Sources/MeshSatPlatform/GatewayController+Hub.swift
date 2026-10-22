@@ -188,17 +188,7 @@ extension GatewayController {
         case "credential_push", "credential_revoke":
             error = await handleCredentialCommand(cmd.cmd, payload)
         case "send_mt":
-            let text = payload.string("text") ?? ""
-            let data = Data(base64Encoded: payload.string("data") ?? "").map { [UInt8]($0) } ?? Array(text.utf8)
-            if await driver.state != .connected {
-                error = "iridium modem not connected"
-            } else if !(await driver.writeMoBuffer(data)) {
-                error = "failed to write MO buffer"
-            } else if let r = await driver.sbdix(), r.moSuccess {
-                try? await creditTracker.recordMo(moMsn: r.moMsn)
-            } else {
-                error = "SBDIX failed"
-            }
+            error = await sendMtCommand(payload)
         case "flush_burst":
             await flushBurst()
         case "config_update":
@@ -217,6 +207,28 @@ extension GatewayController {
         }
         await hub.publishCommandResponse(
             CommandResponse(requestId: cmd.requestId, cmd: cmd.cmd, status: error.isEmpty ? "ok" : "error", error: error))
+    }
+
+    /// send_mt: a message the Hub hands this phone for its modem. The node's 9704 when the Hub
+    /// names it, as Android does (MESHSAT-1631), the 9603 otherwise. Answers the error, or "".
+    func sendMtCommand(_ payload: JSONBody) async -> String {
+        let text = payload.string("text") ?? ""
+        let data = Data(base64Encoded: payload.string("data") ?? "").map { [UInt8]($0) } ?? Array(text.utf8)
+        let target = payload.string("target_device") ?? "iridium_spp_0"
+        if target.contains("9704") || target.contains("imt") {
+            guard imt.state == .ready else { return "iridium 9704 not connected" }
+            // Only the satellite's acknowledgement counts as sent; "cancelled" does not.
+            switch await imt.driver.sendMessageBlocking(data) {
+            case "mo_ack_received"?: return ""
+            case nil: return "send timed out"
+            case let status?: return "not sent: \(status)"
+            }
+        }
+        guard await driver.state == .connected else { return "iridium modem not connected" }
+        guard await driver.writeMoBuffer(data) else { return "failed to write MO buffer" }
+        guard let r = await driver.sbdix(), r.moSuccess else { return "SBDIX failed" }
+        try? await creditTracker.recordMo(moMsn: r.moMsn)
+        return ""
     }
 
     /// credential_push and credential_revoke: the Hub's provider credentials into the store.

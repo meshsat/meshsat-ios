@@ -27,7 +27,13 @@ extension GatewayController {
         var sent = 0
         if let disp = dispatcher {
             sent += await disp.drainNow(channelId: "hub_0", reason: "background sync")
-            if await driver.state == .connected { sent += await disp.drainNow(channelId: "iridium_0", reason: "background sync") }
+            if await driver.state == .connected {
+                sent += await disp.drainNow(channelId: "iridium_0", reason: "background sync")
+            } else if imt.parked, imt.state == .ready {
+                // The node's 9704 carries iridium_0 (MESHSAT-1631): its worker runs while parked.
+                disp.startWorker("iridium_0")
+                sent += await disp.drainNow(channelId: "iridium_0", reason: "background sync")
+            }
         }
         if let fix = location.phoneLocation.value { await publishPositionToHub(fix) }
         if let fetcher = tleFetcher, await fetcher.isCacheStale() { _ = await fetcher.refreshFromNetwork() }
