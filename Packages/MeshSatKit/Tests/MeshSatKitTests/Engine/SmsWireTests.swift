@@ -25,7 +25,7 @@ final class SmsWireTests: XCTestCase {
         XCTAssertTrue(e.compressed)
         XCTAssertFalse(e.encrypted)
         let bytes = Base64Std.decode(e.body) ?? []
-        XCTAssertEqual(bytes.first, ProtocolVersion.protoVersion1)
+        XCTAssertEqual(Array(bytes.prefix(3)), [SmsWireV2.version, SmsWireV2.modeClear, SmsWireV2.codecSmaz2])
         let d = SmsWire.decode(e.body)
         XCTAssertEqual(d, SmsWire.Decoded(text: text, rawText: e.body, wasEncrypted: false, wasCompressed: true))
         // No gain: sent as typed.
@@ -42,13 +42,11 @@ final class SmsWireTests: XCTestCase {
         XCTAssertEqual(
             SmsWire.decode(e.body, keys: ["", "deadbeef", key]),
             SmsWire.Decoded(text: text, rawText: e.body, wasEncrypted: true, wasCompressed: true))
-        // The wrong key: not decrypted, and never the text. What is shown is the body as received
-        // or, when the ciphertext happens to read as printable smaz2, a misread of it: Android's
-        // SmsReceiver does the same (the second symptom on MESHSAT-1343), so the outcome is
-        // pinned loosely until both apps change together.
+        // The wrong key: not decrypted, and shown exactly as it came. Under version 1 the ciphertext
+        // could read as printable smaz2 and show a misread (the second symptom on MESHSAT-1343);
+        // version 2 keeps a frame no key opens. [r40 review R40-R1]
         let wrongKey = SmsWire.decode(e.body, keys: [AesGcmCrypto.generateKey()])
-        XCTAssertFalse(wrongKey.wasEncrypted)
-        XCTAssertNotEqual(wrongKey.text, text)
+        XCTAssertEqual(wrongKey, SmsWire.Decoded(text: e.body, rawText: "", wasEncrypted: false, wasCompressed: false))
         // Auto-decrypt off: as received.
         XCTAssertEqual(SmsWire.decode(e.body, keys: [key], autoDecrypt: false).wasEncrypted, false)
         // Encrypted only. Plain ASCII is its own smaz2 encoding (bytes 9 to 127 are literals), so the
@@ -89,9 +87,9 @@ final class SmsWireTests: XCTestCase {
     func testMsvqscTakesTheEncoderAndNeedsTheCodebook() {
         let e = SmsWire.encode("go north", msvqscEncoder: FakeEncoder(), msvqscStages: 2)
         XCTAssertTrue(e.compressed)
-        let bytes = ProtocolVersion.stripVersionByte(Base64Std.decode(e.body) ?? []).data
-        XCTAssertTrue(MsvqscWire.looksLikeMsvqsc(bytes))
-        XCTAssertEqual(bytes, MsvqscWire.pack([5, 5]))
+        let bytes = Base64Std.decode(e.body) ?? []
+        XCTAssertEqual(bytes, [SmsWireV2.version, SmsWireV2.modeClear, SmsWireV2.codecMsvqsc] + MsvqscWire.pack([5, 5]))
+        XCTAssertEqual(SmsWire.decode(e.body, codebook: nil).text, e.body, "no codebook: kept as it came")
         // smaz2 wins when it gains, as on Android; the encoder is not asked.
         let both = SmsWire.encode("this is a test of the message", smaz2: true, msvqscEncoder: FakeEncoder())
         XCTAssertEqual(SmsWire.decode(both.body).text, "this is a test of the message")
@@ -118,8 +116,8 @@ final class SmsWireTests: XCTestCase {
         XCTAssertFalse(SmsWire.isPrintable("x\u{FFFD}"), "broken UTF-8")
     }
 
-    /// Android's SmsSmaz2TextTest cases, through the iOS receive path: compressed Greek, mixed and
-    /// English text reads back as sent; what decodes to control bytes or broken UTF-8 is not taken
+    /// Android's SmsSmaz2TextTest cases, through the iOS receive path for version 1: compressed
+    /// Greek, mixed and English text reads back as sent; what decodes to control bytes or broken UTF-8 is not taken
     /// as compressed and is shown as it came. [MESHSAT-1628]
     func testACompressedSmsWithGreekOrEmojiReadsBackAsSent() {
         for s in [

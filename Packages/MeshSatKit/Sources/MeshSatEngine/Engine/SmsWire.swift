@@ -3,8 +3,11 @@
 // hands the same text to the Messages composer. Both ends of a kit conversation must agree
 // byte for byte, so the steps are the Kotlin's:
 //
-//   send:    text -> [smaz2 | MSVQ-SC] -> [AES-256-GCM] -> version byte -> base64
-//   receive: base64 -> version byte off -> [decrypt] -> smaz2 if printable, else MSVQ-SC -> text
+//   send:    text -> frame (codec byte | smaz2 / MSVQ-SC / text) -> [AES-256-GCM] -> 0x02 mode -> base64
+//   receive: base64 -> v2: [decrypt] -> the codec the frame names -> text
+//                   -> v1: version byte off -> [decrypt] -> smaz2 if it round trips, else MSVQ-SC
+//
+// Version 2 (SmsWireV2, r40 review R40-R1) is what this app sends; version 1 is still read.
 import Foundation
 import MeshSatMsvqsc
 import MeshSatWire
@@ -22,36 +25,22 @@ public enum SmsWire {
         }
     }
 
-    /// SmsSender.send's steps 0 to 4. `smaz2` and `msvqscEncoder` are exclusive as on Android:
-    /// smaz2 first, then MSVQ-SC only when smaz2 did nothing; a compressor that gains nothing is
-    /// skipped; an MSVQ-SC encoder that fails leaves the text as it is.
+    /// SmsSender.send's steps, the app SMS wire v2. `smaz2` and `msvqscEncoder` are exclusive as
+    /// on Android: smaz2 first, then MSVQ-SC only when smaz2 did nothing; a compressor that gains
+    /// nothing is skipped; an MSVQ-SC encoder that fails leaves the text as it is. A plain SMS (no
+    /// key, nothing compressed) goes as typed.
     public static func encode(
         _ text: String, encryptionKey: String? = nil, smaz2: Bool = false, msvqscEncoder: (any MsvqscEncoding)? = nil, msvqscStages: Int = 3
     ) -> Encoded {
-        var payload = Array(text.utf8)
-        var compressed = false
-        if smaz2 {
-            let packed = Smaz2.compress(text)
-            if packed.count < payload.count {
-                payload = packed
-                compressed = true
-            }
+        let frame = SmsWireV2.frame(text, smaz2: smaz2, msvqsc: msvqscEncoder.map { enc in { enc.encode(text, maxStages: msvqscStages) } })
+        let compressed = frame[0] != SmsWireV2.codecText
+        if let key = encryptionKey, !key.isEmpty,
+            let sealed = try? SmsWireV2.wire(frame, seal: { try AesGcmCrypto.encrypt($0, hexKey: key) })
+        {
+            return Encoded(body: Base64Std.encode(sealed), compressed: compressed, encrypted: true)
         }
-        if let encoder = msvqscEncoder, !compressed, let wire = encoder.encode(text, maxStages: msvqscStages) {
-            payload = wire
-            compressed = true
-        }
-        let key = (encryptionKey ?? "").isEmpty ? nil : encryptionKey
-        var encrypted = false
-        if let key {
-            if let sealed = try? AesGcmCrypto.encrypt(payload, hexKey: key) {
-                payload = sealed
-                encrypted = true
-            }
-        }
-        guard compressed || encrypted else { return Encoded(body: text, compressed: false, encrypted: false) }
-        payload = ProtocolVersion.prependVersionByte(payload)
-        return Encoded(body: Base64Std.encode(payload), compressed: compressed, encrypted: encrypted)
+        guard compressed else { return Encoded(body: text, compressed: false, encrypted: false) }
+        return Encoded(body: Base64Std.encode(SmsWireV2.wire(frame)), compressed: true, encrypted: false)
     }
 
     public struct Decoded: Sendable, Equatable {
@@ -75,16 +64,31 @@ public enum SmsWire {
         guard let rawBytes = Base64Std.decode(trimmed), rawBytes.count >= 2 else {
             return Decoded(text: text, rawText: "", wasEncrypted: false, wasCompressed: false)
         }
+        let usable = autoDecrypt ? keys.filter { !$0.isEmpty } : []
+        // The app SMS wire v2: the frame names its codec, so nothing is guessed. A frame whose mode
+        // or codec this app does not read, or that no key opens, is shown as it came, unless the
+        // version 1 rule below opens it with a key: an old sender's random nonce can start 0x02.
+        let v2 = SmsWireV2.read(
+            rawBytes,
+            open: { sealed in usable.lazy.compactMap { try? AesGcmCrypto.decrypt(sealed, hexKey: $0) }.first },
+            msvqsc: codebook.map { cb in { try? cb.decode($0) } })
+        if case .text(let clear, let encrypted, let codec) = v2 {
+            return Decoded(text: clear, rawText: text, wasEncrypted: encrypted, wasCompressed: codec != SmsWireV2.codecText)
+        }
+        // Version 1 or unversioned.
         var payload = ProtocolVersion.stripVersionByte(rawBytes).data
         var wasEncrypted = false
         if autoDecrypt, AesGcmCrypto.looksEncrypted(trimmed) {
-            for key in keys where !key.isEmpty {
+            for key in usable {
                 if let clear = try? AesGcmCrypto.decrypt(payload, hexKey: key) {
                     payload = clear
                     wasEncrypted = true
                     break
                 }
             }
+        }
+        if case .kept(let encrypted) = v2, !wasEncrypted {
+            return Decoded(text: text, rawText: "", wasEncrypted: encrypted, wasCompressed: false)
         }
         if wasEncrypted || payload != rawBytes {
             // Compressed only if compressing the text again gives these very bytes: the senders
