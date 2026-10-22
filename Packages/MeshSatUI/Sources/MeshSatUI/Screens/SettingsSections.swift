@@ -19,18 +19,31 @@ public struct SettingsSatelliteSection: View {
 
     public init() {}
 
+    private var pipeWords: String {
+        if !settings.bool(SettingsKey.iridiumNodePipeEnabled) { return "Off: the node keeps its modem" }
+        if !settings.pipePresent { return "No MeshSat node connected" }
+        if settings.pipeOwner == .node { return "The node is using its modem" }
+        return "Waiting for the node"
+    }
+
     private var statusText: String {
-        let nodePipe = settings.bool(SettingsKey.iridiumNodePipeEnabled)
+        // The node's 9704 (MESHSAT-1624), in Android's words.
+        if settings.nodeCarries9704 {
+            switch settings.imtState {
+            case .ready: return "Connected (Signal: \(settings.imtSignal)/5)"
+            case .initializing: return "Bringing the 9704 up..."
+            case .disconnected: return pipeWords
+            default: return "Checking the modem..."
+            }
+        }
         switch model.modemState {
         case .connected: return "Connected (Signal: \(model.modemSignal)/5)"
         case .connecting: return "Checking the modem..."
-        case .disconnected:
-            if !nodePipe { return "Off: the node keeps its modem" }
-            if !settings.pipePresent { return "No MeshSat node connected" }
-            if settings.pipeOwner == .node { return "The node is using its modem" }
-            return "Waiting for the node"
+        case .disconnected: return pipeWords
         }
     }
+
+    private var connected: Bool { settings.nodeCarries9704 ? settings.imtState == .ready : model.modemState == .connected }
 
     public var body: some View {
         ScrollView {
@@ -40,8 +53,8 @@ public struct SettingsSatelliteSection: View {
             }
             VStack(spacing: MSSpace.screen) {
                 SectionCard("Satellite modem on the node") {
-                    ConnectionStatusRow(
-                        label: "Status", connected: model.modemState == .connected, statusText: statusText, color: MSColors.iridium)
+                    ConnectionStatusRow(label: "Status", connected: connected, statusText: statusText, color: MSColors.iridium)
+                    NodeModemRows()
                     SettingRow("Use the node's modem") {
                         MSSwitch(isOn: settings.binding(SettingsKey.iridiumNodePipeEnabled), label: "Use the node's modem")
                     }
@@ -59,7 +72,7 @@ public struct SettingsSatelliteSection: View {
                         CheckMailboxButton()
                     } else if !settings.pipePresent {
                         Text(
-                            "The RockBLOCK 9603 is reached through your MeshSat node. "
+                            "The RockBLOCK 9603 or 9704 is reached through your MeshSat node. "
                                 + "Connect the node under Your MeshSat node; its modem appears here."
                         )
                         .msText(.bodySmall, color: MSColors.textMuted)
@@ -80,7 +93,7 @@ public struct SettingsSatelliteSection: View {
                 }
                 Text(
                     "A RockBLOCK 9704 on an HC-05 needs Bluetooth Classic, which iPhones do not have. "
-                        + "MeshSat iOS uses the modem on the node."
+                        + "MeshSat iOS uses the modem on the node, a 9603 or a 9704."
                 )
                 .msText(.bodySmall, color: MSColors.textMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -88,6 +101,83 @@ public struct SettingsSatelliteSection: View {
             .padding(MSSpace.screen)
         }
         .background(MSColors.bg)
+    }
+}
+
+/// The node's modem as SettingsScreen.kt's satellite card shows it (MESHSAT-1507, MESHSAT-1623;
+/// here MESHSAT-1624): which modem the node carries, what the node says, and for a 9704 the kits'
+/// satellite chain and the modem's IMEI. iOS cannot read a key bundle yet, so the kit's iridium
+/// "shared" key is entered here.
+struct NodeModemRows: View {
+    @Environment(GatewayModel.self) private var model
+    @Environment(SettingsModel.self) private var settings
+    @State private var chainKeyInput = ""
+
+    var body: some View {
+        SettingRow("Modem on the node") {
+            ModeChips([("auto", "Auto"), ("9603", "9603"), ("9704", "9704")], selected: settings.string(SettingsKey.nodeModem)) {
+                settings.set(SettingsKey.nodeModem, $0)
+            }
+        }
+        if settings.pipePresent { InfoRow("The node says", nodeSays) }
+        if settings.nodeCarries9704 {
+            // What the 9704 sends, and what this phone tells the Hub, which keeps an encrypted
+            // modem's messages opaque.
+            SettingRow("Satellite chain") {
+                ModeChips(
+                    [
+                        (SatelliteChain.modeUndeclared, "Not set"), (SatelliteChain.modePlain, "Plain"),
+                        (SatelliteChain.modeSealed, "Encrypted"),
+                    ],
+                    selected: settings.string(SettingsKey.satelliteChain)
+                ) { settings.set(SettingsKey.satelliteChain, $0) }
+            }
+            if settings.string(SettingsKey.satelliteChain) == SatelliteChain.modeSealed {
+                Text(
+                    "Texts go out as the kits send them: compressed and encrypted with the kit's iridium \"shared\" key, "
+                        + "entered below. Without that key nothing is sent."
+                )
+                .msText(.bodySmall, color: MSColors.textMuted)
+                chainKeyRows
+            }
+            if settings.imtState == .ready {
+                if !settings.imtInfo.imei.isEmpty { InfoRow("IMEI", settings.imtInfo.imei) }
+                if !settings.imtInfo.serial.isEmpty { InfoRow("Serial", settings.imtInfo.serial) }
+            }
+        }
+    }
+
+    private var nodeSays: String {
+        guard let flags = settings.pipeStatus?.flags else { return "nothing yet" }
+        return flags.contains(.modemIsJspr) ? "RockBLOCK 9704 (JSPR)" : "RockBLOCK 9603 (AT)"
+    }
+
+    @ViewBuilder private var chainKeyRows: some View {
+        InfoRow("Kit key (iridium \"shared\")", settings.satelliteChainKeySet ? "Stored" : "Not stored")
+        MSOutlinedTextField(
+            text: $chainKeyInput, label: "The kit's iridium shared key (64 hex)", secure: true, focusedBorder: MSColors.teal,
+            keyboard: .asciiCapable)
+        HStack(spacing: 8) {
+            MSFilledButton("Paste", container: MSColors.surface, labelColor: MSColors.offWhite) {
+                chainKeyInput = UIPasteboard.general.string ?? ""
+            }
+            MSFilledButton("Save", container: MSColors.teal) {
+                Task {
+                    if await settings.saveSatelliteChainKey(chainKeyInput) {
+                        chainKeyInput = ""
+                        model.showToast("Kit key saved")
+                    } else {
+                        model.showToast("Invalid key: 64 hex chars required")
+                    }
+                }
+            }
+            if settings.satelliteChainKeySet {
+                MSFilledButton("Remove", container: MSColors.surface, labelColor: MSColors.offWhite) {
+                    Task { await settings.removeSatelliteChainKey() }
+                }
+            }
+        }
+        .task { await settings.refreshSatelliteChainKey() }
     }
 }
 

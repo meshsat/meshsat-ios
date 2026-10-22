@@ -8,6 +8,7 @@ import MeshSatHub
 import MeshSatMeshtastic
 import MeshSatPlatform
 import MeshSatStore
+import MeshSatWire
 import Observation
 import SwiftUI
 
@@ -25,6 +26,14 @@ public final class SettingsModel {
     /// The connected node serves STATS (contract v2, MESHSAT-1378), and its last value.
     public private(set) var pipeHasStats = false
     public private(set) var nodeStats: IridiumPipeContract.Stats?
+    /// The node's whole STATUS, for its flags: bit 4 says it carries a 9704 (MESHSAT-1507).
+    public private(set) var pipeStatus: IridiumPipeContract.Status?
+    /// The node's RockBLOCK 9704 (MESHSAT-1624): its state, what it reported, its signal.
+    public private(set) var imtState: Iridium9704Driver.State = .disconnected
+    public private(set) var imtInfo = Iridium9704Driver.ModemInfo()
+    public private(set) var imtSignal = 0
+    /// A key is stored for the kits' encrypted satellite chain (the conversation key of "shared").
+    public private(set) var satelliteChainKeySet = false
     private var tasks: [Task<Void, Never>] = []
     private var hubTasks: [Task<Void, Never>] = []
 
@@ -48,18 +57,34 @@ public final class SettingsModel {
                     self?.modemInfo = s == .connected ? info : IridiumATDriver.ModemInfo()
                 }
             })
+        let imtDriver = gateway.imtDriver
+        tasks.append(
+            Task { [weak self] in
+                for await s in imtDriver.stateChanges.subscribe() {
+                    let info = await imtDriver.modemInfo
+                    self?.imtState = s
+                    self?.imtInfo = info
+                }
+            })
+        tasks.append(
+            Task { [weak self] in
+                for await bars in imtDriver.signalReadings.subscribe() { self?.imtSignal = bars }
+            })
         let central = gateway.central
         tasks.append(
             Task { [weak self] in
                 var ownerTask: Task<Void, Never>?
                 var statsTask: Task<Void, Never>?
+                var statusTask: Task<Void, Never>?
                 for await pipe in central.iridiumPipe.subscribe() {
                     ownerTask?.cancel()
                     statsTask?.cancel()
+                    statusTask?.cancel()
                     self?.pipePresent = pipe != nil
                     self?.pipeOwner = nil
                     self?.pipeHasStats = pipe?.hasStats ?? false
                     self?.nodeStats = nil
+                    self?.pipeStatus = nil
                     guard let pipe else { continue }
                     let stream = pipe.owner.subscribe()
                     ownerTask = Task { [weak self] in
@@ -68,6 +93,10 @@ public final class SettingsModel {
                     let stats = pipe.stats.subscribe()
                     statsTask = Task { [weak self] in
                         for await s in stats { self?.nodeStats = s }
+                    }
+                    let status = pipe.status.subscribe()
+                    statusTask = Task { [weak self] in
+                        for await s in status { self?.pipeStatus = s }
                     }
                 }
             })
@@ -109,7 +138,7 @@ public final class SettingsModel {
     static let stringKeys: [Setting<String>] = [
         SettingsKey.meshsatPiPhone, SettingsKey.msvqscStages, SettingsKey.deadmanTimeoutMin, SettingsKey.hubUrl, SettingsKey.hubBridgeId,
         SettingsKey.hubCallsign, SettingsKey.hubUsername, SettingsKey.hubHealthInterval, SettingsKey.hubRelayTarget,
-        SettingsKey.hubRelayUrl,
+        SettingsKey.hubRelayUrl, SettingsKey.nodeModem, SettingsKey.satelliteChain,
     ]
     static let boolKeys: [Setting<Bool>] = [
         SettingsKey.encryptionEnabled, SettingsKey.autoDecryptSms, SettingsKey.iridiumNodePipeEnabled, SettingsKey.deadmanEnabled,
@@ -153,4 +182,37 @@ public final class SettingsModel {
     public func provisionFromQr(_ url: String) { gateway.provisionClaim.fromQr(url) }
     /// After the Hub settings were typed by hand: the client starts again on them.
     public func restartHub() { Task { await gateway.restartHubReporter() } }
+
+    // MARK: The node's 9704 and the kits' satellite chain (MESHSAT-1624)
+
+    /// The node carries a 9704: its STATUS flag, or the "Modem on the node" setting.
+    public var nodeCarries9704: Bool {
+        GatewayController.nodeCarries9704(setting: string(SettingsKey.nodeModem), status: pipeStatus)
+    }
+
+    public func refreshSatelliteChainKey() async {
+        let key = try? await gateway.db.conversationKeys.getBySender(SatelliteChain.keyAddress)
+        satelliteChainKeySet = key != nil
+    }
+
+    /// The kit's iridium "shared" key, kept as the conversation key of "shared", where the chain
+    /// reads it: Android imports it with the kit's key bundle, which iOS cannot read yet. False
+    /// for anything but 64 hex characters, or a key that could not be stored.
+    public func saveSatelliteChainKey(_ hex: String) async -> Bool {
+        let key = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key.utf8.count == 64, Hex.decode(key) != nil else { return false }
+        do {
+            try await gateway.db.conversationKeys.upsert(
+                ConversationKey(sender: SatelliteChain.keyAddress, hexKey: key, label: "kit-iridium-shared"))
+        } catch {
+            return false
+        }
+        satelliteChainKeySet = true
+        return true
+    }
+
+    public func removeSatelliteChainKey() async {
+        try? await gateway.db.conversationKeys.deleteBySender(SatelliteChain.keyAddress)
+        await refreshSatelliteChainKey()
+    }
 }

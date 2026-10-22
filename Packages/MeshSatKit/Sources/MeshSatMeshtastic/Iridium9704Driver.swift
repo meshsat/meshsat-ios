@@ -641,6 +641,19 @@ public actor Iridium9704Driver {
 
 // MARK: Pure helpers with tests
 
+extension Iridium9704Driver.State {
+    /// The state as the Hub's birth reads it (Android's HubReporter.imtStatus): ready is the one
+    /// state the modem sends and receives in, so it is "online"; disconnected is "offline", every
+    /// state on the way up "binding". A ready modem read "offline" on Android until MESHSAT-1623.
+    public var hubStatus: String {
+        switch self {
+        case .ready: "online"
+        case .disconnected: "offline"
+        default: "binding"
+        }
+    }
+}
+
 extension Iridium9704Driver {
     /// One JSPR segment's data field: standard base64, no line breaks.
     public static func jsprSegmentData(_ segment: [UInt8]) -> String { Base64Std.encode(segment) }

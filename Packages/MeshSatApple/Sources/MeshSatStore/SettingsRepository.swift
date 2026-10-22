@@ -4,6 +4,7 @@
 // what it shows, SwiftUI can also bind with @AppStorage on the same suite.
 import Foundation
 import MeshSatEngine
+import MeshSatHub
 import MeshSatNet
 
 public final class SettingsRepository: @unchecked Sendable {
@@ -97,4 +98,27 @@ public final class SettingsRepository: @unchecked Sendable {
     /// The people an SOS goes to by SMS (MESHSAT-1249).
     public var sosContacts: [EmergencyContact] { EmergencyContact.decode(self.get(SettingsKey.sosContacts)) }
     public func setSosContacts(_ contacts: [EmergencyContact]) { set(SettingsKey.sosContacts, EmergencyContact.encode(contacts)) }
+}
+
+/// The Hub reporter's birth stamps in the settings (Android's SettingsBirthStampStore,
+/// MESHSAT-1623; here MESHSAT-1624): a stored value that is not a timestamp is an error, never "no
+/// stamp". UserDefaults reports no failed write, so a stamp is read back after it is written and a
+/// mismatch is the failure: a stamp that was not stored never goes out in a birth.
+public struct SettingsBirthStampStore: BirthStampStore {
+    private let settings: SettingsRepository
+
+    public init(_ settings: SettingsRepository) { self.settings = settings }
+
+    public func lastBirthStamp() throws -> BirthStamp? {
+        let stored = settings.get(SettingsKey.hubLastBirthStamp)
+        if stored.isEmpty { return nil }
+        return try BirthStamper.parse(stored)
+    }
+
+    public func saveBirthStamp(_ stamp: BirthStamp) throws {
+        let text = BirthStamper.format(stamp)
+        settings.set(SettingsKey.hubLastBirthStamp, text)
+        let back = settings.get(SettingsKey.hubLastBirthStamp)
+        guard back == text else { throw BirthStampError("the birth stamp read back as \"\(back.prefix(40))\", not \"\(text)\"") }
+    }
 }

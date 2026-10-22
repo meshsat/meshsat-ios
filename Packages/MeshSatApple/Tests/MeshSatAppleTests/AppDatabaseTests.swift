@@ -3,6 +3,7 @@
 import Foundation
 import GRDB
 import MeshSatEngine
+import MeshSatHub
 import MeshSatStore
 import XCTest
 
@@ -283,5 +284,21 @@ final class AppDatabaseTests: XCTestCase {
         repo.setCompressMode(channel: "sms", "msvqsc")
         XCTAssertEqual(repo.compressMode(channel: "sms"), "msvqsc")
         XCTAssertEqual(repo.compressMode(channel: "tak"), "off")
+    }
+
+    /// The Hub birth stamps' floor in the settings (MESHSAT-1624): none stored is no floor, a
+    /// stored stamp reads back exactly, and a stored value that is not a timestamp is an error.
+    func testSettingsBirthStampStore() throws {
+        let suite = "net.meshsat.ios.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsBirthStampStore(SettingsRepository(defaults: defaults, secure: MemoryKeyValueStore()))
+        XCTAssertNil(try store.lastBirthStamp())
+        let stamp = BirthStamp(micros: 1_792_587_600_000_001)
+        try store.saveBirthStamp(stamp)
+        XCTAssertEqual(defaults.string(forKey: "hub_last_birth_stamp"), "2026-10-21T13:00:00.000001Z", "stored under Android's key")
+        XCTAssertEqual(try store.lastBirthStamp(), stamp)
+        defaults.set("not a time", forKey: "hub_last_birth_stamp")
+        XCTAssertThrowsError(try store.lastBirthStamp())
     }
 }

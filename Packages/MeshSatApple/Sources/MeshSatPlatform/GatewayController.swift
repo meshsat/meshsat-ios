@@ -3,8 +3,8 @@
 // creates them. Android's foreground service is iOS's app process kept alive by the
 // Bluetooth background mode and state restoration (BackgroundCoordinator, later).
 //
-// Built here: the node link (MeshtasticCentral), the node's Iridium pipe and the 9603 driver on
-// it, the InterfaceManager, the Dispatcher over the delivery ledger, the mesh receive path into
+// Built here: the node link (MeshtasticCentral), the node's Iridium pipe and the 9603 or 9704
+// driver on it (the 9704 in GatewayController+Imt), the InterfaceManager, the Dispatcher over the delivery ledger, the mesh receive path into
 // the store, MT messages, signal history, the compose paths for mesh and satellite. Not yet:
 // the Hub, Reticulum, APRS, TAK, MSVQ-SC, the SMS composer lane, SOS; each keeps its Android
 // shape when it lands.
@@ -60,6 +60,8 @@ public final class GatewayController: @unchecked Sendable {
     public let db: AppDatabase
     public let central: MeshtasticCentral
     public let driver: IridiumATDriver
+    /// The node's RockBLOCK 9704 (MESHSAT-1624): GatewayController+Imt.
+    let imt: ImtParts
     public let interfaceManager: InterfaceManager
     public let registry = ChannelRegistry()
     public let sequenceTracker = SequenceTracker()
@@ -214,6 +216,7 @@ public final class GatewayController: @unchecked Sendable {
         self.central = central
         self.clock = clock
         self.driver = IridiumATDriver(clock: clock)
+        self.imt = ImtParts(clock: clock)
         self.interfaceManager = InterfaceManager(clock: clock)
         self.creditTracker = CreditTracker(store: db.iridiumCredits)
         self.provisionClaim = ProvisionClaim(http: UrlSessionHttpGetter(), applier: provisionApplier)
@@ -248,6 +251,7 @@ public final class GatewayController: @unchecked Sendable {
             Task { [self] in
                 await driver.setMtSink { [self] bytes in await storeIridiumMt(String(decoding: bytes, as: UTF8.self)) }
             })
+        initImt()
         initTelemetry()
         initInterfaceManager()
         initDispatcher()
@@ -298,6 +302,7 @@ public final class GatewayController: @unchecked Sendable {
         lock.unlock()
         for task in t { task.cancel() }
         Task { await driver.detach() }
+        Task { await imt.driver.detach() }
         central.disconnect()
     }
 
@@ -402,6 +407,9 @@ public final class GatewayController: @unchecked Sendable {
             return nil
         }
         if interfaceId == "iridium_0" {
+            // The node carries a 9704: that is the satellite now, and iridium_0's messages go out
+            // over IMT (MESHSAT-1507). The 340-byte check below is the 9603's.
+            if imt.parked { return await sendVia9704(payload: payload, textPreview: textPreview, deliveryId: deliveryId) }
             guard await driver.state == .connected else { return "iridium not connected" }
             // The modem's pause after a session found no network is not this message's failure:
             // it waits without using up a try (MESHSAT-1243).
@@ -482,10 +490,11 @@ public final class GatewayController: @unchecked Sendable {
         central.connect(address: addr)
     }
 
-    /// The RockBLOCK 9603 is reached through the MeshSat node's BLE pipe (MESHSAT-1236). While a
-    /// node offers it, the setting allows it and the interface is wanted, the phone subscribes,
-    /// which asks the node for the modem, and runs the 9603 driver whenever STATUS says the
-    /// phone owns it. Otherwise it lets go, so the node's own logic can use the modem.
+    /// The RockBLOCK 9603 or 9704 is reached through the MeshSat node's BLE pipe (MESHSAT-1236,
+    /// MESHSAT-1507). While a node offers it, the setting allows it and the interface is wanted,
+    /// the phone subscribes, which asks the node for the modem, and runs the matching driver
+    /// whenever STATUS says the phone owns it. Otherwise it lets go, so the node's own logic can
+    /// use the modem.
     private func observeIridiumPipe() {
         // A pipe that stops taking writes never mended itself (MESHSAT-1270): drop the link and
         // let the node reconnect, which re-runs the claim and the attach below.
@@ -511,6 +520,7 @@ public final class GatewayController: @unchecked Sendable {
                 for await pipe in central.iridiumPipe.subscribe() {
                     session?.cancel()
                     await driver.detach()
+                    await imt.driver.detach()
                     guard let pipe else { continue }
                     session = Task { [self] in await runPipeSession(pipe) }
                 }
@@ -518,8 +528,8 @@ public final class GatewayController: @unchecked Sendable {
             })
     }
 
-    /// One pipe's life: claim it until the phone holds the modem, attach the driver while it
-    /// does, let go when the setting or the manager says so.
+    /// One pipe's life: claim it until the phone holds the modem, attach the 9603 or 9704 driver
+    /// while it does, let go when the setting or the manager says so.
     private func runPipeSession(_ pipe: IridiumBlePipe) async {
         await followNodeHealth(pipe)
         let enabled = settings.get(SettingsKey.iridiumNodePipeEnabled)
@@ -548,17 +558,16 @@ public final class GatewayController: @unchecked Sendable {
             group.addTask { [self] in
                 for await owner in pipe.owner.subscribe() {
                     if Task.isCancelled { break }
-                    if owner == .phone {
-                        if await driver.state == .disconnected { await driver.attach(pipe) }
-                    } else {
-                        await driver.detach()
-                    }
+                    await takeModem(pipe, owner: owner)
                 }
             }
+            group.addTask { [self] in await followNodeModemSetting(pipe) }
+            group.addTask { [self] in await retry9704Init(pipe) }
             // The setting or the manager can withdraw the modem mid-session.
             group.addTask { [self] in
                 for await wanted in iridiumWanted.subscribe() where !wanted {
                     await driver.detach()
+                    await imt.driver.detach()
                     await pipe.release()
                     break
                 }

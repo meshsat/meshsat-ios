@@ -5,6 +5,7 @@ import Foundation
 import MeshSatEngine
 import MeshSatHub
 import MeshSatMQTT
+import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatStore
 import MeshSatWire
@@ -41,7 +42,15 @@ extension GatewayController {
             clientCertPem: settings.get(SettingsKey.hubClientCertPem),
             clientKeyPem: settings.hubClientKeyPem, caCertPem: settings.get(SettingsKey.hubCaCertPem),
             topicPrefix: settings.get(SettingsKey.hubTopicPrefix))
-        let reporter = HubReporter(config: config, host: HubHost(gateway: self), makeSession: Self.makeHubSession, clock: clock)
+        // Births are stamped in order across restarts (HeMB-NG S3-2), the floor kept in the settings.
+        let reporter = HubReporter(
+            config: config, host: HubHost(gateway: self), makeSession: Self.makeHubSession, clock: clock,
+            birthStamps: SettingsBirthStampStore(settings))
+        // What the birth declares for the 9704's chain (MESHSAT-1623). Android reads the setting
+        // through a watcher that keeps the last value when a read fails and declares nothing until
+        // the first read; a UserDefaults read cannot fail, so it is read when the birth is built.
+        let store = settings
+        reporter.setImtEgressFormat { SatelliteChain.egressFormat(store.get(SettingsKey.satelliteChain)) }
         reporter.setCommandCallback { [self] cmd in Task { await handleHubCommand(cmd) } }
         // TAK CoT from the Hub: the message list and the map (GatewayController+Tak).
         reporter.setTakCotCallback { [self] xml in Task { await onTakCotInbound(xml) } }
@@ -308,20 +317,27 @@ final class HubHost: HubReporterHost, @unchecked Sendable {
         let imei = gateway.lastModemImei
         out.append(
             InterfaceInfo(name: "iridium_spp_0", type: "iridium_sbd", status: status(states["iridium_0"]?.state ?? .offline), imei: imei))
+        // The node's 9704, as Android's iridium_imt_0: its IMEI and state; the reporter adds what its
+        // chain declares (MESHSAT-1624).
+        let imt = gateway.imt
+        out.append(InterfaceInfo(name: "iridium_imt_0", type: HubProtocol.deviceIridiumImt, status: imt.state.hubStatus, imei: imt.imei))
         return out
     }
 
     func interfaceHealth() -> [InterfaceHealth] {
         let states = gateway.interfaceManager.states.value
+        let imt = gateway.imt
         return [
             InterfaceHealth(name: "ble_mesh_0", status: states["mesh_0"]?.state == .online ? "online" : "offline"),
             InterfaceHealth(
                 name: "iridium_spp_0", status: states["iridium_0"]?.state == .online ? "online" : "offline",
                 signalBars: gateway.lastModemSignal),
+            // Health speaks only online and offline, as for the other links.
+            InterfaceHealth(name: "iridium_imt_0", status: imt.state == .ready ? "online" : "offline", signalBars: imt.signal),
         ]
     }
 
-    func capabilities() -> [String] { ["ios", "gps", "battery", "ble_mesh", "iridium_sbd"] }
+    func capabilities() -> [String] { ["ios", "gps", "battery", "ble_mesh", "iridium_sbd", "iridium_imt"] }
 
     func location() -> HubLocation? {
         guard let fix = gateway.location.phoneLocation.value else { return nil }

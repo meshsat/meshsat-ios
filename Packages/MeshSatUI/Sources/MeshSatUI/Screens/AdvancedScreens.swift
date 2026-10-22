@@ -66,7 +66,7 @@ public struct AboutScreen: View {
                     InfoSection("Transports") {
                         InfoItem("Meshtastic", "BLE (Bluetooth Low Energy)")
                         InfoItem("Iridium 9603N", "The MeshSat node's BLE pipe")
-                        InfoItem("RockBLOCK 9704", "Not on iPhone: needs Bluetooth Classic")
+                        InfoItem("RockBLOCK 9704", "The MeshSat node's BLE pipe (not on an HC-05)")
                         InfoItem("Cellular SMS", "Through the Messages app")
                     }
                     InfoSection("Encryption") {

@@ -447,6 +447,15 @@ final class Iridium9704DriverTests: XCTestCase {
         XCTAssertEqual(Iridium9704Driver.spacedJson("{\"q\":\"say \\\"x,y\\\"\",\"n\":1}"), "{\"q\": \"say \\\"x,y\\\"\", \"n\": 1}")
     }
 
+    /// Android's imtStatus (0249d1a): ready is online, disconnected offline, the rest binding.
+    func testTheHubReadsAReadyModemAsOnline() {
+        XCTAssertEqual(Iridium9704Driver.State.ready.hubStatus, "online")
+        XCTAssertEqual(Iridium9704Driver.State.disconnected.hubStatus, "offline")
+        for state in [Iridium9704Driver.State.connecting, .connected, .initializing] {
+            XCTAssertEqual(state.hubStatus, "binding", "\(state)")
+        }
+    }
+
     func testConstantsAndTheMoStatusRule() {
         // The node says it carries a 9704 with STATUS flag bit 4 (IRIDIUM-BLE.md, 8 Oct 2026).
         XCTAssertEqual(IridiumPipeContract.parseStatus([2, 1, 0x14, 3])?.flags, IridiumPipeContract.Flags([.modemAnswers, .modemIsJspr]))
