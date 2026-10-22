@@ -52,18 +52,30 @@ extension GatewayController {
         }
     }
 
-    /// The key the provisioning bundle carries, pinned (never replaced by the HTTPS bootstrap).
-    /// A bad key is the Hub's bug and must not cost the provisioning.
+    /// The directory's context and key (MESHSAT-1643, r40 review R40-R3): another broker, bridge
+    /// id, topic root or tenant starts the directory over, even under the same signing key; the
+    /// bundle's key is pinned, never replaced by the HTTPS bootstrap. A bad key is the Hub's bug and
+    /// must not cost the provisioning: the directory then starts over unpinned.
     func pinDirectoryKey(from bundle: ProvisionImporter.ProvisionBundle) {
-        guard !bundle.dirSignPub.isEmpty else { return }
-        guard let der = Data(base64Encoded: bundle.dirSignPub) else {
-            Self.log.warning("Directory key in the bundle is not base64; not pinned")
-            return
-        }
+        let context = HubDirectoryClient.provisioningContext(
+            mqttUrl: bundle.mqttUrl, bridgeId: bundle.bridgeId, topicPrefix: bundle.topicPrefix, tenant: bundle.tenantId)
+        let client = HubDirectoryClient(store: hubDirectory, http: UrlSessionHttpGetter(followRedirects: false))
         do {
-            try HubDirectoryClient(store: hubDirectory, http: UrlSessionHttpGetter(followRedirects: false)).pinFromBundle(Array(der))
+            var der: [UInt8]?
+            if !bundle.dirSignPub.isEmpty {
+                guard let d = Data(base64Encoded: bundle.dirSignPub) else {
+                    throw HubDirectoryClient.Failure("the directory key in the bundle is not base64")
+                }
+                der = Array(d)
+            }
+            try client.applyProvisioning(context: context, tenant: bundle.tenantId, pkix: der)
         } catch {
             Self.log.warning("Directory key in the bundle not pinned: \(error)")
+            do {
+                try client.applyProvisioning(context: context, tenant: bundle.tenantId, pkix: nil)
+            } catch {
+                Self.log.warning("Directory not reset for the new provisioning: \(error)")
+            }
         }
     }
 }

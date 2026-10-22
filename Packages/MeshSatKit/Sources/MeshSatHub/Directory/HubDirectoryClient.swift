@@ -54,9 +54,10 @@ public final class HubDirectoryStore: @unchecked Sendable {
 /// read it").
 ///
 /// The key: the one in the provisioning bundle (`dir_sign_pub`) is pinned when the bundle is
-/// applied. Only a phone with none pinned takes it once from `GET /api/relay/directory-key` over
-/// HTTPS, with the key hashing to its id; after that only a rotation record signed by the pinned
-/// key moves it. `http` must not follow redirects: any 3xx is refused here.
+/// applied (applyProvisioning, which also sets the context the directory belongs to). Only a phone
+/// with none pinned takes it once from `GET /api/relay/directory-key` over HTTPS, with the key
+/// hashing to its id; after that only a rotation record signed by the pinned key, or a new
+/// provisioning, moves it. `http` must not follow redirects: any 3xx is refused here.
 public struct HubDirectoryClient: Sendable {
     public enum Outcome: Equatable, Sendable {
         case notModified
@@ -93,29 +94,46 @@ public struct HubDirectoryClient: Sendable {
         self.timeoutSeconds = timeoutSeconds
     }
 
-    /// Pin the key a provisioning bundle carries. The bundle came from the Hub over HTTPS with a
-    /// single-use claim, so it outranks a key fetched on its own; a different key than the pinned
-    /// one starts the directory over (a new provisioning can be another tenant).
+    /// A provisioning bundle was applied (r40 review R40-R3). Scanning a provisioning code is a
+    /// deliberate act with a single-use claim over HTTPS, so it sets the context the directory
+    /// belongs to. A new `context` (another broker, bridge id, topic root or tenant) starts the
+    /// directory over even when the signing key is the same, as every tenant of a Hub shares it:
+    /// the held contacts, versions and tenant go, the bundle's key is pinned, or none when the
+    /// bundle has none (the HTTPS bootstrap then fetches the new Hub's once), and only snapshots of
+    /// `tenant` are taken. The same context keeps the directory, and pins the bundle's key when none
+    /// is pinned; a different key in the same context starts over too.
     @discardableResult
-    public func pinFromBundle(_ pkix: [UInt8]) throws -> DirectoryState {
-        _ = try DirectoryEnvelope.p256(pkix)
-        let b64 = Data(pkix).base64EncodedString()
+    public func applyProvisioning(context: String, tenant: String, pkix: [UInt8]?) throws -> DirectoryState {
+        if let pkix { _ = try DirectoryEnvelope.p256(pkix) }
+        let b64 = pkix.map { Data($0).base64EncodedString() }
         return try store.update { s in
-            if s.pinnedKey == b64 {
-                var same = s
-                if same.pinSource == "https" { same.pinSource = "bundle" }
-                return same
+            let sameContext = s.context == context && s.expectedTenant == tenant
+            if sameContext && (b64 == nil || s.pinnedKey == b64) { return s }
+            if sameContext && s.pinnedKey.isEmpty, let b64 {
+                var next = s
+                next.pinnedKey = b64
+                next.pinSource = "bundle"
+                return next
             }
             var fresh = DirectoryState()
-            fresh.pinnedKey = b64
-            fresh.pinSource = "bundle"
+            fresh.context = context
+            fresh.expectedTenant = tenant
+            fresh.pinnedKey = b64 ?? ""
+            fresh.pinSource = b64 == nil ? "" : "bundle"
             return fresh
         }
+    }
+
+    /// The context a provisioning bundle sets: the broker, the bridge id, the topic root and the
+    /// tenant. A change in any of them is another directory (r40 review R40-R3).
+    public static func provisioningContext(mqttUrl: String, bridgeId: String, topicPrefix: String, tenant: String) -> String {
+        [mqttUrl.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), bridgeId, topicPrefix, tenant].joined(separator: "|")
     }
 
     /// Take the Hub's key over HTTPS, only while none is pinned.
     public func bootstrap(hubApiBase: String) async throws {
         if !store.current.pinnedKey.isEmpty { return }
+        let context = store.current.context
         let resp = try await http.get(
             try endpoint(hubApiBase, "/api/relay/directory-key"), headers: headers(), timeoutSeconds: timeoutSeconds)
         guard resp.status == 200 else { throw Failure("GET /api/relay/directory-key answered HTTP \(resp.status)") }
@@ -127,9 +145,10 @@ public struct HubDirectoryClient: Sendable {
         }
         _ = try DirectoryEnvelope.p256(pkix)
         let b64 = Data(pkix).base64EncodedString()
-        // A bundle that landed meanwhile wins: this only fills an empty pin.
+        // A bundle that landed meanwhile wins: this only fills an empty pin, in the context the
+        // fetch started in.
         try store.update { s in
-            guard s.pinnedKey.isEmpty else { return s }
+            guard s.pinnedKey.isEmpty, s.context == context else { return s }
             var next = s
             next.pinnedKey = b64
             next.pinSource = "https"
@@ -142,6 +161,10 @@ public struct HubDirectoryClient: Sendable {
         do {
             try await bootstrap(hubApiBase: hubApiBase)
             let held = store.current
+            if held.pinnedKey.isEmpty { return .failed("no directory key") }
+            // The answer applies only to the context it was asked in: a provisioning that lands
+            // while it is out starts the directory over, and nothing of the old one comes back.
+            let context = held.context
             let path = "/api/relay/directory?since=\(held.version)&key_id=" + RelayTunnel.formEncode(held.keyId)
             var hdrs = headers()
             hdrs["Authorization"] = RelayTunnel.basicAuth(bridgeId, password)
@@ -150,6 +173,7 @@ public struct HubDirectoryClient: Sendable {
             case 304:
                 let t = now()
                 try store.update { s in
+                    guard s.context == context else { return s }
                     var next = s
                     next.checkedAt = t
                     return next
@@ -162,13 +186,14 @@ public struct HubDirectoryClient: Sendable {
                 let t = now()
                 var result: DirectoryApply.Result?
                 try store.update { s in
+                    guard s.context == context else { return s }
                     let r = DirectoryApply.answer(s, answer, now: t)
                     result = r
                     var next = r.state
                     next.checkedAt = t
                     return next
                 }
-                guard let r = result else { return .failed("not applied") }
+                guard let r = result else { return .failed("the provisioning changed while the directory was read; answer dropped") }
                 return r.reason.isEmpty ? .applied(r) : .refused(r)
             default:
                 return .failed("GET /api/relay/directory answered HTTP \(resp.status)")

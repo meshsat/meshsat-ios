@@ -26,8 +26,13 @@ final class FakeDirectoryHttp: HttpGetter, @unchecked Sendable {
         return requests.count
     }
 
+    /// Runs before each answer goes back: a test reprovisions the phone while a read is out.
+    var beforeAnswer: (@Sendable () -> Void)?
+
     func get(_ url: String, headers: [String: String], timeoutSeconds: Double) async throws -> HttpResponse {
-        try take(url, headers)
+        let r = try take(url, headers)
+        beforeAnswer?()
+        return r
     }
 
     // NSLock is not for async code: the lock is held in this synchronous step only.
@@ -329,7 +334,7 @@ final class HubDirectoryTests: XCTestCase {
         let http = FakeDirectoryHttp()
         let client = HubDirectoryClient(store: store, http: http)
         let bundleKey = Array(P256.Signing.PrivateKey().publicKey.derRepresentation)
-        try client.pinFromBundle(bundleKey)
+        try client.applyProvisioning(context: "ctx", tenant: "acme", pkix: bundleKey)
         try await client.bootstrap(hubApiBase: "https://hub.example")
         XCTAssertEqual(http.count, 0, "nothing fetched")
         XCTAssertEqual(store.current.keyId, DirectoryEnvelope.keyId(bundleKey))
@@ -359,27 +364,158 @@ final class HubDirectoryTests: XCTestCase {
         XCTAssertEqual(http.count, 2, "no request over plain http")
     }
 
-    func testTheProvisioningBundleCarriesTheDirectoryKey() throws {
+    func testTheProvisioningBundleCarriesTheDirectoryKeyAndTheTenant() throws {
         let h = try hub()
         let b = try ProvisionImporter.parseBundle(
-            JSONSerialization.data(withJSONObject: ["bid": "phone-1", "dir_sign_pub": str(h, "old_key_pkix")]))
+            JSONSerialization.data(withJSONObject: ["bid": "phone-1", "dir_sign_pub": str(h, "old_key_pkix"), "tenant_id": "acme"]))
         XCTAssertEqual(DirectoryEnvelope.keyId(b64(b.dirSignPub)), str(h, "old_key_id"))
-        XCTAssertEqual(try ProvisionImporter.parseBundle(Data(#"{"bid":"p"}"#.utf8)).dirSignPub, "")
+        XCTAssertEqual(b.tenantId, "acme")
+        let old = try ProvisionImporter.parseBundle(Data(#"{"bid":"p"}"#.utf8))
+        XCTAssertEqual([old.dirSignPub, old.tenantId], ["", ""])
     }
 
-    func testABundleWithAnotherKeyStartsTheDirectoryOverAndTheSameKeyKeepsIt() throws {
+    // ---- the provisioning context (r40 review R40-R3) ----
+
+    private let ctxA = HubDirectoryClient.provisioningContext(
+        mqttUrl: "wss://mqtt-hub.example/mqtt", bridgeId: "phone-1", topicPrefix: "meshsat/acme", tenant: "acme")
+    private let ctxB = HubDirectoryClient.provisioningContext(
+        mqttUrl: "wss://mqtt-hub.example/mqtt", bridgeId: "phone-1", topicPrefix: "meshsat/other", tenant: "other")
+
+    /// The review's probe: reprovisioned to another tenant on the same Hub, same key: the directory starts over.
+    func testAReprovisionToAnotherTenantUnderTheSameKeyStartsOver() throws {
         let h = try hub()
         let store = HubDirectoryStore(url: tempURL())
-        let client = HubDirectoryClient(store: store, http: FakeDirectoryHttp())
-        let held = DirectoryApply.answer(pinned(str(h, "old_key_pkix")), obj(h, "first"), now: 10).state
-        try store.save(held)
-        try client.pinFromBundle(b64(str(h, "old_key_pkix")))
-        XCTAssertEqual(store.current, held)
+        let c = HubDirectoryClient(store: store, http: FakeDirectoryHttp())
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: b64(str(h, "old_key_pkix")))
+        try store.update { DirectoryApply.answer($0, obj(h, "first"), now: 10).state }
+        try store.update { DirectoryApply.answer($0, obj(h, "after_rotation"), now: 11).state }
+        XCTAssertEqual(store.current.tenantId, "acme")
+        XCTAssertEqual(store.current.contacts.count, 3)
+        // The Hub's current key, the same for every tenant of it, in the new tenant's bundle.
+        try c.applyProvisioning(context: ctxB, tenant: "other", pkix: b64(store.current.pinnedKey))
+        XCTAssertEqual(store.current.tenantId, "")
+        XCTAssertTrue(store.current.contacts.isEmpty, "the old tenant's contacts are gone")
+        XCTAssertEqual([store.current.version, store.current.keyVersion], [0, 0])
+        let r = DirectoryApply.answer(store.current, obj(h, "other_tenant"), now: 12)
+        XCTAssertTrue(r.applied, r.reason)
+        XCTAssertEqual(r.state.tenantId, "other")
+        XCTAssertEqual(r.state.contacts.map(\.displayName), ["Nine"])
+    }
+
+    /// Tenant B's snapshot applies whether its version is below, equal to or above what A held.
+    func testTheNewTenantsVersionMayBeLowerEqualOrHigher() throws {
+        let key = P256.Signing.PrivateKey()
+        let pkix = Array(key.publicKey.derRepresentation)
+        for bVersion in [5, 10, 20] {
+            let store = HubDirectoryStore(url: tempURL())
+            let c = HubDirectoryClient(store: store, http: FakeDirectoryHttp())
+            try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: pkix)
+            let a = try seal(key, snap("acme", 10, contacts: [contact("a1", "A one")]))
+            try store.update { DirectoryApply.snapshot($0, a, now: 1).state }
+            XCTAssertEqual(store.current.version, 10)
+            try c.applyProvisioning(context: ctxB, tenant: "other", pkix: pkix)
+            let b = try seal(key, snap("other", bVersion, contacts: [contact("b1", "B one")]))
+            let r = DirectoryApply.snapshot(store.current, b, now: 2)
+            XCTAssertTrue(r.applied, "B at \(bVersion): \(r.reason)")
+            XCTAssertEqual(r.state.contacts.map(\.displayName), ["B one"])
+        }
+    }
+
+    func testReScanningTheSameContextKeepsTheDirectory() throws {
+        let h = try hub()
+        let store = HubDirectoryStore(url: tempURL())
+        let c = HubDirectoryClient(store: store, http: FakeDirectoryHttp())
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: b64(str(h, "old_key_pkix")))
+        try store.update { DirectoryApply.answer($0, obj(h, "first"), now: 10).state }
+        let held = store.current
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: b64(str(h, "old_key_pkix")))
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: nil)
+        XCTAssertEqual(store.current, held, "a bundle without a key keeps it in the same context")
+        // Another key in the same context starts over under it.
         let other = Array(P256.Signing.PrivateKey().publicKey.derRepresentation)
-        try client.pinFromBundle(other)
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: other)
         XCTAssertEqual(store.current.keyId, DirectoryEnvelope.keyId(other))
         XCTAssertEqual(store.current.version, 0)
         XCTAssertTrue(store.current.contacts.isEmpty)
-        XCTAssertThrowsError(try client.pinFromBundle([UInt8](repeating: 1, count: 10)))
+        XCTAssertThrowsError(try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: [UInt8](repeating: 1, count: 10)))
+    }
+
+    func testAnotherHubWithAnotherKeyAndNoKeyInTheBundle() async throws {
+        let h = try hub()
+        let store = HubDirectoryStore(url: tempURL())
+        let http = FakeDirectoryHttp()
+        let c = HubDirectoryClient(store: store, http: http)
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: b64(str(h, "old_key_pkix")))
+        try store.update { DirectoryApply.answer($0, obj(h, "first"), now: 10).state }
+        let otherHub = HubDirectoryClient.provisioningContext(
+            mqttUrl: "wss://mqtt-hub.elsewhere/mqtt", bridgeId: "phone-1", topicPrefix: "meshsat", tenant: "default")
+        try c.applyProvisioning(context: otherHub, tenant: "default", pkix: nil)
+        XCTAssertEqual(store.current.pinnedKey, "")
+        XCTAssertTrue(store.current.contacts.isEmpty)
+        // The bootstrap then fills the pin from the new Hub, once.
+        http.enqueue(keyAnswer(str(h, "old_key_pkix")))
+        try await c.bootstrap(hubApiBase: "https://hub.example")
+        XCTAssertEqual(store.current.pinSource, "https")
+    }
+
+    /// A read that started before the reprovision cannot bring the old tenant back.
+    func testAReplyFromBeforeTheSwitchIsDropped() async throws {
+        let h = try hub()
+        let store = HubDirectoryStore(url: tempURL())
+        let http = FakeDirectoryHttp()
+        let c = HubDirectoryClient(store: store, http: http)
+        let key = b64(str(h, "old_key_pkix"))
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: key)
+        http.enqueue(body(obj(h, "first")))
+        let ctxB = self.ctxB
+        // The phone is reprovisioned while the read is out.
+        http.beforeAnswer = { _ = try? c.applyProvisioning(context: ctxB, tenant: "other", pkix: key) }
+        let o = await c.poll(hubApiBase: "https://hub.example", bridgeId: "phone-1", password: "pw")
+        guard case .failed = o else { return XCTFail("\(o)") }
+        XCTAssertEqual(store.current.context, ctxB)
+        XCTAssertTrue(store.current.contacts.isEmpty)
+        XCTAssertEqual(store.current.tenantId, "")
+    }
+
+    /// A bootstrap that started before the reprovision does not pin the old Hub's key.
+    func testABootstrapFromBeforeTheSwitchPinsNothing() async throws {
+        let h = try hub()
+        let store = HubDirectoryStore(url: tempURL())
+        let http = FakeDirectoryHttp()
+        let c = HubDirectoryClient(store: store, http: http)
+        try c.applyProvisioning(context: ctxA, tenant: "acme", pkix: nil)
+        http.enqueue(keyAnswer(str(h, "old_key_pkix")))
+        let ctxB = self.ctxB
+        http.beforeAnswer = { _ = try? c.applyProvisioning(context: ctxB, tenant: "other", pkix: nil) }
+        let o = await c.poll(hubApiBase: "https://hub.example", bridgeId: "phone-1", password: "pw")
+        guard case .failed = o else { return XCTFail("\(o)") }
+        XCTAssertEqual(store.current.pinnedKey, "")
+        XCTAssertEqual(http.count, 1, "no directory read without a pinned key")
+    }
+
+    func testTheContextSurvivesARestartAndAnOldFileStillLoads() throws {
+        let h = try hub()
+        let url = tempURL()
+        try HubDirectoryClient(store: HubDirectoryStore(url: url), http: FakeDirectoryHttp())
+            .applyProvisioning(context: ctxB, tenant: "other", pkix: b64(str(h, "old_key_pkix")))
+        let again = HubDirectoryStore(url: url).current
+        XCTAssertEqual([again.context, again.expectedTenant], [ctxB, "other"])
+        // A file from before R40-R3 has neither field: it loads with its pin kept.
+        let old = #"{"pinned_key":"\#(str(h, "old_key_pkix"))","pin_source":"bundle","tenant_id":"acme","version":4}"#
+        try Data(old.utf8).write(to: url)
+        let loaded = HubDirectoryStore(url: url).current
+        XCTAssertEqual(loaded.pinnedKey, str(h, "old_key_pkix"))
+        XCTAssertEqual([loaded.context, loaded.expectedTenant, loaded.tenantId], ["", "", "acme"])
+        XCTAssertEqual(loaded.version, 4)
+    }
+
+    /// The bundle's tenant binds the directory from the first snapshot on.
+    func testASnapshotOfAnotherTenantIsRefusedFromTheFirstOne() throws {
+        let key = P256.Signing.PrivateKey()
+        let store = HubDirectoryStore(url: tempURL())
+        try HubDirectoryClient(store: store, http: FakeDirectoryHttp())
+            .applyProvisioning(context: ctxA, tenant: "acme", pkix: Array(key.publicKey.derRepresentation))
+        XCTAssertEqual(DirectoryApply.snapshot(store.current, try seal(key, snap("other", 1)), now: 1).reason, DirectoryApply.otherTenant)
+        XCTAssertTrue(DirectoryApply.snapshot(store.current, try seal(key, snap("acme", 1)), now: 1).applied)
     }
 }

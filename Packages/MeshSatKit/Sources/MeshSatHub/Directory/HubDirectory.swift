@@ -121,6 +121,12 @@ public struct DirectoryState: Codable, Equatable, Sendable {
     public var pinnedKey = ""
     /// Where the key came from: "bundle", "https" or "rotation".
     public var pinSource = ""
+    /// The provisioning context the directory belongs to (broker URL, bridge id, topic root, tenant;
+    /// HubDirectoryClient.provisioningContext): a provisioning that changes it starts the directory
+    /// over, even with the same signing key (r40 review R40-R3).
+    public var context = ""
+    /// The tenant the provisioning bundle names (tenant_id); empty for a bundle without it.
+    public var expectedTenant = ""
     public var tenantId = ""
     public var version: Int64 = 0
     public var keyVersion: Int64 = 0
@@ -136,9 +142,10 @@ public struct DirectoryState: Codable, Equatable, Sendable {
     public init() {}
 
     enum CodingKeys: String, CodingKey {
-        case version, contacts, groups, skipped
+        case version, contacts, groups, skipped, context
         case pinnedKey = "pinned_key"
         case pinSource = "pin_source"
+        case expectedTenant = "expected_tenant"
         case tenantId = "tenant_id"
         case keyVersion = "key_version"
         case appliedAt = "applied_at"
@@ -146,6 +153,28 @@ public struct DirectoryState: Codable, Equatable, Sendable {
         case refusedReason = "refused_reason"
         case refusedDetail = "refused_detail"
         case refusedAt = "refused_at"
+    }
+
+    /// Every field optional, as Android's fromJson reads it: a file written before a field existed
+    /// (context and expected_tenant came with R40-R3) keeps its pinned key.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ k: CodingKeys, _ d: T) throws -> T { try c.decodeIfPresent(T.self, forKey: k) ?? d }
+        pinnedKey = try v(.pinnedKey, "")
+        pinSource = try v(.pinSource, "")
+        context = try v(.context, "")
+        expectedTenant = try v(.expectedTenant, "")
+        tenantId = try v(.tenantId, "")
+        version = try v(.version, 0)
+        keyVersion = try v(.keyVersion, 0)
+        contacts = try v(.contacts, [])
+        groups = try v(.groups, [])
+        skipped = try v(.skipped, [])
+        appliedAt = try v(.appliedAt, 0)
+        checkedAt = try v(.checkedAt, 0)
+        refusedReason = try v(.refusedReason, "")
+        refusedDetail = try v(.refusedDetail, "")
+        refusedAt = try v(.refusedAt, 0)
     }
 
     public var pinnedPkix: [UInt8]? { pinnedKey.isEmpty ? nil : Data(base64Encoded: pinnedKey).map { Array($0) } }
@@ -190,6 +219,9 @@ public enum DirectoryApply {
     // checkHubVersion: the tenant must be named and the one this phone follows, the version above held.
     static func check(_ s: DirectoryState, _ what: String, _ tenant: String, _ version: Int64, _ held: Int64) -> (String, String)? {
         if tenant.isEmpty { return (otherTenant, "the \(what) names no tenant") }
+        if !s.expectedTenant.isEmpty && s.expectedTenant != tenant {
+            return (otherTenant, "this phone was provisioned for tenant \"\(s.expectedTenant)\", the \(what) is \"\(tenant)\"")
+        }
         if !s.tenantId.isEmpty && s.tenantId != tenant {
             return (otherTenant, "this phone follows tenant \"\(s.tenantId)\", the \(what) is \"\(tenant)\"")
         }
