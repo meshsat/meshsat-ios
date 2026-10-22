@@ -1,0 +1,29 @@
+{
+  "bridge_hash": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+  "entries": [
+    {
+      "address": "shared",
+      "channel": "mesh",
+      "key": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "address": "shared",
+      "channel": "iridium",
+      "key": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "address": "+31600000001",
+      "channel": "sms",
+      "key": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    {
+      "address": "MSTEST-10",
+      "channel": "unknown",
+      "key": "4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  ],
+  "note": "made by the Bridge's own keystore.MarshalBundleV2 / MarshalBundle (hemb-ng/after-s32, MESHSAT-1631); test keys only",
+  "signing_pub": "2543b92ff1095511476adc8369db6ddc933665a11978dda1404ee1066ca9559d",
+  "v1_url": "meshsat://key/AaChoqOkpaanqKmqq6ytrq9q2nFSAdOuMEomsD43J9u1FgykYW6NQ7FhVl5zKknghMuDC8MDxjxicZZ_Q9OOaFo8JdsdXI20D83Qly5mYenfUd71zgABBnNoYXJlZBERERERERERERERERERERERERERERERERERERERERER",
+  "v2_url": "meshsat://key/AqChoqOkpaanqKmqq6ytrq9q2nFSBCVDuS_xCVURR2rcg2nbbdyTNmWhGXjdoUBO4QZsqVWdfERmOfb6s5D6yt1cA1EtOabNbiUJWomWL-rWoFi-QJYXSX1EhYNkuqm9E3UZZ4Z_nxu6D18X3vXgs3QUaMl5AQEGc2hhcmVkERERERERERERERERERERERERERERERERERERERERERECBnNoYXJlZCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAAwrMzE2MDAwMDAwMDEzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMwMJTVNURVNULTEwREREREREREREREREREREREREREREREREREREREREREQ"
+}

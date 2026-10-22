@@ -432,6 +432,8 @@ public struct SettingsMessagingSection: View {
     @State private var keyInput = ""
     @State private var showKey = false
     @State private var scanning = false
+    /// A scanned key bundle whose kit key differs from the pinned one: (url, kit id).
+    @State private var keyMismatch: (url: String, kit: String)?
 
     public init() {}
 
@@ -558,13 +560,53 @@ public struct SettingsMessagingSection: View {
                     keyInput = code
                     settings.setEncryptionKey(code)
                     model.showToast("Key imported via QR")
-                } else if code.hasPrefix("meshsat://key/") {
-                    model.showToast("Signed key bundles land with the KeyBundleImporter port")
+                } else if KeyBundleImporter.isKeyBundleUrl(code) {
+                    // A kit's signed bundle of channel keys (MESHSAT-495, MESHSAT-1631).
+                    Task { await importBundle(code, force: false) }
                 } else {
                     model.showToast("QR code doesn't contain a valid key or bundle")
                 }
             }
         }
+        .overlay { if let m = keyMismatch { mismatchDialog(m) } }
+    }
+
+    private func importBundle(_ url: String, force: Bool) async {
+        switch await model.gateway.importKeyBundle(url, forceRepin: force) {
+        case .success(let n, let status, let kit):
+            switch status {
+            case .newTrusted where force: model.showToast("New kit key saved, \(n) key(s) imported")
+            case .newTrusted: model.showToast("Imported \(n) key(s), new kit \(kit.prefix(8)) pinned")
+            case .existingTrusted: model.showToast("Imported \(n) key(s), signature verified against the pinned kit")
+            case .unverifiedV1: model.showToast("Imported \(n) key(s), UNVERIFIED (old v1 bundle, no signature to check)")
+            }
+        case .keyMismatch(let kit, _, _, _):
+            // Ask, and re-pin only on an explicit yes (MESHSAT-1249).
+            keyMismatch = (url, kit)
+        case .invalidSignature(let why):
+            model.showToast("Bundle signature INVALID, possibly tampered. \(why)")
+        case .malformed(let why):
+            model.showToast("Bundle malformed: \(why)")
+        }
+    }
+
+    private func mismatchDialog(_ m: (url: String, kit: String)) -> some View {
+        MSAlertDialog(
+            "This kit's key has changed", onDismiss: { keyMismatch = nil },
+            content: {
+                Text(
+                    "Kit \(m.kit.prefix(8)) signed these keys with a different key from the one this phone saved the first time. "
+                        + "That is expected after the kit was reinstalled or its key was renewed. It is also what an impostor "
+                        + "looks like. Trust the new key only if you know the kit's key changed."
+                ).msText(.bodyMedium)
+            },
+            buttons: {
+                MSTextButton("Keep the old key", color: MSColors.textSecondary) { keyMismatch = nil }
+                MSTextButton("Trust the new key", color: MSColors.red) {
+                    keyMismatch = nil
+                    Task { await importBundle(m.url, force: true) }
+                }
+            })
     }
 }
 
