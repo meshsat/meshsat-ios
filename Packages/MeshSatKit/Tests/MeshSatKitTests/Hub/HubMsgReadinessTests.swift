@@ -70,7 +70,9 @@ final class HubMsgReadinessTests: XCTestCase {
         XCTAssertEqual(2, session.subscribeAttempts)
         XCTAssertEqual(1, connected.value)
         XCTAssertTrue(session.subscribed.contains("meshsat/bridge/ios-test/msg/status"))
-        XCTAssertTrue(session.published.contains { $0.topic == "meshsat/bridge/ios-test/birth" }, "announced once ready")
+        // The birth is asked for once ready and goes out from the birth worker (r33 review R33-R1).
+        let born = await waitUntil { session.published.contains { $0.topic == "meshsat/bridge/ios-test/birth" } }
+        XCTAssertTrue(born, "announced once ready")
         let sent = await r.publishMsg(kind: "out", payload: "{}")
         XCTAssertEqual(.ok, sent)
         await r.stop()

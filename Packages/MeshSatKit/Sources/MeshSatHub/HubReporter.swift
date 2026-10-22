@@ -534,7 +534,7 @@ public final class HubReporter: @unchecked Sendable {
 
     private func announce(_ s: any MQTTSession, _ session: Int) async {
         guard markReady(session) else { return }
-        await publishBirth(s)
+        requestBirth()
         // The session is clean: what the Hub said while it was away is asked for again (hub_msg).
         hooks().connected?()
     }
@@ -546,18 +546,19 @@ public final class HubReporter: @unchecked Sendable {
                 if Task.isCancelled { break }
                 guard let s = currentSession(), await s.isConnected else { continue }
                 // The Hub links a satellite device to this bridge only from a birth, and a modem
-                // is often paired after the connect: re-announce when the set changes (MESHSAT-1235),
-                // and so when its chain does (MESHSAT-1624).
-                if Self.modemDeclarations(declaredInterfaces()) != births.announced {
+                // is often paired after the connect: a birth is asked for when what is current
+                // differs from what the broker last took and none is owed (MESHSAT-1235, r33 R33-R1).
+                if Self.modemDeclarations(declaredInterfaces()) != births.acknowledged, !births.isOwed {
                     Self.log.info("Modem set or chain changed, re-publishing birth")
-                    await publishBirth(s)
+                    requestBirth()
                 }
                 await publishHealth(s)
             }
         }
-        let retry = birthRetryLoop()
+        let worker = startBirthWorker()
         lock.lock()
-        tasks.append(contentsOf: [task, retry])
+        tasks.append(task)
+        if let worker { tasks.append(worker) }
         lock.unlock()
     }
 
@@ -781,8 +782,15 @@ extension HubReporter {
     }
 }
 
-// The birth's stamp and what it declares (HeMB-NG S3-2, MESHSAT-1624): outside the class body,
-// which is at its length limit.
+// The birth's stamp, what it declares and how it goes out (HeMB-NG S3-2, MESHSAT-1624, r33 review
+// R33-R1): outside the class body, which is at its length limit.
+//
+// Births go out one at a time, from one worker. Two at once could finish out of order: an older
+// one the broker took cleared the newer one's retry, and a stamp taken before a pause could label
+// a newer configuration. Every cause of a birth (a connect, a change of modem or chain, a failure)
+// only asks for one; the worker builds it from what is current when it starts, stamp and snapshot
+// together, publishes it and waits for the broker. A request made during an attempt brings
+// another birth after it, and only a birth the broker took counts as announced.
 extension HubReporter {
     /// How often a birth that did not go out is tried again while connected, as on the Bridge.
     public static let birthRetryMs: Int64 = 10_000
@@ -814,20 +822,58 @@ extension HubReporter {
         }
     }
 
-    /// Stamps, signs and publishes one birth. One whose stamp could not be read or stored does
-    /// not go out, and neither does one the broker did not take: each is tried again every
-    /// `birthRetryMs` while connected, as on the Bridge.
-    private func publishBirth(_ s: any MQTTSession) async {
+    /// Asks for a birth; one asked for while another is built and sent comes after it.
+    private func requestBirth() {
+        births.setOwed(true)
+        births.wakeup.signal()
+    }
+
+    /// The one birth worker, unless it runs already: the next request, or the retry period while
+    /// a birth is owed, then one attempt. The owed flag is cleared only as an attempt starts, and set
+    /// again by any request meanwhile and by a failure, so an older completion never clears a
+    /// newer obligation.
+    private func startBirthWorker() -> Task<Void, Never>? {
+        births.startWorker {
+            Task { [self] in
+                while !Task.isCancelled {
+                    await waitForBirthRequest()
+                    if Task.isCancelled { break }
+                    guard !isStopped, let s = currentSession(), await s.isConnected, births.takeOwed() else { continue }
+                    if !(await publishBirthNow(s)) {
+                        births.setOwed(true)
+                        Self.log.warning("Birth not published, tried again in \(Self.birthRetryMs / 1000) s")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The next request, or `birthRetryMs`, whichever comes first.
+    private func waitForBirthRequest() async {
+        let wakeup = births.wakeup
+        let clock = self.clock
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await wakeup.wait() }
+            group.addTask { await clock.sleep(ms: Self.birthRetryMs) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Stamps, builds, signs and publishes one birth and waits for the broker (QoS 1); only the
+    /// worker calls it. A birth whose stamp could not be read or stored does not go out (the stamp
+    /// is stored before it is used, as on the Bridge), and only one the broker took counts as
+    /// announced. The stamp and the snapshot are taken together, with no other birth in between.
+    private func publishBirthNow(_ s: any MQTTSession) async -> Bool {
         let stamp: BirthStamp
         do {
             stamp = try births.stamper.next(nowNanos: clock.nowMs() * 1_000_000)
         } catch {
-            births.setPending(true)
-            Self.log.warning("Birth not published, tried again in \(Self.birthRetryMs / 1000) s: \(error)")
-            return
+            Self.log.warning("Birth not stamped: \(error)")
+            return false
         }
         let birth = buildBirthCertificate(stamp: stamp)
-        births.setAnnounced(Self.modemDeclarations(birth.interfaces))
+        let declared = Self.modemDeclarations(birth.interfaces)
         var json = birth.toJson()
         if !config.clientCertPem.isEmpty && !config.clientKeyPem.isEmpty {
             let signed = BirthSigner.sign(&json, certPem: config.clientCertPem, keyPem: config.clientKeyPem)
@@ -836,11 +882,12 @@ extension HubReporter {
         do {
             try await s.publish(
                 topic: topics.bridgeBirth(config.bridgeId), payload: Array(json.text().utf8), qos: Self.qosAtLeastOnce, retain: true)
-            births.setPending(false)
+            births.setAcknowledged(declared)
             Self.log.info("Published bridge birth: \(config.bridgeId)")
+            return true
         } catch {
-            births.setPending(true)
-            Self.log.warning("Birth not published, tried again in \(Self.birthRetryMs / 1000) s: \(error)")
+            Self.log.warning("Birth publish failed: \(error)")
+            return false
         }
     }
 
@@ -852,53 +899,64 @@ extension HubReporter {
             timestamp: BirthStamper.format(stamp))
     }
 
-    /// Tries a birth that did not go out again every `birthRetryMs` while connected.
-    private func birthRetryLoop() -> Task<Void, Never> {
-        Task { [self] in
-            while !Task.isCancelled {
-                await clock.sleep(ms: Self.birthRetryMs)
-                if Task.isCancelled { break }
-                guard births.isPending, let s = currentSession(), await s.isConnected else { continue }
-                await publishBirth(s)
-            }
-        }
-    }
 }
 
-/// The birth's stamper, whether a birth is owed, what the last one declared and the 9704's
-/// declaration, beside the reporter's own state.
+/// The birth's stamper, its worker and wake-up, whether a birth is owed, what the last birth the
+/// broker took declared and the 9704's declaration, beside the reporter's own state.
 private final class HubBirthState: @unchecked Sendable {
     let stamper: BirthStamper
+    let wakeup = BirthWakeup()
     private let lock = NSLock()
-    private var pending = false
-    private var announcedValue: Set<String> = []
+    private var owed = false
+    private var acknowledgedValue: Set<String>?
+    private var worker: Task<Void, Never>?
     private var imtEgressFormatValue: (@Sendable () -> String?)?
 
     init(store: (any BirthStampStore)?) {
         stamper = BirthStamper(store: store)
     }
 
-    var isPending: Bool {
+    /// The worker `make` builds, unless one runs already (nil then).
+    func startWorker(_ make: () -> Task<Void, Never>) -> Task<Void, Never>? {
         lock.lock()
         defer { lock.unlock() }
-        return pending
+        if let worker, !worker.isCancelled { return nil }
+        let task = make()
+        worker = task
+        return task
     }
 
-    func setPending(_ value: Bool) {
+    var isOwed: Bool {
         lock.lock()
-        pending = value
+        defer { lock.unlock() }
+        return owed
+    }
+
+    func setOwed(_ value: Bool) {
+        lock.lock()
+        owed = value
         lock.unlock()
     }
 
-    var announced: Set<String> {
+    /// True, clearing it, when a birth is owed: the worker's attempt starts.
+    func takeOwed() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return announcedValue
+        let was = owed
+        owed = false
+        return was
     }
 
-    func setAnnounced(_ value: Set<String>) {
+    /// Modems the last birth the broker took reported, each with what it declared; nil before the first.
+    var acknowledged: Set<String>? {
         lock.lock()
-        announcedValue = value
+        defer { lock.unlock() }
+        return acknowledgedValue
+    }
+
+    func setAcknowledged(_ value: Set<String>) {
+        lock.lock()
+        acknowledgedValue = value
         lock.unlock()
     }
 
@@ -912,5 +970,58 @@ private final class HubBirthState: @unchecked Sendable {
         lock.lock()
         imtEgressFormatValue = provider
         lock.unlock()
+    }
+}
+
+/// The birth worker's wake-up: signals while nobody waits are kept as one, and a waiting task can
+/// be cancelled. The owed flag decides whether a birth goes; this only wakes the worker.
+private final class BirthWakeup: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func signal() {
+        lock.lock()
+        if let w = waiter {
+            waiter = nil
+            lock.unlock()
+            w.resume()
+            return
+        }
+        pending = true
+        lock.unlock()
+    }
+
+    /// Returns at the next signal, at once when one came since the last wait, or when cancelled.
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in park(c) }
+        } onCancel: {
+            release()
+        }
+    }
+
+    // Synchronous, so the lock is never taken inside an async function.
+    private func park(_ c: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if pending {
+            pending = false
+            lock.unlock()
+            c.resume()
+        } else if Task.isCancelled {
+            lock.unlock()
+            c.resume()
+        } else {
+            waiter = c
+            lock.unlock()
+        }
+    }
+
+    private func release() {
+        lock.lock()
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume()
     }
 }

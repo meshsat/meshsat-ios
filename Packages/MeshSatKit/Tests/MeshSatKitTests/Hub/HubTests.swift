@@ -184,22 +184,62 @@ final class FakeMQTTSession: MQTTSession, @unchecked Sendable {
         }
     }
 
+    /// What the broker does with a bridge birth (MESHSAT-1624, r33 review R33-R1): take it, fail
+    /// it, or hold it until the gate (DispatcherTests' actor) opens and then take or fail it.
+    enum BirthAction: Sendable {
+        case take
+        case fail
+        case hold(Gate, thenTake: Bool)
+    }
+
     /// How many bridge births to come the broker fails to take (MESHSAT-1624).
     private var refuseBirthsLeft = 0
     var refuseBirths: Int {
         get { locked { refuseBirthsLeft } }
         set { locked { refuseBirthsLeft = newValue } }
     }
+    private var birthScript: [BirthAction] = []
+    private var birthAttemptsCount = 0
+    private var birthsInFlight = 0
+    private var maxBirthsInFlightCount = 0
+    /// What the next births meet, in order; a birth past the script is taken.
+    func scriptBirths(_ actions: [BirthAction]) { locked { birthScript += actions } }
+    var birthAttempts: Int { locked { birthAttemptsCount } }
+    var maxBirthsInFlight: Int { locked { maxBirthsInFlightCount } }
 
     func publish(topic: String, payload: [UInt8], qos: Int, retain: Bool) async throws {
-        try locked {
-            guard connected else { throw NSError(domain: "fake", code: 2, userInfo: [NSLocalizedDescriptionKey: "not connected"]) }
-            if refuseBirthsLeft > 0, topic.hasSuffix("/birth") {
-                refuseBirthsLeft -= 1
-                throw NSError(domain: "fake", code: 3, userInfo: [NSLocalizedDescriptionKey: "publish failed"])
+        let published = Published(topic: topic, payload: String(decoding: payload, as: UTF8.self), qos: qos, retain: retain)
+        guard topic.hasSuffix("/birth") else {
+            try locked {
+                guard connected else { throw NSError(domain: "fake", code: 2, userInfo: [NSLocalizedDescriptionKey: "not connected"]) }
+                publishedList.append(published)
             }
-            publishedList.append(Published(topic: topic, payload: String(decoding: payload, as: UTF8.self), qos: qos, retain: retain))
+            return
         }
+        let action: BirthAction = try locked {
+            guard connected else { throw NSError(domain: "fake", code: 2, userInfo: [NSLocalizedDescriptionKey: "not connected"]) }
+            birthAttemptsCount += 1
+            birthsInFlight += 1
+            maxBirthsInFlightCount = max(maxBirthsInFlightCount, birthsInFlight)
+            if refuseBirthsLeft > 0 {
+                refuseBirthsLeft -= 1
+                return .fail
+            }
+            return birthScript.isEmpty ? .take : birthScript.removeFirst()
+        }
+        var take = true
+        switch action {
+        case .take: take = true
+        case .fail: take = false
+        case .hold(let gate, let thenTake):
+            await gate.wait()
+            take = thenTake
+        }
+        locked {
+            birthsInFlight -= 1
+            if take { publishedList.append(published) }
+        }
+        if !take { throw NSError(domain: "fake", code: 3, userInfo: [NSLocalizedDescriptionKey: "publish failed"]) }
     }
 
     /// Set to make the broker drop the session while its subscriptions are being placed.
