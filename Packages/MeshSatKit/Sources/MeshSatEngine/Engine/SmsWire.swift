@@ -111,7 +111,8 @@ public enum SmsWire {
     /// what decodes to control bytes is not taken as compressed. It took ASCII only. [MESHSAT-1628]
     static func isPrintable(_ s: String) -> Bool {
         s.unicodeScalars.allSatisfy { c in
-            c == "\n" || c == "\r" || c == "\t" || (c.value >= 0x20 && c.value != 0x7F && !(0x80...0x9F).contains(c.value) && c.value != 0xFFFD)
+            c == "\n" || c == "\r" || c == "\t"
+                || (c.value >= 0x20 && c.value != 0x7F && !(0x80...0x9F).contains(c.value) && c.value != 0xFFFD)
         }
     }
 }
