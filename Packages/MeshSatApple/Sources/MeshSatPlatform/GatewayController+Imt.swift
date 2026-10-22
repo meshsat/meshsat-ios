@@ -139,13 +139,13 @@ extension GatewayController {
         var imei = await imt.driver.modemInfo.imei
         if imei.isEmpty { imei = "9704" }
         if deduplicator.isDuplicateKey("iridium9704:" + Deduplicator.stableKey(Hex.encode(payload))) { return }
-        var key: String?
-        if payload.first == SatelliteChain.protocolVersion { key = await satelliteChainKey() }
         let text: String
         let sealed: Bool
         var opened = true
-        let preferred = SatelliteChain.chainOf(settings.get(SettingsKey.satelliteChain)) ?? .h
-        switch SatelliteChain.readMt(payload, keyHex: key, preferred: preferred) {
+        let mt = await SatelliteChain.inbound(payload, mode: settings.get(SettingsKey.satelliteChain)) {
+            await self.satelliteChainKey()
+        }
+        switch mt {
         case .text(let t, sealed: let s, _):
             text = t
             sealed = s
@@ -257,7 +257,8 @@ extension GatewayController {
         // they ran before it (the agreed rollback, r33 review R33-R2), read at send time. Android
         // holds the message when its setting cannot be read; a UserDefaults read cannot fail. A
         // message that cannot be sealed is never sent as plaintext instead.
-        if let chain = SatelliteChain.chainOf(settings.get(SettingsKey.satelliteChain)) {
+        let mode = settings.get(SettingsKey.satelliteChain)
+        if SatelliteChain.chainOf(mode) != nil {
             // An SOS or a burst goes as it is, which only the delivery's msgRef tells: a delivery
             // that cannot be read waits rather than be guessed at.
             var msgRef = ""
@@ -268,14 +269,13 @@ extension GatewayController {
                     return "the delivery could not be read: \(error)"
                 }
             }
-            if SatelliteChain.sealsDelivery(msgRef: msgRef, payload: text) {
-                let key = await satelliteChainKey()
-                do {
-                    data = try SatelliteChain.seal(text, keyHex: key, chain: chain)
-                } catch {
-                    return "\(Dispatcher.never) Not sent: \(error). "
-                        + "Enter the kit's iridium \"shared\" key in Setup > Satellite, or set the satellite chain to plain."
+            do {
+                data = try await SatelliteChain.outbound(mode: mode, msgRef: msgRef, payload: text) {
+                    await self.satelliteChainKey()
                 }
+            } catch {
+                return "\(Dispatcher.never) Not sent: \(error). "
+                    + "Enter the kit's iridium \"shared\" key in Setup > Satellite, or set the satellite chain to plain."
             }
         }
         let status = await imtDriver.sendMessageBlocking(data)

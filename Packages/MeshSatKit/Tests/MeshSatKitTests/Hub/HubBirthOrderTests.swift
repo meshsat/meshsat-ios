@@ -1,5 +1,5 @@
-// Mirrors HubBirthOrderTest.kt (MESHSAT-1623, r33 review R33-R1): the review's schedules A1, its
-// control, and A2 on the real HubReporter. Births go out one at a time, an older birth the broker
+// Mirrors HubBirthOrderTest.kt (MESHSAT-1623, r33 review R33-R1): the review's schedules A1 and A2
+// both ways (plain to sealed, sealed to plain), and A1's controls, on the real HubReporter. Births go out one at a time, an older birth the broker
 // took cannot clear a newer one that failed, a stamp always labels the snapshot built with it, and
 // the current declaration goes out by itself. The broker is the fake session, which holds or fails
 // each birth on cue and counts those in flight. [MESHSAT-1624]
@@ -63,30 +63,63 @@ final class HubBirthOrderTests: XCTestCase {
         }
     }
 
-    /// A1: the first birth (plain) is held at the broker; the chain turns sealed; the next birth
-    /// fails; then the held one is taken. Nothing changes after that, and the sealed birth must still
+    /// A1: the first birth (`from`) is held at the broker; the chain turns `to`; the next birth
+    /// fails; then the held one is taken. Nothing changes after that, and the `to` birth must still
     /// go out by itself, with no two births in flight at any time.
-    func testAnOlderBirthTakenLateDoesNotClearANewerOneThatFailed() async {
-        let mode = LockedText(SatelliteChain.modePlain)
+    private func a1(from: String, to: String, file: StaticString = #filePath, line: UInt = #line) async {
+        let mode = LockedText(from)
         let (reporter, session) = make { SatelliteChain.egressFormat(mode.value) }
+        let want = SatelliteChain.egressFormat(to) ?? ""
         let release = Gate()
         session.scriptBirths([.hold(release, thenTake: true), .fail])
         reporter.start()
         let reached = await eventually { session.birthAttempts >= 1 }
-        XCTAssertTrue(reached, "the first birth reached the broker")
-        mode.value = SatelliteChain.modeSealed
-        // Health ticks (1 s on the paced clock, 10 ms for real) ask for the sealed birth while the plain one is held.
+        XCTAssertTrue(reached, "the first birth reached the broker", file: file, line: line)
+        mode.value = to
+        // Health ticks (1 s on the paced clock, 10 ms for real) ask for the new birth while the first is held.
         try? await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertEqual(session.birthAttempts, 1, "nothing else goes out while a birth is in flight")
+        XCTAssertEqual(session.birthAttempts, 1, "nothing else goes out while a birth is in flight", file: file, line: line)
         await release.open()
+        let current = await eventually(30_000) {
+            let t = self.taken(session)
+            return t.count >= 2 && self.format(t[t.count - 1]) == want
+        }
+        XCTAssertTrue(current, "the \(want) birth went out by itself", file: file, line: line)
+        XCTAssertEqual(session.maxBirthsInFlight, 1, "one birth at a time", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(session.birthAttempts, 3, "the failed \(want) birth was tried again", file: file, line: line)
+        XCTAssertEqual(taken(session).first.map(format), SatelliteChain.egressFormat(from), file: file, line: line)
+        assertOrdered(taken(session), file: file, line: line)
+        await reporter.stop()
+    }
+
+    func testAnOlderBirthTakenLateDoesNotClearANewerOneThatFailed() async {
+        await a1(from: SatelliteChain.modePlain, to: SatelliteChain.modeSealed)
+    }
+
+    /// A1 the other way round: sealed held, the chain turns plain (r33: the inverse format change).
+    func testAnOlderSealedBirthTakenLateDoesNotClearANewerPlainOneThatFailed() async {
+        await a1(from: SatelliteChain.modeSealed, to: SatelliteChain.modePlain)
+    }
+
+    /// A1 with the completions the other way round (r33: the passing control): the first birth is
+    /// taken at once, the chain turns sealed, and the sealed birth then fails. It is tried again
+    /// until it is taken.
+    func testAnOlderBirthTakenFirstAndANewerOneThatFailsAfterItIsTriedAgain() async {
+        let mode = LockedText(SatelliteChain.modePlain)
+        let (reporter, session) = make { SatelliteChain.egressFormat(mode.value) }
+        session.scriptBirths([.take, .fail])
+        reporter.start()
+        let first = await eventually { self.taken(session).count == 1 }
+        XCTAssertTrue(first, "the plain birth was taken")
+        XCTAssertEqual(taken(session).first.map(format), "plain")
+        mode.value = SatelliteChain.modeSealed
         let sealed = await eventually(30_000) {
             let t = self.taken(session)
             return t.count >= 2 && self.format(t[t.count - 1]) == "sealed"
         }
-        XCTAssertTrue(sealed, "the sealed birth went out by itself")
-        XCTAssertEqual(session.maxBirthsInFlight, 1, "one birth at a time")
+        XCTAssertTrue(sealed, "the sealed birth was taken after it failed")
         XCTAssertGreaterThanOrEqual(session.birthAttempts, 3, "the failed sealed birth was tried again")
-        XCTAssertEqual(taken(session).first.map(format), "plain")
+        XCTAssertEqual(session.maxBirthsInFlight, 1)
         assertOrdered(taken(session))
         await reporter.stop()
     }
@@ -108,16 +141,17 @@ final class HubBirthOrderTests: XCTestCase {
     }
 
     /// A2: the first birth pauses after its stamp, while its snapshot is being built (inside the
-    /// declaration provider). The chain turns sealed meanwhile. No other birth may start or take a
-    /// stamp in between; when it resumes, every birth taken carries its own snapshot, the stamps go
-    /// up in the order they were sent, and the last one declares what is current. The clock runs a
-    /// tenth for real here, so the birth's snapshot is the provider's first call, before the first
-    /// health tick.
-    func testAStampAlwaysLabelsTheSnapshotBuiltWithIt() async {
-        let mode = LockedText(SatelliteChain.modePlain)
+    /// declaration provider). The chain turns from `from` to `to` meanwhile. No other birth may
+    /// start or take a stamp in between; when it resumes, every birth taken carries its own
+    /// snapshot, the stamps go up in the order they were sent, and the last one declares what is
+    /// current. The clock runs a tenth for real here, so the birth's snapshot is the provider's
+    /// first call, before the first health tick.
+    private func a2(from: String, to: String, file: StaticString = #filePath, line: UInt = #line) async {
+        let mode = LockedText(from)
         let calls = CallCounter()
         let inProvider = Collected<Bool>()
         let resume = DispatchSemaphore(value: 0)
+        let want = SatelliteChain.egressFormat(to) ?? ""
         let (reporter, session) = make(clock: PacedClock(realDivisor: 10)) {
             if calls.next() == 1 {
                 inProvider.add(true)
@@ -127,22 +161,31 @@ final class HubBirthOrderTests: XCTestCase {
         }
         reporter.start()
         let paused = await eventually { !inProvider.list.isEmpty }
-        XCTAssertTrue(paused, "the first birth paused in its snapshot")
-        mode.value = SatelliteChain.modeSealed
+        XCTAssertTrue(paused, "the first birth paused in its snapshot", file: file, line: line)
+        mode.value = to
         // Health ticks (100 ms for real) ask for a birth while the first is paused.
         try? await Task.sleep(nanoseconds: 500_000_000)
-        XCTAssertEqual(session.birthAttempts, 0, "no birth was sent while one was being built")
+        XCTAssertEqual(session.birthAttempts, 0, "no birth was sent while one was being built", file: file, line: line)
         resume.signal()
-        let sealed = await eventually(30_000) {
+        let current = await eventually(30_000) {
             let t = self.taken(session)
-            return !t.isEmpty && self.format(t[t.count - 1]) == "sealed"
+            return !t.isEmpty && self.format(t[t.count - 1]) == want
         }
-        XCTAssertTrue(sealed, "the current declaration went out")
+        XCTAssertTrue(current, "the current declaration went out", file: file, line: line)
         try? await Task.sleep(nanoseconds: 250_000_000)
-        XCTAssertEqual(session.maxBirthsInFlight, 1)
-        assertOrdered(taken(session))
-        XCTAssertEqual(taken(session).last.map(format), "sealed")
+        XCTAssertEqual(session.maxBirthsInFlight, 1, file: file, line: line)
+        assertOrdered(taken(session), file: file, line: line)
+        XCTAssertEqual(taken(session).last.map(format), want, file: file, line: line)
         await reporter.stop()
+    }
+
+    func testAStampAlwaysLabelsTheSnapshotBuiltWithIt() async {
+        await a2(from: SatelliteChain.modePlain, to: SatelliteChain.modeSealed)
+    }
+
+    /// A2 the other way round: sealed first, the chain turns plain while the birth is paused.
+    func testAStampLabelsItsSnapshotWhenTheChainTurnsPlain() async {
+        await a2(from: SatelliteChain.modeSealed, to: SatelliteChain.modePlain)
     }
 }
 

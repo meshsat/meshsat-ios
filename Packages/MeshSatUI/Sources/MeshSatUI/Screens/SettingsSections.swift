@@ -166,7 +166,9 @@ struct NodeModemRows: View {
     }
 
     @ViewBuilder private var chainKeyRows: some View {
-        InfoRow("Kit key (iridium \"shared\")", settings.satelliteChainKeySet ? "Stored" : "Not stored")
+        InfoRow(
+            "Kit key (iridium \"shared\")",
+            settings.satelliteChainKeySet ? settings.satelliteChainKeyCheck.map { "Stored, check \($0)" } ?? "Stored" : "Not stored")
         MSOutlinedTextField(
             text: $chainKeyInput, label: "The kit's iridium shared key (64 hex)", secure: true, focusedBorder: MSColors.teal,
             keyboard: .asciiCapable)

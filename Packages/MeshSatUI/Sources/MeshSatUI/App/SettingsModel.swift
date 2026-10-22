@@ -34,6 +34,9 @@ public final class SettingsModel {
     public private(set) var imtSignal = 0
     /// A key is stored for the kits' encrypted satellite chains (the conversation key of "iridium:shared").
     public private(set) var satelliteChainKeySet = false
+    /// That key's check value (SatelliteChain.keyCheck): the same check in the kit's key list means
+    /// both ends hold the same key.
+    public private(set) var satelliteChainKeyCheck: String?
     private var tasks: [Task<Void, Never>] = []
     private var hubTasks: [Task<Void, Never>] = []
 
@@ -193,6 +196,7 @@ public final class SettingsModel {
     public func refreshSatelliteChainKey() async {
         let key = try? await gateway.db.conversationKeys.getBySender(SatelliteChain.keyRef)
         satelliteChainKeySet = key != nil
+        satelliteChainKeyCheck = key.flatMap { try? SatelliteChain.keyCheck($0.hexKey) }
     }
 
     /// The kit's iridium "shared" key, kept as the conversation key of exactly "iridium:shared",
@@ -209,6 +213,7 @@ public final class SettingsModel {
             return false
         }
         satelliteChainKeySet = true
+        satelliteChainKeyCheck = try? SatelliteChain.keyCheck(key)
         return true
     }
 

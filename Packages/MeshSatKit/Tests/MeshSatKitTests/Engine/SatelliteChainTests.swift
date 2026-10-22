@@ -272,4 +272,82 @@ final class SatelliteChainTests: XCTestCase {
         let short = await SatelliteChain.key { _ in String(self.key.prefix(62)) }
         XCTAssertNil(short)
     }
+
+    /// The check value both ends show for the key (the Bridge's key_check): SHA-256 of the 32 key
+    /// bytes, first 4 bytes in hex. The vectors are shared with the Bridge and Android.
+    func testAKeysCheckValueIsTheBridges() throws {
+        XCTAssertEqual(try SatelliteChain.keyCheck(key), "630dcd29")
+        XCTAssertEqual(try SatelliteChain.keyCheck(String(repeating: "11", count: 32)), "02d449a3")
+        XCTAssertEqual(try SatelliteChain.keyCheck(key.uppercased()), "630dcd29", "upper or lower case, the same key")
+        XCTAssertThrowsError(try SatelliteChain.keyCheck("convkey:shared"))
+    }
+
+    /// What the service sends (`outbound`, which sendVia9704 calls): on each setting, for a text,
+    /// an SOS and a burst, with a key and without one. The key is read only when the text is sealed.
+    func testTheServiceSealsATextOnTheSettingsChainAndNothingElse() async throws {
+        let reads = CallCount()
+        let withKey: () async -> String? = {
+            reads.add()
+            return self.key
+        }
+        for mode in [nil, SatelliteChain.modeUndeclared, SatelliteChain.modePlain] {
+            let out = try await SatelliteChain.outbound(mode: mode, msgRef: "", payload: greek, key: withKey)
+            XCTAssertEqual(out, greek, "\(String(describing: mode)) sends the text as it is")
+        }
+        XCTAssertEqual(reads.value, 0, "no key read for an unsealed setting")
+        for (mode, chain) in [(SatelliteChain.modeSealed, SatelliteChain.Chain.h), (SatelliteChain.modeLegacy, .legacy)] {
+            let wire = try await SatelliteChain.outbound(mode: mode, msgRef: "", payload: greek, key: withKey)
+            XCTAssertEqual(wire.first, SatelliteChain.protocolVersion)
+            XCTAssertEqual(try SatelliteChain.open(wire, keyHex: key, chain: chain), greek, "\(mode) seals on \(chain)")
+            let back = await SatelliteChain.inbound(wire, mode: mode) { self.key }
+            XCTAssertEqual(back, .text(String(decoding: greek, as: UTF8.self), sealed: true, chain: chain))
+            let sos: [UInt8] = [0x53, 0x4F, 0x53, 0x01, 0x02]
+            let sent = try await SatelliteChain.outbound(mode: mode, msgRef: "sos:7", payload: sos, key: withKey)
+            XCTAssertEqual(sent, sos, "\(mode): an SOS goes as it is")
+            let burst = try await SatelliteChain.outbound(mode: mode, msgRef: "burst:3", payload: greek, key: withKey)
+            XCTAssertEqual(burst, greek, "\(mode): a burst goes as it is")
+            for bad in [nil, "convkey:shared"] as [String?] {
+                do {
+                    _ = try await SatelliteChain.outbound(mode: mode, msgRef: "", payload: greek) { bad }
+                    XCTFail("\(mode) with \(String(describing: bad)) was not refused")
+                } catch {
+                    XCTAssertTrue(error is TransformError, "\(error)")
+                }
+            }
+        }
+    }
+
+    /// What the service reads (`inbound`): the key only for a versioned payload, H first when
+    /// nothing is set, either chain on any setting, never a guess.
+    func testTheServiceReadsAPlainTextWithoutTheKeyAndASealedOneOnEitherChain() async throws {
+        let reads = CallCount()
+        let withKey: () async -> String? = {
+            reads.add()
+            return self.key
+        }
+        let plain = await SatelliteChain.inbound(Array("hello".utf8), mode: SatelliteChain.modeSealed, key: withKey)
+        XCTAssertEqual(plain, .text("hello", sealed: false))
+        XCTAssertEqual(reads.value, 0, "a plain text never reads the key")
+        let h = try SatelliteChain.seal(greek, keyHex: key)
+        let legacy = try SatelliteChain.seal(greek, keyHex: key, chain: .legacy)
+        for mode in [nil, SatelliteChain.modePlain, SatelliteChain.modeSealed, SatelliteChain.modeLegacy] {
+            let text = String(decoding: greek, as: UTF8.self)
+            let gotH = await SatelliteChain.inbound(h, mode: mode, key: withKey)
+            XCTAssertEqual(gotH, .text(text, sealed: true, chain: .h))
+            let gotLegacy = await SatelliteChain.inbound(legacy, mode: mode, key: withKey)
+            XCTAssertEqual(gotLegacy, .text(text, sealed: true, chain: .legacy))
+            let noKey = await SatelliteChain.inbound(h, mode: mode) { nil }
+            if case .text = noKey { XCTFail("\(String(describing: mode)), no key: opened") }
+            let wrong = await SatelliteChain.inbound(legacy, mode: mode) { self.otherKey }
+            if case .text = wrong { XCTFail("\(String(describing: mode)), wrong key: opened") }
+        }
+    }
+}
+
+/// Counts calls from any task.
+private final class CallCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func add() { lock.withLock { count += 1 } }
 }

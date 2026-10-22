@@ -12,6 +12,7 @@
 // It lives here, beside the TransformPipeline whose steps it runs and whose TransformError it
 // throws, as Android's engine/ has it; the 9704 driver that carries the wire is in
 // MeshSatMeshtastic, which this module does not depend on. [MESHSAT-1624]
+import Crypto
 import Foundation
 import MeshSatWire
 
@@ -105,6 +106,33 @@ public enum SatelliteChain {
     public static func key(_ lookup: (String) async -> String?) async -> String? {
         guard let key = await lookup(keyRef), isHexKey(key) else { return nil }
         return key
+    }
+
+    /// A key's check value: the first 4 bytes of SHA-256 over its 32 bytes, in hex, as a Bridge's
+    /// key list gives it (key_check). Two ends that show the same check hold the same key, and the
+    /// check shows nothing of the key itself.
+    public static func keyCheck(_ keyHex: String) throws -> String {
+        guard let raw = Hex.decode(try checkKey(keyHex)) else { throw TransformError("satellite chain: no key for \(keyRef)") }
+        return Hex.encode(Array(SHA256.hash(data: raw).prefix(4)))
+    }
+
+    /// What the service sends through the 9704 for one delivery on setting `mode`: the text sealed
+    /// on the chain the setting picks, or the payload as it is when the setting picks none or the
+    /// delivery is not a text (`sealsDelivery`). The key is read only when it is needed. Throws
+    /// `TransformError` when the delivery must be sealed and cannot be.
+    public static func outbound(
+        mode: String?, msgRef: String, payload: [UInt8], pipeline: TransformPipeline = TransformPipeline(),
+        key: () async -> String?
+    ) async throws -> [UInt8] {
+        guard let chain = chainOf(mode), sealsDelivery(msgRef: msgRef, payload: payload) else { return payload }
+        return try seal(payload, keyHex: await key(), pipeline: pipeline, chain: chain)
+    }
+
+    /// What the service makes of one IMT payload on setting `mode`: `readMt` with the chain the
+    /// setting picks first (H when it picks none). The key is read only for a versioned payload.
+    public static func inbound(_ payload: [UInt8], mode: String?, key: () async -> String?) async -> MtMessage {
+        let keyHex = payload.first == protocolVersion ? await key() : nil
+        return readMt(payload, keyHex: keyHex, preferred: chainOf(mode) ?? .h)
     }
 
     /// What an IMT message from the satellite is, once it is not a Reticulum packet (Android's
