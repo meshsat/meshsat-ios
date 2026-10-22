@@ -145,6 +145,12 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
             return [
                 "200 hwInfo {\"hw_version\": \"1.0\", \"serial_number\": \"TEST-1\", \"imei\": \"300000000000001\", \"board_temp\": 24}"
             ]
+        case ("GET", "firmware"):
+            guard request["slot"] as? String == "primary" else { return ["400 firmware {}"] }
+            return [
+                "200 firmware {\"slot\": \"primary\", \"validity\": 1, \"version\": {\"major\": 5, \"minor\": 2, \"patch\": 1, "
+                    + "\"build_info\": \"fake\"}, \"hash\": \"abc\"}"
+            ]
         case ("GET", "constellationState"):
             return ["200 constellationState {\"constellation_visible\": true, \"signal_bars\": 3, \"signal_level\": -110}"]
         case ("PUT", "messageOriginate"):
@@ -256,7 +262,7 @@ final class Iridium9704DriverTests: XCTestCase {
             modem.requests.map { "\($0.method) \($0.target)" },
             [
                 "GET apiVersion", "PUT apiVersion", "GET simConfig", "PUT simConfig", "GET operationalState", "PUT operationalState",
-                "GET hwInfo", "GET constellationState",
+                "GET hwInfo", "GET firmware", "GET constellationState",
             ])
         // The first supported version is set, and every request has the spaces the modem's parser wants.
         XCTAssertEqual(modem.requests[1].line, "PUT apiVersion {\"active_version\": {\"major\": 1, \"minor\": 0, \"patch\": 0}}")
@@ -267,6 +273,13 @@ final class Iridium9704DriverTests: XCTestCase {
         XCTAssertEqual(info.imei, "300000000000001")
         XCTAssertEqual(info.serial, "TEST-1")
         XCTAssertEqual(info.boardTemp, 24)
+        // The firmware from the modem's firmware query, the hardware version from hwInfo. [MESHSAT-1630]
+        XCTAssertEqual(modem.requests[7].line, "GET firmware {\"slot\": \"primary\"}")
+        XCTAssertEqual(info.firmwareVersion, "v5.2.1")
+        XCTAssertEqual(info.hardwareVersion, "1.0")
+        XCTAssertEqual(Iridium9704Driver.firmwareVersion(nil), "")
+        XCTAssertEqual(Iridium9704Driver.firmwareVersion(["version": ["major": 1, "minor": 2]]), "")
+        XCTAssertEqual(Iridium9704Driver.firmwareVersion(["version": ["major": 1, "minor": 2, "patch": 3]]), "v1.2.3")
         let signal = await driver.signal
         XCTAssertEqual(signal, 3)
         let onPipe = await driver.onNodePipe

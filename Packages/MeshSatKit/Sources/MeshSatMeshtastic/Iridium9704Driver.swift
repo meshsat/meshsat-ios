@@ -196,12 +196,15 @@ public actor Iridium9704Driver {
                 _ = try await sendJspr("PUT", "operationalState", JsprBody([("state", .string("active"))]))
             }
 
-            // Step 4: hardware info. Android fills firmwareVersion from hw_version too.
+            // Step 4: hardware info, then the firmware version from the modem's own firmware query:
+            // hwInfo carries only the hardware version, which the firmware field used to repeat. [MESHSAT-1630]
             try ensure(forLink)
             if let hw = try await sendJspr("GET", "hwInfo")?.json {
+                try ensure(forLink)
+                let firmware = Self.firmwareVersion(try await sendJspr("GET", "firmware", JsprBody([("slot", .string("primary"))]))?.json)
                 modemInfo = ModemInfo(
                     imei: Self.optString(hw, "imei", ""), serial: Self.optString(hw, "serial_number", ""),
-                    firmwareVersion: Self.optString(hw, "hw_version", ""), hardwareVersion: Self.optString(hw, "hw_version", ""),
+                    firmwareVersion: firmware, hardwareVersion: Self.optString(hw, "hw_version", ""),
                     boardTemp: Self.optInt(hw, "board_temp", 0))
             }
 
@@ -252,6 +255,16 @@ public actor Iridium9704Driver {
     /// Send a JSPR request and wait for the answer naming its target, or any error answer (the
     /// modem may use another target then); nil on a timeout. Unsolicited (299) lines read while
     /// waiting are queued for their handlers.
+    /// The modem's firmware version as the official RockBLOCK 9704 C library makes it
+    /// (`rbGetFirmwareVersion`): "v" major.minor.patch from `GET firmware {"slot": "primary"}`, or ""
+    /// when the modem did not answer. [MESHSAT-1630]
+    static func firmwareVersion(_ json: [String: Any]?) -> String {
+        guard let v = json?["version"] as? [String: Any], let major = v["major"] as? Int, let minor = v["minor"] as? Int,
+            let patch = v["patch"] as? Int
+        else { return "" }
+        return "v\(major).\(minor).\(patch)"
+    }
+
     private func sendJspr(
         _ method: String, _ target: String, _ payload: JsprBody = JsprBody([]), timeoutMs: Int64 = Iridium9704Driver.jsprTimeoutMs
     ) async throws -> JsprResponse? {
