@@ -51,14 +51,14 @@ final class SmsWireTests: XCTestCase {
         XCTAssertNotEqual(wrongKey.text, text)
         // Auto-decrypt off: as received.
         XCTAssertEqual(SmsWire.decode(e.body, keys: [key], autoDecrypt: false).wasEncrypted, false)
-        // Encrypted only. The receiver still says "compressed": plain ASCII is its own smaz2
-        // encoding (bytes 9 to 127 are literals), so SmsReceiver's printable check accepts it.
-        // Android reports the same, and the text is right either way.
+        // Encrypted only. Plain ASCII is its own smaz2 encoding (bytes 9 to 127 are literals), so the
+        // receiver used to call it compressed; compressing "hi" gives one byte, not these two, so it
+        // is now read as what it is. The text was right either way. [MESHSAT-1628]
         let plain = SmsWire.encode("hi", encryptionKey: key)
         XCTAssertFalse(plain.compressed)
         XCTAssertEqual(
             SmsWire.decode(plain.body, keys: [key]),
-            SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: true))
+            SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: false))
         // Encrypted, not compressed (smaz2 gains nothing on these): the text as sent, never read
         // as SMAZ2, whose bigrams turned every byte above 0x7F into two ASCII letters. [MESHSAT-1628]
         for text in [
