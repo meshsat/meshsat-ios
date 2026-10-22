@@ -92,7 +92,12 @@ public enum SmsWire {
             // gains. An uncompressed payload read as SMAZ2 turns each byte above 0x7F into a
             // bigram, so an encrypted Greek SMS, never compressed, came out as ASCII gibberish
             // that passed any printable check. [MESHSAT-1628]
-            if let smaz = Smaz2.decompress(payload), Self.isPrintable(smaz), Smaz2.compress(smaz) == payload {
+            // A payload that is itself readable UTF-8 with a character above ASCII is the text: read
+            // as SMAZ2, a word like "Καλημέρα" is all bigrams whose letters compress back to the
+            // same bytes, which the round trip cannot tell. [MESHSAT-1646]
+            if !Self.isPlainNonASCII(payload), let smaz = Smaz2.decompress(payload), Self.isPrintable(smaz),
+                Smaz2.compress(smaz) == payload
+            {
                 return Decoded(text: smaz, rawText: text, wasEncrypted: wasEncrypted, wasCompressed: true)
             }
         }
@@ -106,6 +111,14 @@ public enum SmsWire {
     }
 
     /// Printable ASCII, tab, CR and LF: what a smaz2 result must be to count as text.
+    /// Readable UTF-8 text with at least one character above ASCII: an uncompressed Greek,
+    /// accented or emoji text, never a compressed payload in practice (its verbatim counts and
+    /// word codes are control bytes, its bigram codes mostly stray bytes above 0x7F). [MESHSAT-1646]
+    static func isPlainNonASCII(_ bytes: [UInt8]) -> Bool {
+        guard bytes.contains(where: { $0 >= 0x80 }), let s = String(validating: bytes, as: UTF8.self) else { return false }
+        return isPrintable(s)
+    }
+
     /// Readable text, as Android's `SmsReceiver.smaz2Text`: tab, CR, LF and every scalar from U+0020
     /// up except DEL, the C1 controls and U+FFFD (broken UTF-8). Greek, accented and emoji text pass;
     /// what decodes to control bytes is not taken as compressed. It took ASCII only. [MESHSAT-1628]

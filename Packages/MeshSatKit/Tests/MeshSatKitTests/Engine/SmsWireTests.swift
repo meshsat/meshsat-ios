@@ -61,10 +61,15 @@ final class SmsWireTests: XCTestCase {
             SmsWire.Decoded(text: "hi", rawText: plain.body, wasEncrypted: true, wasCompressed: false))
         // Encrypted, not compressed (smaz2 gains nothing on these): the text as sent, never read
         // as SMAZ2, whose bigrams turned every byte above 0x7F into two ASCII letters. [MESHSAT-1628]
+        // A single Greek word is all bigram codes read as SMAZ2, and its bigrams compress back to the
+        // same bytes: only the plain-UTF-8 rule tells it. [MESHSAT-1646]
         for text in [
             "café",
             "Καλημέρα από το σκάφος",
             "ok \u{1F44D}",
+            "Καλημέρα",
+            "Ναι",
+            "Όχι",
         ] {
             let sealed = SmsWire.encode(text, encryptionKey: key, smaz2: true)
             XCTAssertFalse(sealed.compressed, text)
