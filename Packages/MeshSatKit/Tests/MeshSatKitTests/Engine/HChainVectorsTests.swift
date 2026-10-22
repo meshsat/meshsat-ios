@@ -127,20 +127,20 @@ final class HChainVectorsTests: XCTestCase {
         XCTAssertEqual(lossy, 1, "the one known lossy vector, default control_bytes")
     }
 
-    /// The SMS codec (Smaz2, on String) compresses as the Bridge. Its decompress is held to the
-    /// Bridge's output only where that output is ASCII: it appends every byte as a Latin-1
-    /// character, so Greek, accented or emoji text comes back as mojibake, the defect Android
-    /// fixed in MESHSAT-1625. That fix is a change of its own, not part of this port.
-    func testTheSmsCodecCompressesAsTheBridgeAndReadsAsciiBack() throws {
-        var checkedBack = 0
+    /// The SMS codec (Smaz2, on String) compresses as the Bridge and reads every default-table
+    /// vector back as the Bridge's own output, Greek, accented and emoji text included. [MESHSAT-1628]
+    func testTheSmsCodecCompressesAsTheBridgeAndReadsItsMultibyteTextBack() throws {
+        var checkedBack = 0, multibyte = 0
         for x in try HChainVectors.load().vectors.smaz2 where x.dict == "default" {
             XCTAssertEqual(Hex.encode(Smaz2.compress(x.text)), x.compressedHex, x.name)
+            guard !x.text.isEmpty else { continue }
             let decompressed = hexBytes(x.decompressedHex)
-            guard !x.text.isEmpty, decompressed.allSatisfy({ $0 < 0x80 }) else { continue }
             XCTAssertEqual(Smaz2.decompress(hexBytes(x.compressedHex)), String(decoding: decompressed, as: UTF8.self), x.name)
             checkedBack += 1
+            if decompressed.contains(where: { $0 >= 0x80 }) { multibyte += 1 }
         }
-        XCTAssertGreaterThanOrEqual(checkedBack, 10)
+        XCTAssertGreaterThanOrEqual(checkedBack, 15)
+        XCTAssertGreaterThanOrEqual(multibyte, 3, "Greek, accented and emoji vectors")
     }
 
     func testSmaz2gFramesMatchTheBridgeBothWaysATieStaysRaw() throws {

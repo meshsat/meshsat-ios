@@ -87,7 +87,12 @@ public enum SmsWire {
             }
         }
         if wasEncrypted || payload != rawBytes {
-            if let smaz = Smaz2.decompress(payload), Self.isPrintable(smaz) {
+            // Compressed only if compressing the text again gives these very bytes: the senders
+            // (both apps, the Bridge, the Hub) compress byte for byte alike and only when it
+            // gains. An uncompressed payload read as SMAZ2 turns each byte above 0x7F into a
+            // bigram, so an encrypted Greek SMS, never compressed, came out as ASCII gibberish
+            // that passed any printable check. [MESHSAT-1628]
+            if let smaz = Smaz2.decompress(payload), Self.isPrintable(smaz), Smaz2.compress(smaz) == payload {
                 return Decoded(text: smaz, rawText: text, wasEncrypted: wasEncrypted, wasCompressed: true)
             }
         }
@@ -101,7 +106,12 @@ public enum SmsWire {
     }
 
     /// Printable ASCII, tab, CR and LF: what a smaz2 result must be to count as text.
+    /// Readable text, as Android's `SmsReceiver.smaz2Text`: tab, CR, LF and every scalar from U+0020
+    /// up except DEL, the C1 controls and U+FFFD (broken UTF-8). Greek, accented and emoji text pass;
+    /// what decodes to control bytes is not taken as compressed. It took ASCII only. [MESHSAT-1628]
     static func isPrintable(_ s: String) -> Bool {
-        s.unicodeScalars.allSatisfy { (0x20...0x7E).contains($0.value) || $0 == "\n" || $0 == "\r" || $0 == "\t" }
+        s.unicodeScalars.allSatisfy { c in
+            c == "\n" || c == "\r" || c == "\t" || (c.value >= 0x20 && c.value != 0x7F && !(0x80...0x9F).contains(c.value) && c.value != 0xFFFD)
+        }
     }
 }

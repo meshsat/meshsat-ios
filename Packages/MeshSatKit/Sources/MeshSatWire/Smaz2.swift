@@ -51,38 +51,13 @@ public enum Smaz2 {
     ]
     static let wordBytes: [[UInt8]] = words.map { Array($0.utf8) }
 
-    /// The original text, or nil for invalid or empty input. Bytes come back as Latin-1
-    /// characters, as Kotlin's `toChar()` makes them.
+    /// The original text, or nil for invalid or empty input: the Bridge's own bytes (`Smaz2Bytes`,
+    /// the default table) read as UTF-8, so Greek, accented and emoji text come back as sent. A
+    /// broken UTF-8 sequence becomes U+FFFD, which the SMS gate refuses. It used to append every
+    /// byte as a Latin-1 character ("é" came back "Ã©"), as Android did before MESHSAT-1625. [MESHSAT-1628]
     public static func decompress(_ data: [UInt8]) -> String? {
-        guard !data.isEmpty else { return nil }
-        var out = ""
-        var i = 0
-        while i < data.count {
-            let b = Int(data[i])
-            if b & 0x80 != 0 {
-                let idx = (b & 0x7F) * 2
-                guard idx + 1 < bigrams.count else { return nil }
-                out.unicodeScalars.append(Unicode.Scalar(bigrams[idx]))
-                out.unicodeScalars.append(Unicode.Scalar(bigrams[idx + 1]))
-                i += 1
-            } else if (1...5).contains(b) {
-                guard i + b < data.count else { return nil }
-                for j in 1...b { out.unicodeScalars.append(Unicode.Scalar(data[i + j])) }
-                i += 1 + b
-            } else if b == 6 || b == 7 || b == 8 {
-                guard i + 1 < data.count else { return nil }
-                let wordIdx = Int(data[i + 1])
-                guard wordIdx < words.count else { return nil }
-                if b == 8 { out += " " }
-                out += words[wordIdx]
-                if b == 7 { out += " " }
-                i += 2
-            } else {
-                out.unicodeScalars.append(Unicode.Scalar(UInt8(b)))
-                i += 1
-            }
-        }
-        return out
+        guard !data.isEmpty, let bytes = try? Smaz2Bytes.decompress(data, dict: .default) else { return nil }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     public static func compress(_ input: String) -> [UInt8] {

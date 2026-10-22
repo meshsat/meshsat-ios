@@ -29,8 +29,10 @@ final class Smaz2Tests: XCTestCase {
         for (text, _) in golden where !text.isEmpty && text.utf8.allSatisfy({ $0 < 0x80 }) {
             XCTAssertEqual(Smaz2.decompress(Smaz2.compress(text)), text, text)
         }
-        // Bytes above 0x7F come back as Latin-1 characters, as Kotlin's toChar makes them.
-        XCTAssertEqual(Smaz2.decompress(Smaz2.compress("\u{e9}")), "\u{c3}\u{a9}")
+        // Multibyte text comes back as sent, read as UTF-8 from the Bridge's bytes. [MESHSAT-1628]
+        for text in ["\u{e9}", "caf\u{e9} \u{f1}and\u{fa}", "\u{039a}\u{03b1}\u{03bb}\u{03b7}\u{03bc}\u{03ad}\u{03c1}\u{03b1} \u{03b1}\u{03c0}\u{03cc} \u{03c4}\u{03bf} \u{03c3}\u{03ba}\u{03ac}\u{03c6}\u{03bf}\u{03c2}", "ok \u{1F44D}"] {
+            XCTAssertEqual(Smaz2.decompress(Smaz2.compress(text)), text, text)
+        }
     }
 
     func testDecompressRejectsMalformed() {
