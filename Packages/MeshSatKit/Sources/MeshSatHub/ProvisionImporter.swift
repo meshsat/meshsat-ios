@@ -39,6 +39,8 @@ public enum ProvisionImporter {
         public var reticulumTcp = ""
         /// "meshsat", or "meshsat/{tenant}" for a customer tenant; every topic hangs off it.
         public var topicPrefix = HubTopics.platformPrefix
+        /// The Hub's directory signing key, PKIX DER in base64: the key the phone pins (MESHSAT-1643).
+        public var dirSignPub = ""
         public init() {}
     }
 
@@ -162,7 +164,8 @@ public enum ProvisionImporter {
         }
     }
 
-    /// The JSON the claim endpoint answers: v, bid, mqtt, user, pass, cert, key, ca, cert_exp, ret_tcp.
+    /// The JSON the claim endpoint answers: v, bid, mqtt, user, pass, cert, key, ca, cert_exp, ret_tcp,
+    /// mqtt_topic_prefix, dir_sign_pub.
     static func parseBundle(_ data: Data) throws -> ProvisionBundle {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProvisionError("The Hub's answer was not a provisioning bundle")
@@ -184,6 +187,7 @@ public enum ProvisionImporter {
         b.certExpiry = str("cert_exp")
         b.reticulumTcp = str("ret_tcp")
         b.topicPrefix = str("mqtt_topic_prefix", HubTopics.platformPrefix)
+        b.dirSignPub = str("dir_sign_pub")
         return b
     }
 
