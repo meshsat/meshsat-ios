@@ -132,8 +132,9 @@ extension GatewayController {
     }
 
     /// A message the 9704 brought in (GatewayService's receivedMessages collector). A kit's
-    /// encrypted chain opens with the "shared" key, asked for only when byte 0 is the version byte;
-    /// one that does not open is kept as it came, marked encrypted, and never forwarded.
+    /// encrypted chain opens with the "iridium:shared" key, asked for only when byte 0 is the
+    /// version byte, on the chain this phone is set to first and then the other (r33 review
+    /// R33-R2); one that does not open is kept as it came, marked encrypted, and never forwarded.
     func storeIridium9704Mt(_ payload: [UInt8]) async {
         var imei = await imt.driver.modemInfo.imei
         if imei.isEmpty { imei = "9704" }
@@ -143,8 +144,9 @@ extension GatewayController {
         let text: String
         let sealed: Bool
         var opened = true
-        switch SatelliteChain.readMt(payload, keyHex: key) {
-        case .text(let t, sealed: let s):
+        let preferred = SatelliteChain.chainOf(settings.get(SettingsKey.satelliteChain)) ?? .h
+        switch SatelliteChain.readMt(payload, keyHex: key, preferred: preferred) {
+        case .text(let t, sealed: let s, _):
             text = t
             sealed = s
         case .unopened(let reason):
@@ -251,10 +253,11 @@ extension GatewayController {
         guard await imtDriver.state == .ready else { return "9704 not ready" }
         let text = payload.isEmpty ? Array(textPreview.utf8) : payload
         var data = text
-        // The kits' encrypted chain when it is set (MESHSAT-1623), read at send time. Android
+        // The kits' encrypted chain when it is set (MESHSAT-1623), the H chain or the legacy one
+        // they ran before it (the agreed rollback, r33 review R33-R2), read at send time. Android
         // holds the message when its setting cannot be read; a UserDefaults read cannot fail. A
         // message that cannot be sealed is never sent as plaintext instead.
-        if settings.get(SettingsKey.satelliteChain) == SatelliteChain.modeSealed {
+        if let chain = SatelliteChain.chainOf(settings.get(SettingsKey.satelliteChain)) {
             // An SOS or a burst goes as it is, which only the delivery's msgRef tells: a delivery
             // that cannot be read waits rather than be guessed at.
             var msgRef = ""
@@ -268,7 +271,7 @@ extension GatewayController {
             if SatelliteChain.sealsDelivery(msgRef: msgRef, payload: text) {
                 let key = await satelliteChainKey()
                 do {
-                    data = try SatelliteChain.seal(text, keyHex: key)
+                    data = try SatelliteChain.seal(text, keyHex: key, chain: chain)
                 } catch {
                     return "\(Dispatcher.never) Not sent: \(error). "
                         + "Enter the kit's iridium \"shared\" key in Setup > Satellite, or set the satellite chain to plain."
@@ -283,15 +286,19 @@ extension GatewayController {
         return nil
     }
 
-    /// The key the kits' satellite chain names (iridium:shared): the conversation key stored for
-    /// "shared" (the satellite settings, or a Hub key_rotate naming that address); nil when there
-    /// is none or it cannot be read.
+    /// The key the kits' satellite chains name, stored under exactly "iridium:shared" (the
+    /// satellite settings' key field) and never read by the address alone, which another channel's
+    /// "shared" can take: a Hub key_rotate stores its key under the address alone, and the chain
+    /// never reads that (r33 review R33-R3). Nil when there is none or it cannot be read.
     func satelliteChainKey() async -> String? {
-        do {
-            return try await db.conversationKeys.getBySender(SatelliteChain.keyAddress)?.hexKey
-        } catch {
-            Self.log.warning("Satellite chain key could not be read: \(error)")
-            return nil
+        let keys = db.conversationKeys
+        return await SatelliteChain.key { name in
+            do {
+                return try await keys.getBySender(name)?.hexKey
+            } catch {
+                Self.log.warning("Satellite chain key could not be read: \(error)")
+                return nil
+            }
         }
     }
 }

@@ -124,26 +124,39 @@ struct NodeModemRows: View {
             // What the 9704 sends, and what this phone tells the Hub, which keeps an encrypted
             // modem's messages opaque.
             SettingRow("Satellite chain") {
-                ModeChips(
-                    [
-                        (SatelliteChain.modeUndeclared, "Not set"), (SatelliteChain.modePlain, "Plain"),
-                        (SatelliteChain.modeSealed, "Encrypted"),
-                    ],
-                    selected: settings.string(SettingsKey.satelliteChain)
-                ) { settings.set(SettingsKey.satelliteChain, $0) }
+                // Four chips do not fit beside the label on a phone: they scroll, as on Android.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    ModeChips(
+                        [
+                            (SatelliteChain.modeUndeclared, "Not set"), (SatelliteChain.modePlain, "Plain"),
+                            (SatelliteChain.modeSealed, "Encrypted"), (SatelliteChain.modeLegacy, "Encrypted (old)"),
+                        ],
+                        selected: settings.string(SettingsKey.satelliteChain)
+                    ) { settings.set(SettingsKey.satelliteChain, $0) }
+                }
             }
-            if settings.string(SettingsKey.satelliteChain) == SatelliteChain.modeSealed {
-                Text(
-                    "Texts go out as the kits send them: compressed and encrypted with the kit's iridium \"shared\" key, "
-                        + "entered below. Without that key nothing is sent."
-                )
-                .msText(.bodySmall, color: MSColors.textMuted)
+            if let hint = chainHint {
+                Text(hint).msText(.bodySmall, color: MSColors.textMuted)
                 chainKeyRows
             }
             if settings.imtState == .ready {
                 if !settings.imtInfo.imei.isEmpty { InfoRow("IMEI", settings.imtInfo.imei) }
                 if !settings.imtInfo.serial.isEmpty { InfoRow("Serial", settings.imtInfo.serial) }
             }
+        }
+    }
+
+    /// What the chosen chain does; nil for plain or nothing set. The rollback chain is Android's
+    /// words; the H chain's names the key field below, as iOS cannot import a key bundle yet.
+    private var chainHint: String? {
+        switch settings.string(SettingsKey.satelliteChain) {
+        case SatelliteChain.modeSealed:
+            "Texts go out as the kits send them: compressed and encrypted with the kit's iridium \"shared\" key, "
+                + "entered below. Without that key nothing is sent."
+        case SatelliteChain.modeLegacy:
+            "The kits' chain from before, for a kit that has not switched: compressed, encrypted, base64, with the same key."
+        default:
+            nil
         }
     }
 

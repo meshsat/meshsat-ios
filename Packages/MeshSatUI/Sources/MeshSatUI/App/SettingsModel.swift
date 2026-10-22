@@ -32,7 +32,7 @@ public final class SettingsModel {
     public private(set) var imtState: Iridium9704Driver.State = .disconnected
     public private(set) var imtInfo = Iridium9704Driver.ModemInfo()
     public private(set) var imtSignal = 0
-    /// A key is stored for the kits' encrypted satellite chain (the conversation key of "shared").
+    /// A key is stored for the kits' encrypted satellite chains (the conversation key of "iridium:shared").
     public private(set) var satelliteChainKeySet = false
     private var tasks: [Task<Void, Never>] = []
     private var hubTasks: [Task<Void, Never>] = []
@@ -191,19 +191,20 @@ public final class SettingsModel {
     }
 
     public func refreshSatelliteChainKey() async {
-        let key = try? await gateway.db.conversationKeys.getBySender(SatelliteChain.keyAddress)
+        let key = try? await gateway.db.conversationKeys.getBySender(SatelliteChain.keyRef)
         satelliteChainKeySet = key != nil
     }
 
-    /// The kit's iridium "shared" key, kept as the conversation key of "shared", where the chain
-    /// reads it: Android imports it with the kit's key bundle, which iOS cannot read yet. False
-    /// for anything but 64 hex characters, or a key that could not be stored.
+    /// The kit's iridium "shared" key, kept as the conversation key of exactly "iridium:shared",
+    /// where the chain reads it (never under the address alone, r33 review R33-R3): Android imports
+    /// it with the kit's key bundle, which iOS cannot read yet. False for anything but 64 hex
+    /// characters, or a key that could not be stored.
     public func saveSatelliteChainKey(_ hex: String) async -> Bool {
         let key = hex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard key.utf8.count == 64, Hex.decode(key) != nil else { return false }
         do {
             try await gateway.db.conversationKeys.upsert(
-                ConversationKey(sender: SatelliteChain.keyAddress, hexKey: key, label: "kit-iridium-shared"))
+                ConversationKey(sender: SatelliteChain.keyRef, hexKey: key, label: "kit-iridium-shared"))
         } catch {
             return false
         }
@@ -212,7 +213,7 @@ public final class SettingsModel {
     }
 
     public func removeSatelliteChainKey() async {
-        try? await gateway.db.conversationKeys.deleteBySender(SatelliteChain.keyAddress)
+        try? await gateway.db.conversationKeys.deleteBySender(SatelliteChain.keyRef)
         await refreshSatelliteChainKey()
     }
 }

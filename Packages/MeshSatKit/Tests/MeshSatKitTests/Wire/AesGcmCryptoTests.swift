@@ -41,6 +41,11 @@ final class AesGcmCryptoTests: XCTestCase {
         tampered[14] ^= 0x01
         XCTAssertThrowsError(try AesGcmCrypto.decrypt(tampered, hexKey: testKey))
         XCTAssertThrowsError(try AesGcmCrypto.decrypt([UInt8](repeating: 0, count: 20), hexKey: testKey))
+        // An empty message is nonce and tag only, and opens to nothing (MESHSAT-1624).
+        let empty = try AesGcmCrypto.encrypt([], hexKey: testKey)
+        XCTAssertEqual(empty.count, 28)
+        XCTAssertEqual(try AesGcmCrypto.decrypt(empty, hexKey: testKey), [])
+        XCTAssertThrowsError(try AesGcmCrypto.decrypt(Array(empty.dropLast()), hexKey: testKey))
     }
 
     /// A message the Hub encrypted with Go's crypto/cipher (nonce prepended) decrypts here.

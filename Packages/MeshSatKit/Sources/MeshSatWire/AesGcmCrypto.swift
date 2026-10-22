@@ -46,8 +46,10 @@ public enum AesGcmCrypto {
         return Array(nonce) + Array(sealed.ciphertext) + Array(sealed.tag)
     }
 
+    /// An empty plaintext is a message too (the legacy satellite chain's empty text is nonce and
+    /// tag only), as Go and Android open it; shorter than nonce and tag is refused.
     public static func decrypt(_ data: [UInt8], hexKey: String) throws -> [UInt8] {
-        guard data.count > nonceSize + tagSize else { throw KeyError(description: "Data too short for AES-GCM") }
+        guard data.count >= nonceSize + tagSize else { throw KeyError(description: "Data too short for AES-GCM") }
         let nonce = try AES.GCM.Nonce(data: data[0..<nonceSize])
         let body = data[nonceSize...]
         let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: body.dropLast(tagSize), tag: body.suffix(tagSize))

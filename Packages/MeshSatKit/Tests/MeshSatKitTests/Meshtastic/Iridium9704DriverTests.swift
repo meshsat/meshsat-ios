@@ -10,14 +10,19 @@ import XCTest
 
 @testable import MeshSatMeshtastic
 
-/// A virtual clock whose sleeps also take a hundredth of their time for real, so several loops
-/// sleeping on it at once cannot race its time ahead of the work they wait for.
+/// A virtual clock whose sleeps also take a fraction of their time for real (a hundredth by
+/// default), so several loops sleeping on it at once cannot race its time ahead of the work they
+/// wait for.
 final class PacedClock: DriverClock, @unchecked Sendable {
     private let lock = NSLock()
     private var now: Int64
+    private let realDivisor: UInt64
 
     /// 2026-10-21T13:00:00Z by default.
-    init(startMs: Int64 = 1_792_587_600_000) { now = startMs }
+    init(startMs: Int64 = 1_792_587_600_000, realDivisor: UInt64 = 100) {
+        now = startMs
+        self.realDivisor = realDivisor
+    }
 
     func nowMs() -> Int64 {
         lock.lock()
@@ -33,7 +38,7 @@ final class PacedClock: DriverClock, @unchecked Sendable {
 
     func sleep(ms: Int64) async {
         advance(ms: ms)
-        try? await Task.sleep(nanoseconds: UInt64(max(ms, 1)) * 10_000)
+        try? await Task.sleep(nanoseconds: UInt64(max(ms, 1)) * 1_000_000 / realDivisor)
     }
 }
 
@@ -417,6 +422,44 @@ final class Iridium9704DriverTests: XCTestCase {
         // Handed on anyway, as Android does: the application layer decides.
         XCTAssertEqual(got.list, [payload])
         watcher.cancel()
+        await driver.detach()
+    }
+
+    /// Iridium9704ChainTest.kt's coordinated switch and rollback (r33 review R33-R2), through what
+    /// the gateway does: the setting picks the chain (chainOf), the driver carries the wire both
+    /// ways, and the receive side opens it on the chain the phone is set to. H, then the legacy
+    /// chain, then H again.
+    func testHRollbackToTheLegacyChainAndHAgainOutAndInThroughTheDriver() async throws {
+        let modem = FakeJsprModem()
+        let driver = await ready(modem)
+        let got = Collected<[UInt8]>()
+        await driver.setMtSink { got.add($0) }
+        let key = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        let texts = [
+            SatelliteChain.modeSealed: "first on the H chain, όλα καλά",
+            SatelliteChain.modeLegacy: "rolled back to the old chain, όλα καλά",
+        ]
+        for mode in [SatelliteChain.modeSealed, SatelliteChain.modeLegacy, SatelliteChain.modeSealed] {
+            let chain = try XCTUnwrap(SatelliteChain.chainOf(mode))
+            let text = try XCTUnwrap(texts[mode])
+            let wire = try SatelliteChain.seal(Array(text.utf8), keyHex: key, chain: chain)
+            let status = await driver.sendMessageBlocking(wire)
+            XCTAssertEqual(status, "mo_ack_received", "\(mode) out")
+            let out = Array(modem.moReceived.dropLast(2))
+            XCTAssertEqual(out, wire, "\(mode) out")
+            XCTAssertEqual(try SatelliteChain.open(out, keyHex: key, chain: chain), Array(text.utf8), "\(mode) opens on its chain")
+
+            let before = got.list.count
+            await deliver(wire + crcBytes(wire), to: driver, by: modem)
+            let came = await eventually { got.list.count == before + 1 }
+            XCTAssertTrue(came, "\(mode) in")
+            guard came else { break }
+            let payload = got.list[before]
+            XCTAssertEqual(payload, wire, "\(mode) in")
+            XCTAssertEqual(
+                SatelliteChain.readMt(payload, keyHex: key, preferred: chain), .text(text, sealed: true, chain: chain),
+                "\(mode) reads on the phone's setting")
+        }
         await driver.detach()
     }
 

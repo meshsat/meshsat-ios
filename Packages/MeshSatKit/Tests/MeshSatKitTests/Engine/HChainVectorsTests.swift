@@ -11,7 +11,10 @@ import XCTest
 
 /// The vectors file as the Bridge writes it (meshsat internal/engine/h_chain_vectors_test.go).
 struct HChainVectors: Decodable {
-    struct Spec: Decodable { let protocolVersion: String }
+    struct Spec: Decodable {
+        let protocolVersion: String
+        let rollbackEgress: String
+    }
     struct Table: Decodable {
         let words: [String]
         let bigrams: String
@@ -43,6 +46,9 @@ struct HChainVectors: Decodable {
     let smaz2gReject: [FrameReject]
     let envelopes: [Envelope]
     let envelopeReject: [EnvelopeReject]
+    /// The rollback chain as parallax runs it (Bridge fc8dee08, r33 review R33-R2).
+    let legacyEnvelopes: [Envelope]
+    let legacyReject: [EnvelopeReject]
 
     /// The lock's lines ("key value"), and the file it names as it is and decoded.
     struct Locked {
@@ -203,7 +209,7 @@ final class HChainVectorsTests: XCTestCase {
             XCTAssertEqual(try TransformPipeline().applyIngress(Array(wire.dropFirst()), steps), text, "\(x.name) open")
             if x.dict == "meshtastic" {
                 XCTAssertEqual(try SatelliteChain.open(wire, keyHex: x.keyHex), text, "\(x.name) open")
-                XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: x.keyHex), .text(x.text, sealed: true), "\(x.name) readMt")
+                XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: x.keyHex), .text(x.text, sealed: true, chain: .h), "\(x.name) readMt")
             }
 
             // The version byte once: the nonce follows it, whatever its first byte.
@@ -226,7 +232,54 @@ final class HChainVectorsTests: XCTestCase {
             if bytes.first == SatelliteChain.protocolVersion {
                 guard case .unopened = mt else { return XCTFail("\(x.name) read as \(mt)") }
             } else {
-                guard case .text(_, sealed: false) = mt else { return XCTFail("\(x.name) read as \(mt)") }
+                guard case .text(_, sealed: false, _) = mt else { return XCTFail("\(x.name) read as \(mt)") }
+            }
+        }
+    }
+
+    func testTheRollbackChainMatchesTheBridgeByteForByteBothWaysAsParallaxRunsIt() throws {
+        let v = try HChainVectors.load().vectors
+        XCTAssertTrue(v.spec.rollbackEgress.hasPrefix("[{\"type\":\"smaz2\"},"), "the spec names parallax's chain, smaz2 with no dict")
+        XCTAssertGreaterThanOrEqual(v.legacyEnvelopes.count, 6)
+        var nonceOpensWithVersion = 0
+        for x in v.legacyEnvelopes {
+            XCTAssertEqual(x.dict, "default", "\(x.name) table")
+            let nonce = hexBytes(x.nonceHex)
+            let text = Array(x.text.utf8)
+            let wire = hexBytes(x.wireHex)
+            if nonce.first == SatelliteChain.protocolVersion { nonceOpensWithVersion += 1 }
+
+            // App to Bridge.
+            let pipeline = TransformPipeline()
+            pipeline.fixedNonce = nonce
+            let sealed = try SatelliteChain.seal(text, keyHex: x.keyHex, pipeline: pipeline, chain: .legacy)
+            XCTAssertEqual(Hex.encode(sealed), x.wireHex, "\(x.name) wire")
+            XCTAssertEqual(sealed.count, x.wireLen, "\(x.name) wire_len")
+
+            // Bridge to app, on the legacy setting and, while the ends switch, on the H setting too.
+            XCTAssertEqual(try SatelliteChain.open(wire, keyHex: x.keyHex, chain: .legacy), text, "\(x.name) open")
+            let want = SatelliteChain.MtMessage.text(x.text, sealed: true, chain: .legacy)
+            XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: x.keyHex, preferred: .legacy), want, "\(x.name) readMt legacy")
+            XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: x.keyHex, preferred: .h), want, "\(x.name) readMt from H")
+            // One version byte, then base64 text.
+            XCTAssertEqual(wire.first, SatelliteChain.protocolVersion)
+            let alphabet = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".utf8)
+            XCTAssertTrue(wire.dropFirst().allSatisfy { alphabet.contains($0) }, "\(x.name) base64 after the version byte")
+        }
+        XCTAssertGreaterThanOrEqual(nonceOpensWithVersion, 1, "a legacy vector's nonce starts with 0x01")
+    }
+
+    func testARollbackWireThatDoesNotOpenIsRefusedOnEitherSetting() throws {
+        let vectors = try HChainVectors.load().vectors.legacyReject
+        XCTAssertGreaterThanOrEqual(vectors.count, 5)
+        for x in vectors {
+            let bytes = hexBytes(x.bytesHex)
+            XCTAssertThrowsError(try SatelliteChain.open(bytes, keyHex: x.keyHex, chain: .legacy), "\(x.name) opened") { error in
+                XCTAssertTrue(error is TransformError, "\(x.name): \(error)")
+            }
+            for preferred in SatelliteChain.Chain.allCases {
+                let mt = SatelliteChain.readMt(bytes, keyHex: x.keyHex, preferred: preferred)
+                guard case .unopened = mt else { return XCTFail("\(x.name) on \(preferred) read as \(mt)") }
             }
         }
     }

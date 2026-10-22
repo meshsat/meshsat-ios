@@ -179,6 +179,7 @@ final class SatelliteChainTests: XCTestCase {
         XCTAssertNil(none["egress_sealed"])
 
         XCTAssertEqual(SatelliteChain.egressFormat(SatelliteChain.modeSealed), "sealed")
+        XCTAssertEqual(SatelliteChain.egressFormat(SatelliteChain.modeLegacy), "sealed", "the rollback chain is sealed too")
         XCTAssertEqual(SatelliteChain.egressFormat(SatelliteChain.modePlain), "plain")
         XCTAssertNil(SatelliteChain.egressFormat(SatelliteChain.modeUndeclared))
         XCTAssertNil(SatelliteChain.egressFormat(nil))
@@ -192,5 +193,83 @@ final class SatelliteChainTests: XCTestCase {
         let plain = HubReporter.modemDeclarations([imt(format: "plain")])
         XCTAssertNotEqual(late, plain)
         XCTAssertEqual(late, ["300000000000001:sealed"])
+    }
+
+    func testTheSettingPicksTheChainBothWays() {
+        XCTAssertEqual(SatelliteChain.chainOf(SatelliteChain.modeSealed), .h)
+        XCTAssertEqual(SatelliteChain.chainOf(SatelliteChain.modeLegacy), .legacy)
+        XCTAssertNil(SatelliteChain.chainOf(SatelliteChain.modePlain))
+        XCTAssertNil(SatelliteChain.chainOf(SatelliteChain.modeUndeclared))
+        XCTAssertNil(SatelliteChain.chainOf(nil))
+        // The rollback chain is parallax's: smaz2 with no dict (the default table), encrypt, base64.
+        XCTAssertEqual(
+            SatelliteChain.Chain.legacy.steps(keyHex: key),
+            [TransformSpec(type: "smaz2"), TransformSpec(type: "encrypt", params: ["key": key]), TransformSpec(type: "base64")])
+    }
+
+    /// The review's A3, which reproduced R33-R2 on Android 2.22.0, now with parallax's chain: it opens.
+    func testALegacyWireFromTheGeneralPipelineOpensOnTheSatellitePath() throws {
+        let text = Array("hello there, the satellite is in range".utf8)
+        let legacy = [TransformSpec(type: "smaz2"), TransformSpec(type: "encrypt", params: ["key": key]), TransformSpec(type: "base64")]
+        let pipeline = TransformPipeline()
+        let wire: [UInt8] = [1] + (try pipeline.applyEgress(text, legacy))
+        XCTAssertEqual(try pipeline.applyIngress(Array(wire.dropFirst()), legacy), text)
+        let want = SatelliteChain.MtMessage.text(String(decoding: text, as: UTF8.self), sealed: true, chain: .legacy)
+        XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: key, preferred: .legacy), want)
+        XCTAssertEqual(SatelliteChain.readMt(wire, keyHex: key, preferred: .h), want)
+        // And an H wire still opens on the legacy setting, by its own tag.
+        let h = try SatelliteChain.seal(text, keyHex: key)
+        let opened = SatelliteChain.MtMessage.text(String(decoding: text, as: UTF8.self), sealed: true, chain: .h)
+        XCTAssertEqual(SatelliteChain.readMt(h, keyHex: key, preferred: .legacy), opened)
+        // Wrong key: neither chain reads it.
+        guard case .unopened = SatelliteChain.readMt(wire, keyHex: otherKey, preferred: .legacy) else { return XCTFail("opened") }
+    }
+
+    func testTheRollbackChainHasTheSameOneMessageLimitAtTheBoundaryAndNoFurther() throws {
+        // Wire = version byte + base64 of (nonce + smaz2 with the default table + tag).
+        func wireLen(_ b: ArraySlice<UInt8>) -> Int { 1 + 4 * ((28 + Smaz2Bytes.compress(Array(b), dict: .default).count + 2) / 3) }
+        // Bytes 0x01-0x08 are left out: the default table (lib-x) does not round trip them (the
+        // vectors' spec says so), so a pool with them could not open to itself. The chain only
+        // seals UTF-8 text.
+        var rng = SeededBytes(seed: 1623)
+        let pool = rng.next(SatelliteChain.maxWireBytes).map { (1...8).contains($0) ? $0 | 0x40 : $0 }
+        var lo = 1
+        var hi = pool.count
+        while lo < hi {  // the longest prefix whose wire fits
+            let mid = (lo + hi + 1) / 2
+            if wireLen(pool[..<mid]) <= SatelliteChain.maxWireBytes { lo = mid } else { hi = mid - 1 }
+        }
+        // SMAZ2 is not monotonic byte by byte (a bigram can take the last byte back), so the edge is
+        // walked to where one more byte no longer fits.
+        while lo < pool.count, wireLen(pool[..<(lo + 1)]) <= SatelliteChain.maxWireBytes { lo += 1 }
+        let most = Array(pool[..<lo])
+        let wire = try SatelliteChain.seal(most, keyHex: key, chain: .legacy)
+        XCTAssertEqual(wire.count, wireLen(most[...]))
+        XCTAssertLessThanOrEqual(wire.count, SatelliteChain.maxWireBytes)
+        XCTAssertEqual(try SatelliteChain.open(wire, keyHex: key, chain: .legacy), most)
+        expectRefused("one byte over") { try SatelliteChain.seal(Array(pool[..<(lo + 1)]), keyHex: self.key, chain: .legacy) }
+    }
+
+    /// R33-R3: the chain's key is the one stored as exactly "iridium:shared". A "shared" key under
+    /// another name (the address alone, another channel's) is never used, and with none the send
+    /// fails closed.
+    func testTheKeyIsReadAsIridiumSharedOnlyAndAnAbsentOneFailsClosed() async throws {
+        let rows = ["shared": otherKey, "mesh:shared": otherKey]
+        let asked = Collected<String>()
+        let none = await SatelliteChain.key { name in
+            asked.add(name)
+            return rows[name]
+        }
+        XCTAssertNil(none, "a shared key under another name is never used")
+        XCTAssertEqual(asked.list, [SatelliteChain.keyRef])
+        XCTAssertEqual(SatelliteChain.keyRef, "iridium:shared")
+        expectRefused("no key") { try SatelliteChain.seal(self.greek, keyHex: none) }
+        let found = await SatelliteChain.key { name in name == "iridium:shared" ? self.key : rows[name] }
+        XCTAssertEqual(found, key)
+        // What is stored there must be a key: a reference or a short value is none.
+        let reference = await SatelliteChain.key { _ in "convkey:shared" }
+        XCTAssertNil(reference)
+        let short = await SatelliteChain.key { _ in String(self.key.prefix(62)) }
+        XCTAssertNil(short)
     }
 }
