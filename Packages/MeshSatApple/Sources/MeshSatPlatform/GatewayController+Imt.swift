@@ -11,6 +11,7 @@ import Foundation
 import MeshSatEngine
 import MeshSatMeshtastic
 import MeshSatNet
+import MeshSatReticulum
 import MeshSatStore
 import MeshSatWire
 
@@ -91,7 +92,7 @@ extension GatewayController {
         let imtDriver = imt.driver
         keep(
             Task { [self] in
-                await imtDriver.setMtSink { [self] payload in await storeIridium9704Mt(payload) }
+                await imtDriver.setMtSink { [self] payload in _ = await storeIridium9704Mt(payload) }
             })
         keep(
             Task { [self] in
@@ -131,14 +132,34 @@ extension GatewayController {
         await disp.drainNow(channelId: "iridium_0", reason: reason)
     }
 
-    /// A message the 9704 brought in (GatewayService's receivedMessages collector). A kit's
-    /// encrypted chain opens with the "iridium:shared" key, asked for only when byte 0 is the
-    /// version byte, on the chain this phone is set to first and then the other (r33 review
-    /// R33-R2); one that does not open is kept as it came, marked encrypted, and never forwarded.
-    func storeIridium9704Mt(_ payload: [UInt8]) async {
+    /// What the MT handler did with one IMT payload.
+    enum ImtMtOutcome: Equatable {
+        /// A framed Reticulum packet: not stored, shown or forwarded.
+        case reticulumFrame
+        /// A repeat of a payload already handled.
+        case duplicate
+        /// A text: stored, notified and handed to the forwarding rules.
+        case text(sealed: Bool)
+        /// A versioned payload that did not open: stored as it came and notified, never forwarded.
+        case unopened
+    }
+
+    /// A message the 9704 brought in (GatewayService's receivedMessages collector). A framed
+    /// Reticulum packet is the node's, not a text: iOS has no Reticulum interface on the 9704 yet,
+    /// so it is logged and dropped, never stored, shown or forwarded (Android's
+    /// ImtFraming.isFramed, r34 review R34-R1). A kit's encrypted chain opens with the
+    /// "iridium:shared" key, asked for only when byte 0 is the version byte, on the chain this
+    /// phone is set to first and then the other (r33 review R33-R2); one that does not open is kept
+    /// as it came, marked encrypted, and never forwarded.
+    @discardableResult
+    func storeIridium9704Mt(_ payload: [UInt8]) async -> ImtMtOutcome {
+        if RnsImtFraming.isFramed(payload) {
+            Self.log.info("Iridium 9704: a Reticulum packet (\(payload.count) bytes) came in; no Reticulum interface on the 9704, dropped")
+            return .reticulumFrame
+        }
         var imei = await imt.driver.modemInfo.imei
         if imei.isEmpty { imei = "9704" }
-        if deduplicator.isDuplicateKey("iridium9704:" + Deduplicator.stableKey(Hex.encode(payload))) { return }
+        if deduplicator.isDuplicateKey("iridium9704:" + Deduplicator.stableKey(Hex.encode(payload))) { return .duplicate }
         let text: String
         let sealed: Bool
         var opened = true
@@ -161,8 +182,9 @@ extension GatewayController {
                 rawText: sealed ? Base64Std.encode(payload) : "", encrypted: sealed))
         messageNotifications.send((title: "Iridium 9704: \(imei)", text: text))
         interfaceManager.recordActivity("iridium_0")
-        guard opened else { return }
+        guard opened else { return .unopened }
         await evaluateAndForward(sourceInterface: "iridium_0", text: text, sender: imei)
+        return .text(sealed: sealed)
     }
 
     // MARK: The node's pipe
