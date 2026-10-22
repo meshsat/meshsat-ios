@@ -27,6 +27,11 @@ final class FakeDirectoryHttp: HttpGetter, @unchecked Sendable {
     }
 
     func get(_ url: String, headers: [String: String], timeoutSeconds: Double) async throws -> HttpResponse {
+        try take(url, headers)
+    }
+
+    // NSLock is not for async code: the lock is held in this synchronous step only.
+    private func take(_ url: String, _ headers: [String: String]) throws -> HttpResponse {
         lock.lock()
         defer { lock.unlock() }
         requests.append((url, headers))
