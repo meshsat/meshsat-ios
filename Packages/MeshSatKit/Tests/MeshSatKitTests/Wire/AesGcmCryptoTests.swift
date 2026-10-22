@@ -34,6 +34,15 @@ final class AesGcmCryptoTests: XCTestCase {
         XCTAssertTrue(AesGcmCrypto.isValidHexKey(key))
         XCTAssertTrue(AesGcmCrypto.isValidHexKey(testKey.uppercased()))
         XCTAssertFalse(AesGcmCrypto.isValidHexKey("abc"))
+        // A fullwidth digit is a hex digit to Character.isHexDigit, but no key byte: the check must refuse
+        // exactly what encrypt refuses. [MESHSAT-1629]
+        let fullwidth = "\u{FF10}" + String(testKey.dropFirst())
+        XCTAssertEqual(fullwidth.count, 64)
+        XCTAssertFalse(AesGcmCrypto.isValidHexKey(fullwidth))
+        XCTAssertThrowsError(try AesGcmCrypto.encrypt([1], hexKey: fullwidth))
+        XCTAssertFalse(AesGcmCrypto.isValidHexKey("\u{0660}" + String(testKey.dropFirst())), "an Arabic-Indic digit")
+        XCTAssertFalse(AesGcmCrypto.isValidHexKey(String(testKey.dropFirst()) + "g"))
+        XCTAssertFalse(AesGcmCrypto.isValidHexKey(testKey + "0"))
         XCTAssertThrowsError(try AesGcmCrypto.encrypt([1], hexKey: "0011"))
         let enc = try AesGcmCrypto.encrypt(Array("x".utf8), hexKey: testKey)
         XCTAssertThrowsError(try AesGcmCrypto.decrypt(enc, hexKey: AesGcmCrypto.generateKey()), "a wrong key fails the tag")

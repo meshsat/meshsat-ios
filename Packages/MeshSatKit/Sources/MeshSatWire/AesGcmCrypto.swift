@@ -74,6 +74,9 @@ public enum AesGcmCrypto {
         return decoded.count > nonceSize + tagSize
     }
 
-    /// 64 hex characters, either case.
-    public static func isValidHexKey(_ s: String) -> Bool { s.count == 64 && s.allSatisfy { $0.isHexDigit } }
+    /// 64 ASCII hex characters, either case: exactly the keys `key(_:)` turns into 32 bytes.
+    /// `Character.isHexDigit` also takes fullwidth digits, which the encrypt step then refuses. [MESHSAT-1629]
+    public static func isValidHexKey(_ s: String) -> Bool {
+        s.utf8.count == 64 && s.utf8.allSatisfy { (0x30...0x39).contains($0) || (0x41...0x46).contains($0) || (0x61...0x66).contains($0) }
+    }
 }
