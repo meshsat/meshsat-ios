@@ -102,6 +102,16 @@ public final class GatewayController: @unchecked Sendable {
         hubMsgRouteValue = r
         lock.unlock()
     }
+    /// The Hub's signed tenant directory (HeMB-NG C9.5, MESHSAT-1643): GatewayController+Directory.
+    public let hubDirectory: HubDirectoryStore
+    private var hubDirectoryTask: Task<Void, Never>?
+    func setHubDirectoryTask(_ task: Task<Void, Never>?) {
+        lock.lock()
+        let old = hubDirectoryTask
+        hubDirectoryTask = task
+        lock.unlock()
+        old?.cancel()
+    }
     private var hubRelayValue: RelayBridgeTransport?
     /// The Hub relay client, when a target bridge is configured (MESHSAT-1157).
     public var hubRelay: RelayBridgeTransport? {
@@ -219,6 +229,10 @@ public final class GatewayController: @unchecked Sendable {
         self.imt = ImtParts(clock: clock)
         self.interfaceManager = InterfaceManager(clock: clock)
         self.creditTracker = CreditTracker(store: db.iridiumCredits)
+        let support =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        self.hubDirectory = HubDirectoryStore(url: support.appendingPathComponent("hub_directory.json"))
         self.provisionClaim = ProvisionClaim(http: UrlSessionHttpGetter(), applier: provisionApplier)
         provisionApplier.gateway = self
     }
@@ -286,6 +300,7 @@ public final class GatewayController: @unchecked Sendable {
             setHubReporter(nil)
             Task { await hub.stop() }
         }
+        setHubDirectoryTask(nil)
         stopHubRelay()
         stopReticulum()
         stopAprs()

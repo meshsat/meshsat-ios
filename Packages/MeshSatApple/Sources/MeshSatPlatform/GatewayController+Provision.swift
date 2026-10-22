@@ -45,6 +45,8 @@ extension GatewayController {
                     certNotAfter: bundle.certExpiry.isEmpty ? nil : bundle.certExpiry, certSubject: "CN=\(bundle.bridgeId)",
                     version: 1, source: "qr", receivedAt: clock.nowMs()))
         }
+        // The directory key: pinned from the bundle, never replaced by the HTTPS bootstrap (MESHSAT-1643).
+        pinDirectoryKey(from: bundle)
         Self.log.info("Hub provisioned: \(bundle.bridgeId) -> \(bundle.mqttUrl)")
         // The gateway reads the Hub settings when the Hub client starts (MESHSAT-749).
         await restartHubReporter()
@@ -57,6 +59,7 @@ extension GatewayController {
             interfaceManager.setOffline("hub_0")
             await hub.stop()
         }
+        setHubDirectoryTask(nil)
         if settings.get(SettingsKey.hubEnabled) { interfaceManager.enable("hub_0") } else { interfaceManager.disable("hub_0") }
         initHubReporter()
         // The relay rides on the same identity, so it starts again on it too.

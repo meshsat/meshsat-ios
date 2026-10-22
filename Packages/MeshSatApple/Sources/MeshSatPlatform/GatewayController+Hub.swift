@@ -64,6 +64,7 @@ extension GatewayController {
         reporter.start()
         setHubReporter(reporter)
         Self.log.info("Hub Reporter initialized: bridge=\(bridgeId)")
+        startHubDirectory(reporter, bridgeId: bridgeId)
         // hub_0 follows this client (MESHSAT-1261).
         keep(
             Task { [self] in

@@ -274,6 +274,21 @@ final class HubDirectoryTests: XCTestCase {
         XCTAssertEqual(HubDirectoryStore(url: url).current, DirectoryState())
     }
 
+    func testTheStoreAnnouncesEverySavedState() async throws {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = HubDirectoryStore(url: url)
+        var it = store.changes.subscribe().makeAsyncIterator()
+        let first = await it.next()
+        XCTAssertEqual(first, DirectoryState(), "the current state first")
+        var next = DirectoryState()
+        next.tenantId = "acme"
+        try store.save(next)
+        let second = await it.next()
+        XCTAssertEqual(second?.tenantId, "acme")
+        XCTAssertEqual(store.changes.value.tenantId, "acme")
+    }
+
     // MARK: the client
 
     private func keyAnswer(_ pkixB64: String, id: String? = nil) -> HttpResponse {

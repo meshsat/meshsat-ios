@@ -8,10 +8,14 @@ public final class HubDirectoryStore: @unchecked Sendable {
     private let url: URL
     private let lock = NSLock()
     private var state: DirectoryState
+    /// Every state saved, the current one first to each new subscriber (the screen that shows it).
+    public let changes: StateBroadcast<DirectoryState>
 
     public init(url: URL) {
         self.url = url
-        state = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(DirectoryState.self, from: $0) } ?? DirectoryState()
+        let loaded = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(DirectoryState.self, from: $0) } ?? DirectoryState()
+        state = loaded
+        changes = StateBroadcast(loaded)
     }
 
     public var current: DirectoryState {
@@ -40,6 +44,7 @@ public final class HubDirectoryStore: @unchecked Sendable {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(s).write(to: url, options: .atomic)
         state = s
+        changes.send(s)
     }
 }
 
