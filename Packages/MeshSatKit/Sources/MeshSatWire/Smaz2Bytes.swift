@@ -73,9 +73,11 @@ public enum Smaz2Bytes {
                 continue
             }
             let ch = s[pos]
-            // lib-x writes bytes 1-8 as they are (its decoder reads them as escapes).
+            // Bytes 1-8 are escape codes to every decoder, so each goes out as its own verbatim run
+            // (1, the byte), as the Bridge's compressor does since MESHSAT-1626; lib-x wrote them as
+            // they are and the text came back as other bytes.
             if (1...8).contains(ch) {
-                dst.append(ch)
+                dst += [1, ch]
                 pos += 1
                 verbatimLen = 0
                 continue

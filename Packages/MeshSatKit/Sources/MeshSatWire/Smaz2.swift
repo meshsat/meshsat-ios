@@ -110,10 +110,11 @@ public enum Smaz2 {
                     continue
                 }
             }
-            // Bytes 1 to 8 encode themselves.
+            // Bytes 1 to 8 are escape codes to every decoder: each goes out as its own verbatim run
+            // (1, the byte), as the Bridge and Smaz2Bytes do. [MESHSAT-1626]
             let ch = sb[pos]
             if (1...8).contains(ch) {
-                dst.append(ch)
+                dst += [1, ch]
                 pos += 1
                 verbatimLen = 0
                 continue

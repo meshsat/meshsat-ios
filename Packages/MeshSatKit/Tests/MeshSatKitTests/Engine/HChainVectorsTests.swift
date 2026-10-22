@@ -106,7 +106,6 @@ final class HChainVectorsTests: XCTestCase {
     func testSmaz2WithEitherTableMatchesTheBridgeBothWays() throws {
         let vectors = try HChainVectors.load().vectors.smaz2
         XCTAssertGreaterThanOrEqual(vectors.count, 30)
-        var lossy = 0
         for x in vectors {
             let name = "\(x.name) (\(x.dict))"
             let dict = Smaz2Dict.of(x.dict)
@@ -114,17 +113,12 @@ final class HChainVectorsTests: XCTestCase {
             XCTAssertEqual(Array(x.text.utf8), text, "\(name) text_hex")
             let z = hexBytes(x.compressedHex)
             XCTAssertEqual(Hex.encode(Smaz2Bytes.compress(text, dict: dict)), x.compressedHex, "\(name) compress")
-            // What the Bridge's own decompressor returns, byte for byte, the text wherever it round trips.
+            // What the Bridge's own decompressor returns, byte for byte: the text, for every vector
+            // since bytes 0x01-0x08 go out as verbatim runs with the default table too. [MESHSAT-1626]
             let back = try Smaz2Bytes.decompress(z, dict: dict)
             XCTAssertEqual(Hex.encode(back), x.decompressedHex, "\(name) decompress")
-            if back != text {
-                lossy += 1
-                // Only the default table (lib-x) loses, and only bytes 0x01-0x08; the kits' table never does.
-                XCTAssertEqual(dict, .default, "\(name) loses")
-                XCTAssertTrue(text.contains { (1...8).contains($0) }, "\(name) loses")
-            }
+            XCTAssertEqual(back, text, "\(name) round trip")
         }
-        XCTAssertEqual(lossy, 1, "the one known lossy vector, default control_bytes")
     }
 
     /// The SMS codec (Smaz2, on String) compresses as the Bridge and reads every default-table
