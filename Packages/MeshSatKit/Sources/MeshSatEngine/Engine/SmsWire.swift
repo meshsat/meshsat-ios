@@ -115,8 +115,11 @@ public enum SmsWire {
     /// accented or emoji text, never a compressed payload in practice (its verbatim counts and
     /// word codes are control bytes, its bigram codes mostly stray bytes above 0x7F). [MESHSAT-1646]
     static func isPlainNonASCII(_ bytes: [UInt8]) -> Bool {
-        guard bytes.contains(where: { $0 >= 0x80 }), let s = String(validating: bytes, as: UTF8.self) else { return false }
-        return isPrintable(s)
+        guard bytes.contains(where: { $0 >= 0x80 }) else { return false }
+        // Valid UTF-8 only: decoding repairs a bad sequence with U+FFFD, so the bytes change.
+        // (String(validating:as:) would say it directly, but needs iOS 18; the app runs on 17.)
+        let s = String(decoding: bytes, as: UTF8.self)
+        return Array(s.utf8) == bytes && isPrintable(s)
     }
 
     /// Readable text, as Android's `SmsReceiver.smaz2Text`: tab, CR, LF and every scalar from U+0020

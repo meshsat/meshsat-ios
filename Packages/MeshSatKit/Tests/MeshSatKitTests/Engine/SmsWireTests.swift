@@ -99,6 +99,16 @@ final class SmsWireTests: XCTestCase {
         XCTAssertEqual(SmsWire.decode(e.body).text, e.body)
     }
 
+    /// Plain non-ASCII text is valid UTF-8 only, checked without the iOS 18 API (MESHSAT-1646).
+    func testPlainNonASCIINeedsValidUTF8() {
+        XCTAssertTrue(SmsWire.isPlainNonASCII(Array("Καλημέρα".utf8)))
+        XCTAssertFalse(SmsWire.isPlainNonASCII(Array("plain ascii".utf8)), "ASCII only is not this case")
+        XCTAssertFalse(SmsWire.isPlainNonASCII([0xCE]), "a lone lead byte")
+        XCTAssertFalse(SmsWire.isPlainNonASCII([0x41, 0xC0, 0xAF]), "an overlong form")
+        XCTAssertFalse(SmsWire.isPlainNonASCII([0xED, 0xA0, 0x80]), "a surrogate")
+        XCTAssertFalse(SmsWire.isPlainNonASCII(Array("\u{FFFD}x".utf8)), "U+FFFD is not readable text")
+    }
+
     func testPrintable() {
         XCTAssertTrue(SmsWire.isPrintable("Hello, world!\n"))
         XCTAssertTrue(SmsWire.isPrintable("café \u{1F44D}\t\r"))
