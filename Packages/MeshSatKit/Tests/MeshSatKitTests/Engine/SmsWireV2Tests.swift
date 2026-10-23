@@ -13,6 +13,8 @@ struct SmsWireV2Vectors: Decodable {
     struct Expect: Decodable {
         let status: String
         let text: String?
+        /// A key opened the SMS (the lock), apart from whether it reads (r41 review V1).
+        let encrypted: Bool
     }
     struct Vector: Decodable {
         let name: String
@@ -63,7 +65,7 @@ final class SmsWireV2Tests: XCTestCase {
         XCTAssertEqual(sha, loaded.lock["sha256"])
         XCTAssertEqual(loaded.vectors.vectors.count, 28)
         XCTAssertEqual(loaded.vectors.negative.count, 4)
-        XCTAssertEqual(loaded.vectors.legacy.count, 3)
+        XCTAssertEqual(loaded.vectors.legacy.count, 4)
     }
 
     func testEveryVectorReadsAsTypedClearOrSealed() throws {
@@ -76,7 +78,7 @@ final class SmsWireV2Tests: XCTestCase {
             // And through the receive path the app uses, with a wrong key tried first.
             let d = SmsWire.decode(c.sms, keys: [AesGcmCrypto.generateKey(), v.keyHex])
             XCTAssertEqual(d.text, c.expect.text, c.name)
-            XCTAssertEqual(d.wasEncrypted, c.mode == 1, c.name)
+            XCTAssertEqual(d.wasEncrypted, c.expect.encrypted, c.name)
             XCTAssertEqual(d.wasCompressed, c.codec != Int(SmsWireV2.codecText), c.name)
         }
     }
@@ -119,6 +121,7 @@ final class SmsWireV2Tests: XCTestCase {
             let d = SmsWire.decode(c.sms, keys: [v.keyHex])
             XCTAssertEqual(d.text, c.sms, "\(c.name): shown as it came")
             XCTAssertEqual(d.rawText, "", c.name)
+            XCTAssertEqual(d.wasEncrypted, c.expect.encrypted, c.name)
         }
         for c in v.vectors where c.mode == 1 {
             let raw = try XCTUnwrap(Base64Std.decode(c.sms), c.name)
@@ -133,11 +136,13 @@ final class SmsWireV2Tests: XCTestCase {
     /// "sara" is readable "¡", taken as the text, never decompressed.
     func testVersion1GoesToTheOldRule() throws {
         let v = try SmsWireV2Vectors.load().vectors
-        for c in v.legacy {
+        for c in v.legacy where c.name != Self.overlap {
             let raw = try XCTUnwrap(Base64Std.decode(c.sms), c.name)
             XCTAssertEqual(SmsWireV2.read(raw, open: open(v.keyHex)), .notV2, c.name)
-            if c.name.hasSuffix("_aesgcm") {
-                XCTAssertEqual(SmsWire.decode(c.sms, keys: [v.keyHex]).text, c.expect.text, c.name)
+            if c.expect.encrypted {
+                let d = SmsWire.decode(c.sms, keys: [v.keyHex])
+                XCTAssertEqual(d.text, c.expect.text, c.name)
+                XCTAssertTrue(d.wasEncrypted, c.name)
             }
         }
     }
@@ -168,5 +173,22 @@ final class SmsWireV2Tests: XCTestCase {
         let bare = Base64Std.encode(sealed)
         XCTAssertEqual(Array((Base64Std.decode(bare) ?? []).prefix(2)), [0x02, 0x01])
         XCTAssertEqual(SmsWire.decode(bare, keys: [key]).text, text, "unversioned, the nonce reads 02 01")
+    }
+
+    static let overlap = "legacy_encrypted_clear_header_overlap"
+
+    /// legacy_encrypted_clear_header_overlap (r41 review V2): an unversioned SMS the key opens whose
+    /// bytes also parse as a clear v2 frame. The receive path takes the key's reading, with the lock,
+    /// a wrong key tried first; without the key the clear frame is all there is.
+    func testLegacyEncryptedClearHeaderOverlapReadsAsTheKeyOpensIt() throws {
+        let v = try SmsWireV2Vectors.load().vectors
+        let c = try XCTUnwrap(v.legacy.first { $0.name == Self.overlap })
+        let raw = try XCTUnwrap(Base64Std.decode(c.sms))
+        guard case .text(_, encrypted: false, codec: SmsWireV2.codecText) = SmsWireV2.read(raw, open: { _ in nil }) else {
+            return XCTFail("the vector does not parse as a clear v2 frame")
+        }
+        let d = SmsWire.decode(c.sms, keys: [AesGcmCrypto.generateKey(), v.keyHex])
+        XCTAssertEqual(d.text, c.expect.text)
+        XCTAssertTrue(d.wasEncrypted)
     }
 }

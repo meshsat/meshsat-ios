@@ -4,8 +4,9 @@
 // byte for byte, so the steps are the Kotlin's:
 //
 //   send:    text -> frame (codec byte | smaz2 / MSVQ-SC / text) -> [AES-256-GCM] -> 0x02 mode -> base64
-//   receive: base64 -> v2: [decrypt] -> the codec the frame names -> text
+//   receive: base64 -> v2 sealed: decrypt -> the codec the frame names -> text
 //                   -> v1: version byte off -> [decrypt] -> smaz2 if it round trips, else MSVQ-SC
+//                   -> v2 clear, only when no key opened it the v1 way -> the codec it names
 //
 // Version 2 (SmsWireV2, r40 review R40-R1) is what this app sends; version 1 is still read.
 import Foundation
@@ -65,15 +66,17 @@ public enum SmsWire {
             return Decoded(text: text, rawText: "", wasEncrypted: false, wasCompressed: false)
         }
         let usable = autoDecrypt ? keys.filter { !$0.isEmpty } : []
-        // The app SMS wire v2: the frame names its codec, so nothing is guessed. A frame whose mode
-        // or codec this app does not read, or that no key opens, is shown as it came, unless the
-        // version 1 rule below opens it with a key: an old sender's random nonce can start 0x02.
+        // The app SMS wire v2: the frame names its codec, so nothing is guessed. What a key opens is
+        // read first: a sealed v2 frame here, version 1 or unversioned below. Only then a clear v2
+        // frame, which nothing authenticates: an old sender's random nonce, or a Bridge chain's, can
+        // start 02 00 with a rest that reads, and the key that opens it must win (r41 review V2). A
+        // frame whose mode or codec this app does not read, or that no key opens, is shown as it came.
         let v2 = SmsWireV2.read(
             rawBytes,
             open: { sealed in usable.lazy.compactMap { try? AesGcmCrypto.decrypt(sealed, hexKey: $0) }.first },
             msvqsc: codebook.map { cb in { try? cb.decode($0) } })
-        if case .text(let clear, let encrypted, let codec) = v2 {
-            return Decoded(text: clear, rawText: text, wasEncrypted: encrypted, wasCompressed: codec != SmsWireV2.codecText)
+        if case .text(let clear, encrypted: true, let codec) = v2 {
+            return Decoded(text: clear, rawText: text, wasEncrypted: true, wasCompressed: codec != SmsWireV2.codecText)
         }
         // Version 1 or unversioned.
         var payload = ProtocolVersion.stripVersionByte(rawBytes).data
@@ -86,6 +89,9 @@ public enum SmsWire {
                     break
                 }
             }
+        }
+        if case .text(let clear, encrypted: false, let codec) = v2, !wasEncrypted {
+            return Decoded(text: clear, rawText: text, wasEncrypted: false, wasCompressed: codec != SmsWireV2.codecText)
         }
         if case .kept(let encrypted) = v2, !wasEncrypted {
             return Decoded(text: text, rawText: "", wasEncrypted: encrypted, wasCompressed: false)
