@@ -28,10 +28,17 @@ public protocol IridiumPipeLink: AnyObject, Sendable {
     func chunkSize() -> Int
     /// Write `chunk` to the characteristic, acknowledged; the GattOpQueue status.
     func write(uuid: String, _ chunk: [UInt8]) async -> Int
+    /// The same ahead of the connection's other queued operations (MESHSAT-1674).
+    func writeUrgent(uuid: String, _ chunk: [UInt8]) async -> Int
     /// Turn notifications on or off; the GattOpQueue status of the descriptor write.
     func setNotify(uuid: String, on: Bool) async -> Int
     /// Read the characteristic; its value arrives through `IridiumBlePipe.onValue`.
     func read(uuid: String)
+}
+
+extension IridiumPipeLink {
+    /// A link without a priority lane writes urgent chunks the usual way.
+    public func writeUrgent(uuid: String, _ chunk: [UInt8]) async -> Int { await write(uuid: uuid, chunk) }
 }
 
 public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
@@ -53,6 +60,9 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
     /// Bytes the modem sent, for the AT driver.
     public let input = PipeInputBuffer()
     private let output: PipeOutputChunker
+    /// The same line for a write that must not wait behind the connection's other Bluetooth
+    /// operations: the 9704's MO segment answer (MESHSAT-1674).
+    private let urgentOutput: PipeOutputChunker
 
     /// False when the service lacks RX or TX: nothing here can be used.
     public var usable: Bool { link.hasRx && link.hasTx }
@@ -93,6 +103,14 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
                 }
                 guard link.hasRx else { return false }
                 return await link.write(uuid: IridiumPipeContract.rxUUID, chunk) == GattOpQueue.statusSuccess
+            })
+        urgentOutput = PipeOutputChunker(
+            chunkSize: { link.chunkSize() },
+            canWrite: { ownerState.value == .phone },
+            sendChunk: { chunk in
+                if refuseCheck.value { return false }
+                guard link.hasRx else { return false }
+                return await link.writeUrgent(uuid: IridiumPipeContract.rxUUID, chunk) == GattOpQueue.statusSuccess
             })
     }
 
@@ -280,6 +298,10 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
 
     public func write(_ bytes: [UInt8]) async throws {
         try await output.write(bytes)
+    }
+
+    public func writeUrgent(_ bytes: [UInt8]) async throws {
+        try await urgentOutput.write(bytes)
     }
 
     public func setReceiver(_ receiver: (@Sendable ([UInt8]) -> Void)?) {

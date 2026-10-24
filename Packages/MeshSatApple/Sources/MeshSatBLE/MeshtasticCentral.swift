@@ -478,6 +478,11 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
             let central = central
             return await q.enqueue("w:\(uuid)") { central.write(uuid: uuid, chunk) }.await()
         }
+        func writeUrgent(uuid: String, _ chunk: [UInt8]) async -> Int {
+            guard let q = central.currentOps() else { return GattOpQueue.statusClosed }
+            let central = central
+            return await q.enqueueUrgent("w:\(uuid)") { central.write(uuid: uuid, chunk) }.await()
+        }
         func setNotify(uuid: String, on: Bool) async -> Int {
             guard let q = central.currentOps() else { return GattOpQueue.statusClosed }
             let central = central

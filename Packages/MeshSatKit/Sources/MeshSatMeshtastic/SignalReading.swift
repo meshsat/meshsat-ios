@@ -1,6 +1,7 @@
 // Mirrors bt/SignalReading.kt (MESHSAT-1670): one 9704 signal reading with the time it was taken,
-// the rule for when the screens call it stale, and the signal reads' round trips for the bench.
-// The rule and the words are shared with MeshSat Android.
+// the rule for when the screens call it stale, and the signal reads' round trips for the bench;
+// and the timing of the modem's MO segment request (MESHSAT-1674). The rule and the words are
+// shared with MeshSat Android.
 
 /// One 9704 signal reading and the time it was taken: from an answered `GET constellationState` or
 /// an unsolicited `299 constellationState`. A read the modem did not answer is no reading, so it
@@ -89,4 +90,21 @@ public struct SignalPollStats: Sendable, Equatable {
         return SignalPollStats(
             answered: answered, missed: missed, minMs: sorted[0], medianMs: sorted[sorted.count / 2], maxMs: sorted[sorted.count - 1])
     }
+}
+
+/// One MO segment request and the app's answer (MESHSAT-1674): how long after `PUT messageOriginate`
+/// the modem asked, and how long the app took from reading the request to handing its answer to the
+/// link. The 9704 gives up after about 360 ms, counted at the modem.
+public struct SegmentTiming: Sendable, Equatable {
+    public let askedAfterMs: Int64
+    public let answeredInMs: Int64
+    public let segmentLength: Int
+    public init(askedAfterMs: Int64, answeredInMs: Int64, segmentLength: Int) {
+        self.askedAfterMs = askedAfterMs
+        self.answeredInMs = answeredInMs
+        self.segmentLength = segmentLength
+    }
+
+    /// "40 ms after the send, answered in 3 ms", as Android's Settings row.
+    public func describe() -> String { "\(askedAfterMs) ms after the send, answered in \(answeredInMs) ms" }
 }

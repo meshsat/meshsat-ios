@@ -59,6 +59,8 @@ public struct SettingsSatelliteSection: View {
                         SignalReadingRow(reading: settings.imtReading)
                         let stats = settings.imtPollStats.describe()
                         if !stats.isEmpty { InfoRow("Signal read (min / median / max)", stats) }
+                        // How fast the app answered the modem's last segment request (MESHSAT-1674).
+                        if let timing = settings.imtSegmentTiming { InfoRow("Last segment request", timing.describe()) }
                     }
                     NodeModemRows()
                     SettingRow("Use the node's modem") {

@@ -18,7 +18,15 @@ public enum PipeError: Error, Equatable, Sendable {
 /// synchronously, so what the modem says lands in the driver's buffer before the call returns.
 public protocol ModemLink: AnyObject, Sendable {
     func write(_ bytes: [UInt8]) async throws
+    /// A write that goes ahead of the link's other traffic where the link has a way to
+    /// (MESHSAT-1674): the 9704's MO segment answer, due within about 360 ms.
+    func writeUrgent(_ bytes: [UInt8]) async throws
     func setReceiver(_ receiver: (@Sendable ([UInt8]) -> Void)?)
+}
+
+extension ModemLink {
+    /// A link with one lane writes urgent bytes the usual way.
+    public func writeUrgent(_ bytes: [UInt8]) async throws { try await write(bytes) }
 }
 
 /// Bytes the node notified on TX, read by the AT driver. `offer` is called from the GATT

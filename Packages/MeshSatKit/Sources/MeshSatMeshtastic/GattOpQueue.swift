@@ -2,7 +2,9 @@
 // Android refuses or silently drops an operation issued while another is in flight, which is
 // how the fromNum subscription used to go missing. CoreBluetooth queues internally, but the
 // same discipline keeps the pipe's chunked writes acknowledged one by one, gives every
-// operation a timeout, and fails what is queued when the connection goes away.
+// operation a timeout, and fails what is queued when the connection goes away. `enqueueUrgent`
+// puts an operation ahead of every queued one (never ahead of the one in flight): the 9704's MO
+// segment answer, which the modem waits for only about 360 ms (MESHSAT-1674).
 import Foundation
 
 public final class GattOpQueue: @unchecked Sendable {
@@ -72,6 +74,7 @@ public final class GattOpQueue: @unchecked Sendable {
     private let timeoutMs: Int64
     private let lock = NSLock()
     private var pending: [Operation] = []
+    private var urgent: [Operation] = []
     private var current: Operation?
     private var closed = false
     private var running = false
@@ -83,14 +86,23 @@ public final class GattOpQueue: @unchecked Sendable {
     /// Queue `start`, which issues the operation and returns false if the stack refused it.
     @discardableResult
     public func enqueue(_ key: String, start: @escaping @Sendable () -> Bool) -> Operation {
-        let op = Operation(key: key, start: start)
+        offer(Operation(key: key, start: start), urgent: false)
+    }
+
+    /// As `enqueue`, ahead of every operation still waiting.
+    @discardableResult
+    public func enqueueUrgent(_ key: String, start: @escaping @Sendable () -> Bool) -> Operation {
+        offer(Operation(key: key, start: start), urgent: true)
+    }
+
+    private func offer(_ op: Operation, urgent isUrgent: Bool) -> Operation {
         lock.lock()
         if closed {
             lock.unlock()
             op.complete(Self.statusClosed)
             return op
         }
-        pending.append(op)
+        if isUrgent { urgent.append(op) } else { pending.append(op) }
         let startRunner = !running
         if startRunner { running = true }
         lock.unlock()
@@ -113,7 +125,8 @@ public final class GattOpQueue: @unchecked Sendable {
     public func close() {
         lock.lock()
         closed = true
-        let queued = pending
+        let queued = urgent + pending
+        urgent.removeAll()
         pending.removeAll()
         let inFlight = current
         lock.unlock()
@@ -124,12 +137,12 @@ public final class GattOpQueue: @unchecked Sendable {
     private func next() -> Operation? {
         lock.lock()
         defer { lock.unlock() }
-        if pending.isEmpty {
+        if urgent.isEmpty && pending.isEmpty {
             running = false
             current = nil
             return nil
         }
-        let op = pending.removeFirst()
+        let op = urgent.isEmpty ? pending.removeFirst() : urgent.removeFirst()
         current = op
         return op
     }

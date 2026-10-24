@@ -79,6 +79,34 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
         set { locked { bars = newValue } }
     }
     private var bars: Int? = 3
+
+    // MESHSAT-1674: when the modem asks for the segment, and when the answer came.
+    private var segmentDelay: Int?
+    private var beforeSegment: [String] = []
+    private var segmentFirst = false
+    private var askedAt: Date?
+    private var answeredAt: Date?
+    private var segmentMessageId: Int?
+    /// The first segment request comes this long after the accept, from a task of its own; nil:
+    /// in the same answer as the accept.
+    var segmentDelayMs: Int? {
+        get { locked { segmentDelay } }
+        set { locked { segmentDelay = newValue } }
+    }
+    /// Lines the modem says just before that delayed request (an MT landing at the same moment).
+    var linesBeforeSegment: [String] {
+        get { locked { beforeSegment } }
+        set { locked { beforeSegment = newValue } }
+    }
+    /// The segment request comes before the accept line, in the same answer.
+    var segmentBeforeAccept: Bool {
+        get { locked { segmentFirst } }
+        set { locked { segmentFirst = newValue } }
+    }
+    var segmentAskedAt: Date? { locked { askedAt } }
+    var segmentAnsweredAt: Date? { locked { answeredAt } }
+    /// The message id the last segment answer named.
+    var lastSegmentMessageId: Int? { locked { segmentMessageId } }
     let messageId = 7
 
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
@@ -186,11 +214,21 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
             moBytes = []
             segmentLog = []
         }
-        return [
+        let accept =
             "200 messageOriginate {\"topic_id\": \(topic), \"request_reference\": \(ref), \"message_id\": \(messageId), "
-                + "\"message_response\": \"message_accepted\"}",
-            segmentRequest(start: 0),
-        ]
+            + "\"message_response\": \"message_accepted\"}"
+        let (delay, first, before) = locked { (segmentDelay, segmentFirst, beforeSegment) }
+        if let delay {
+            Task { [self] in
+                try? await Task.sleep(for: .milliseconds(delay))
+                if !before.isEmpty { say(before) }
+                locked { askedAt = Date() }
+                say([segmentRequest(start: 0)])
+            }
+            return [accept]
+        }
+        locked { askedAt = Date() }
+        return first ? [segmentRequest(start: 0), accept] : [accept, segmentRequest(start: 0)]
     }
 
     private func segmentRequest(start: Int) -> String {
@@ -205,6 +243,8 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
         // An independent decoder: Foundation's, not the driver's.
         let bytes = Data(base64Encoded: data).map { [UInt8]($0) } ?? []
         let (received, length, topic) = locked {
+            if answeredAt == nil { answeredAt = Date() }
+            segmentMessageId = request["message_id"] as? Int
             segmentLog.append((start, data))
             if start == moBytes.count { moBytes += bytes }
             return (moBytes.count, moLength, moTopic)
@@ -649,5 +689,83 @@ final class Iridium9704DriverTests: XCTestCase {
         XCTAssertEqual(s.maxMs, 2400)
         XCTAssertEqual(s.describe(), "120 / 300 / 2400 ms (3 answered, 1 missed)")
         XCTAssertEqual(SignalPollStats.of([], answered: 0, missed: 2).describe(), "0 / 0 / 0 ms (0 answered, 2 missed)")
+    }
+
+    // MARK: The segment request over a slow link (MESHSAT-1674)
+
+    /// The modem's MT lines for `text`, one segment.
+    private func mtLines(_ text: [UInt8]) -> [String] {
+        let message = text + crcBytes(text)
+        let b64 = Data(message).base64EncodedString()
+        return [
+            "299 messageTerminate {\"topic_id\": 244, \"message_id\": 9, \"message_length_max\": \(message.count)}",
+            "299 messageTerminateSegment {\"topic_id\": 244, \"message_id\": 9, \"segment_length\": \(message.count), "
+                + "\"segment_start\": 0, \"data\": \"\(b64)\"}",
+            "299 messageTerminateStatus {\"topic_id\": 244, \"message_id\": 9, \"final_mt_status\": \"complete\"}",
+        ]
+    }
+
+    /// In real time: a signal read that gets no answer holds the line its 6 s, and the old dispatch
+    /// answered the segment request only after it (the Android port's positive control measured
+    /// 5500 ms; this one measures the same against the old driver).
+    func testTheSegmentRequestIsAnsweredAtOnceWhileASignalReadWaitsAndAnMtIsHandled() async {
+        let modem = FakeJsprModem()
+        let driver = Iridium9704Driver(clock: PacedClock(startMs: 1_792_587_600_000, realDivisor: 1))
+        await driver.attach(modem)
+        let up = await eventually(30_000) { await driver.state == .ready }
+        XCTAssertTrue(up)
+        let got = Collected<[UInt8]>()
+        await driver.setMtSink { got.add($0) }
+        let mt = Array("an MT landing at the same moment".utf8)
+        modem.linesBeforeSegment = mtLines(mt)
+        modem.segmentDelayMs = 500
+        modem.signalBars = nil
+        let payload = Array("yo from the deck".utf8)
+        async let status = driver.sendMessageBlocking(payload)
+        let segmenting = await eventually(10_000) { await driver.moStatus == .segmenting }
+        XCTAssertTrue(segmenting)
+        // A signal read takes the line and waits its 6 s for an answer that never comes; the
+        // segment request arrives while it waits.
+        async let poll = driver.pollSignal()
+        let final = await status
+        XCTAssertEqual(final, "mo_ack_received")
+        let answeredIn = (modem.segmentAnsweredAt ?? .distantFuture).timeIntervalSince(modem.segmentAskedAt ?? .distantPast)
+        XCTAssertLessThan(answeredIn, 1.0, "the segment request was answered in \(answeredIn) s, behind the signal read")
+        XCTAssertEqual(Array(modem.moReceived.prefix(payload.count)), payload)
+        let arrived = await eventually(10_000) { got.list.count == 1 }
+        XCTAssertTrue(arrived, "the MT handled in the same moment still arrives whole")
+        XCTAssertEqual(got.list.first, mt)
+        _ = await poll
+        XCTAssertNotNil(driver.segmentTiming.value)
+        await driver.detach()
+    }
+
+    func testASegmentRequestBeforeTheAcceptIsAnsweredWithTheRequestsOwnIds() async {
+        let modem = FakeJsprModem()
+        let driver = await ready(modem)
+        modem.segmentBeforeAccept = true
+        let status = await driver.sendMessageBlocking(Array("before the accept".utf8))
+        XCTAssertEqual(status, "mo_ack_received")
+        XCTAssertEqual(modem.lastSegmentMessageId, modem.messageId, "the answer echoes the request's message id")
+        let timing = driver.segmentTiming.value
+        XCTAssertEqual(timing?.segmentLength, Array("before the accept".utf8).count + 2)
+        await driver.detach()
+    }
+
+    func testASegmentRequestAlreadyWaitingWhenACommandStartsIsAnsweredNotDrainedAway() async {
+        let modem = FakeJsprModem()
+        let driver = await ready(modem)
+        modem.segmentDelayMs = 1
+        async let status = driver.sendMessageBlocking(Array("second".utf8))
+        // Commands right behind the accept: whichever reader finds the request answers it.
+        for _ in 0..<5 { _ = await driver.simStatus() }
+        let final = await status
+        XCTAssertEqual(final, "mo_ack_received")
+        await driver.detach()
+    }
+
+    func testTheSegmentTimingReadsAsAndroidsRow() {
+        XCTAssertEqual(
+            SegmentTiming(askedAfterMs: 40, answeredInMs: 3, segmentLength: 18).describe(), "40 ms after the send, answered in 3 ms")
     }
 }

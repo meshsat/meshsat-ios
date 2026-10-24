@@ -30,6 +30,12 @@ public actor Iridium9704Driver {
     /// How often the driver looks whether a signal reading is due (MESHSAT-1670): it asks the modem
     /// only when no reading came for SignalFreshness.pollIntervalMs and no send is under way.
     public static let signalCheckMs: Int64 = 5_000
+    /// The poll loop's pause between looks at the link; shorter while a send is under way, as the
+    /// modem gives up on its segment request after about 360 ms (MESHSAT-1674).
+    public static let pollPauseMs: Int64 = 50
+    public static let pollPauseSendingMs: Int64 = 10
+    /// Before a command, a half-arrived line is given this long to finish (MESHSAT-1674).
+    public static let partialLineGraceMs: Int64 = 20
     public static let moBudgetMs: Int64 = 150_000
     public static let moCancelSettleMs: Int64 = 20_000
     /// A send's answer when the modem never settled its cancel: the message may still go out.
@@ -96,6 +102,8 @@ public actor Iridium9704Driver {
     public nonisolated let reading = StateBroadcast<SignalReading?>(nil)
     /// The signal reads' round trips on this link, for the bench (MESHSAT-1670).
     public nonisolated let pollStats = StateBroadcast<SignalPollStats>(SignalPollStats())
+    /// The last MO segment request and how fast this app answered it (MESHSAT-1674).
+    public nonisolated let segmentTiming = StateBroadcast<SegmentTiming?>(nil)
     public nonisolated let errors = Broadcast<String>()
 
     // MARK: Internals
@@ -119,6 +127,10 @@ public actor Iridium9704Driver {
 
     // MO state
     private var moPayload: [UInt8]?
+    /// The whole payload as one segment's data, encoded when the send starts, so the answer to the
+    /// modem's usual single segment request is ready at once (MESHSAT-1674).
+    private var moPayloadB64: String?
+    private var moStartedAtMs: Int64 = 0
     private var moMessageId = 0
     private var moTopicId = Iridium9704Driver.rawTopic
     private var moRequestRef = 0
@@ -299,7 +311,7 @@ public actor Iridium9704Driver {
         defer { serial.release() }
         // The link may have changed hands while this request waited for the line.
         guard link === forLink else { throw IridiumDriverError.notConnected }
-        input.clear()
+        await clearBeforeCommand(forLink)
         try await forLink.write(Array("\(method) \(target) \(Self.spacedJson(payload.text))\r".utf8))
 
         let deadline = clock.nowMs() + timeoutMs
@@ -308,7 +320,8 @@ public actor Iridium9704Driver {
             if remaining <= 0 { break }
             guard let resp = try await readJsprResponse(remaining, on: forLink) else { continue }
             if resp.code == 299 {
-                enqueueUnsolicited(resp)
+                // A segment request is answered here and now, the rest handed on (MESHSAT-1674).
+                await dispatchUnsolicited(resp, on: forLink)
                 continue
             }
             if resp.target == target || resp.code >= 400 {
@@ -389,6 +402,7 @@ public actor Iridium9704Driver {
                 failure = error
             }
         }
+        if failure == nil, let resp, resp.code == 299 { await dispatchUnsolicited(resp, on: forLink) }
         serial.release()
         if let failure {
             if polling, link === forLink {
@@ -397,13 +411,54 @@ public actor Iridium9704Driver {
             }
             return false
         }
-        if let resp, resp.code == 299 { enqueueUnsolicited(resp) }
-        await clock.sleep(ms: 50)
+        await clock.sleep(ms: moStatus == .idle ? Self.pollPauseMs : Self.pollPauseSendingMs)
         return true
     }
 
-    /// Unsolicited lines go to their handlers one at a time, in arrival order: an MT's segments
-    /// never overtake its notification, and a segment request waits for the line.
+    /// An unsolicited frame, from whichever reader holds the line: the modem's request for an MO
+    /// segment is answered right here, ahead of anything else (MESHSAT-1674); every other frame is
+    /// queued for `handleUnsolicited` in the order it came.
+    private func dispatchUnsolicited(_ resp: JsprResponse, on forLink: ModemLink) async {
+        if resp.target == "messageOriginateSegment" {
+            await answerSegment(resp.json, readAtMs: clock.nowMs(), on: forLink)
+            return
+        }
+        enqueueUnsolicited(resp)
+    }
+
+    /// Before a command (MESHSAT-1674): whatever the link holds is read, every complete unsolicited
+    /// frame is dispatched and the rest dropped (an answer that came too late, the node's reset
+    /// text). Clearing the buffer threw away a segment request that had just arrived, and the modem
+    /// failed the send with segment_not_supplied. A half-arrived line gets `partialLineGraceMs` to
+    /// finish. The caller holds the line.
+    private func clearBeforeCommand(_ forLink: ModemLink) async {
+        var buf: [UInt8] = []
+        var quietUntil = clock.nowMs() + Self.partialLineGraceMs
+        while true {
+            if let b = input.read() {
+                quietUntil = clock.nowMs() + Self.partialLineGraceMs
+                if b == 0x0D {
+                    if !buf.isEmpty {
+                        if let frame = Self.parseJsprLine(buf), frame.code == 299 {
+                            await dispatchUnsolicited(frame, on: forLink)
+                        } else {
+                            Self.log.debug("JSPR dropped before a command: \(String(decoding: buf, as: UTF8.self))")
+                        }
+                        buf.removeAll()
+                    }
+                    continue
+                }
+                if buf.isEmpty && (b < 0x20 || b > 0x7E) { continue }
+                buf.append(b)
+            } else {
+                if buf.isEmpty || clock.nowMs() >= quietUntil { break }
+                await clock.sleep(ms: 2)
+            }
+        }
+    }
+
+    /// Unsolicited lines other than segment requests go to their handlers one at a time, in
+    /// arrival order: an MT's segments never overtake its notification.
     private func enqueueUnsolicited(_ resp: JsprResponse) {
         unsolicited.append(resp)
         guard !handlingUnsolicited else { return }
@@ -427,7 +482,9 @@ public actor Iridium9704Driver {
                 recordReading(Self.optInt(resp.json, "signal_bars", 0))
                 Self.log.debug("Signal: \(signal)/5")
             }
-        case "messageOriginateSegment": await handleMoSegmentRequest(resp.json)
+        case "messageOriginateSegment":
+            // Answered by the reader that read it (dispatchUnsolicited); never queued.
+            break
         case "messageOriginateStatus": handleMoStatus(resp.json)
         case "messageTerminate": handleMtNotification(resp.json)
         case "messageTerminateSegment": handleMtSegment(resp.json)
@@ -445,6 +502,8 @@ public actor Iridium9704Driver {
         let crc = Self.crc16(data)
         let payloadWithCrc = data + [UInt8(crc >> 8), UInt8(crc & 0xFF)]
         moPayload = payloadWithCrc
+        moPayloadB64 = Self.jsprSegmentData(payloadWithCrc)
+        moStartedAtMs = clock.nowMs()
         moTopicId = topicId
         moRequestRef = nextRequestRef
         nextRequestRef = nextRequestRef % 100 + 1
@@ -523,7 +582,14 @@ public actor Iridium9704Driver {
 
     /// The modem asks for a segment of the MO payload (299 messageOriginateSegment
     /// {segment_start, segment_length}); the answer is PUT messageOriginateSegment {data: base64}.
-    private func handleMoSegmentRequest(_ json: [String: Any]) async {
+    ///
+    /// Called by the reader that holds the line, the moment the request is read (MESHSAT-1674):
+    /// the 9704 gives up after about 360 ms, and behind the node's pipe a request that waited for a
+    /// signal read or an MT's handling failed the send with segment_not_supplied. The answer echoes
+    /// the request's own topic and message id, as Ground Control's library does, so it never waits
+    /// for the accept to be booked; it goes out on the link's urgent lane. `readAtMs` is when the
+    /// request was read.
+    private func answerSegment(_ json: [String: Any], readAtMs: Int64, on forLink: ModemLink) async {
         guard let payload = moPayload else { return }
         let segStart = Self.optInt(json, "segment_start", 0)
         let segLen = Self.optInt(json, "segment_length", 0)
@@ -532,17 +598,22 @@ public actor Iridium9704Driver {
             Self.log.warning("MO segment request out of bounds: start=\(segStart) len=\(segLen) payload=\(payload.count)")
             return
         }
-        let data = Self.jsprSegmentData(Array(payload[segStart..<(segStart + segLen)]))
+        let data =
+            segStart == 0 && segLen == payload.count && moPayloadB64 != nil
+            ? moPayloadB64 ?? "" : Self.jsprSegmentData(Array(payload[segStart..<(segStart + segLen)]))
         let segment = JsprBody([
-            ("topic_id", .int(moTopicId)), ("message_id", .int(moMessageId)), ("segment_length", .int(segLen)),
-            ("segment_start", .int(segStart)), ("data", .string(data)),
+            ("topic_id", .int(json["topic_id"] != nil ? Self.optInt(json, "topic_id", moTopicId) : moTopicId)),
+            ("message_id", .int(json["message_id"] != nil ? Self.optInt(json, "message_id", moMessageId) : moMessageId)),
+            ("segment_length", .int(segLen)), ("segment_start", .int(segStart)), ("data", .string(data)),
         ])
-        await serial.acquire()
-        defer { serial.release() }
-        guard let link else { return }
+        guard link === forLink else { return }
         do {
-            try await link.write(Array("PUT messageOriginateSegment \(Self.spacedJson(segment.text))\r".utf8))
-            Self.log.debug("MO segment sent: start=\(segStart) len=\(segLen)")
+            try await forLink.writeUrgent(Array("PUT messageOriginateSegment \(Self.spacedJson(segment.text))\r".utf8))
+            let timing = SegmentTiming(
+                askedAfterMs: readAtMs - moStartedAtMs, answeredInMs: clock.nowMs() - readAtMs, segmentLength: segLen)
+            segmentTiming.send(timing)
+            let line = "MO segment sent: start=\(segStart) len=\(segLen), asked \(timing.askedAfterMs) ms after the send, "
+            Self.log.debug("\(line)answered in \(timing.answeredInMs) ms")
         } catch {
             Self.log.error("Failed to send MO segment: \(error)")
         }
@@ -564,12 +635,14 @@ public actor Iridium9704Driver {
             errors.send("MO failed: \(status)")
         }
         moPayload = nil
+        moPayloadB64 = nil
     }
 
     /// Back to idle after a send's outcome was taken.
     public func resetMoStatus() {
         moStatus = .idle
         moPayload = nil
+        moPayloadB64 = nil
         moFinalStatus = ""
     }
 
@@ -681,47 +754,6 @@ public actor Iridium9704Driver {
         signal = b
         reading.send(SignalReading(bars: b, atMs: clock.nowMs()))
         signalReadings.send(b)
-    }
-
-    private func notePoll(_ roundTripMs: Int64?) {
-        if let roundTripMs {
-            pollsAnswered += 1
-            pollRoundTrips.append(roundTripMs)
-            if pollRoundTrips.count > SignalPollStats.keep { pollRoundTrips.removeFirst(pollRoundTrips.count - SignalPollStats.keep) }
-        } else {
-            pollsMissed += 1
-        }
-        pollStats.send(SignalPollStats.of(pollRoundTrips, answered: pollsAnswered, missed: pollsMissed))
-    }
-
-    /// A new link starts with no reading and no round trips (MESHSAT-1670).
-    private func forgetReadings() {
-        reading.send(nil)
-        pollRoundTrips.removeAll()
-        pollsAnswered = 0
-        pollsMissed = 0
-        pollStats.send(SignalPollStats())
-    }
-
-    /// Fill the gaps between the modem's own constellationState events (MESHSAT-1670): ask when no
-    /// reading came for SignalFreshness.pollIntervalMs, never while a send is under way.
-    private func startSignalWatch(_ forLink: ModemLink) {
-        signalWatchTask?.cancel()
-        signalWatchTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self, await self.signalWatchOnce(forLink) else { return }
-            }
-        }
-    }
-
-    /// One look at whether a reading is due; false once the watch should stop.
-    private func signalWatchOnce(_ forLink: ModemLink) async -> Bool {
-        await clock.sleep(ms: Self.signalCheckMs)
-        guard polling, link === forLink else { return false }
-        guard state == .ready, moStatus == .idle else { return true }
-        let last = reading.value
-        if last == nil || clock.nowMs() - (last?.atMs ?? 0) >= SignalFreshness.pollIntervalMs { await pollSignal() }
-        return true
     }
 
     /// The SIM status as the modem's JSON text, nil when not answered.
@@ -864,6 +896,51 @@ extension Iridium9704Driver {
         }
         guard number.isFinite else { return fallback }
         return Int(max(min(number, Double(Int32.max)), Double(Int32.min)))
+    }
+}
+
+// MARK: The signal readings' bookkeeping (MESHSAT-1670), outside the actor's body for its length
+
+extension Iridium9704Driver {
+    private func notePoll(_ roundTripMs: Int64?) {
+        if let roundTripMs {
+            pollsAnswered += 1
+            pollRoundTrips.append(roundTripMs)
+            if pollRoundTrips.count > SignalPollStats.keep { pollRoundTrips.removeFirst(pollRoundTrips.count - SignalPollStats.keep) }
+        } else {
+            pollsMissed += 1
+        }
+        pollStats.send(SignalPollStats.of(pollRoundTrips, answered: pollsAnswered, missed: pollsMissed))
+    }
+
+    /// A new link starts with no reading and no round trips (MESHSAT-1670).
+    private func forgetReadings() {
+        reading.send(nil)
+        pollRoundTrips.removeAll()
+        pollsAnswered = 0
+        pollsMissed = 0
+        pollStats.send(SignalPollStats())
+    }
+
+    /// Fill the gaps between the modem's own constellationState events (MESHSAT-1670): ask when no
+    /// reading came for SignalFreshness.pollIntervalMs, never while a send is under way.
+    private func startSignalWatch(_ forLink: ModemLink) {
+        signalWatchTask?.cancel()
+        signalWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, await self.signalWatchOnce(forLink) else { return }
+            }
+        }
+    }
+
+    /// One look at whether a reading is due; false once the watch should stop.
+    private func signalWatchOnce(_ forLink: ModemLink) async -> Bool {
+        await clock.sleep(ms: Self.signalCheckMs)
+        guard polling, link === forLink else { return false }
+        guard state == .ready, moStatus == .idle else { return true }
+        let last = reading.value
+        if last == nil || clock.nowMs() - (last?.atMs ?? 0) >= SignalFreshness.pollIntervalMs { await pollSignal() }
+        return true
     }
 }
 
