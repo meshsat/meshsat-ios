@@ -193,23 +193,6 @@ public enum NodeOtaProtocol {
     /// True when the node may now be in its loader, so the image and its address must be kept for a retry.
     public static func keepsImage(_ h: Handover) -> Bool { h == .accepted || h == .linkDropped }
 
-    /// What the screen says after a failed transfer (MESHSAT-1684). The node went to its loader
-    /// before the transfer started, so every failure leaves it there and offers a retry with the
-    /// kept image; the words say whether its old firmware may be gone.
-    public static func failedInUpdater(_ reason: String, _ stage: Stage) -> String {
-        switch stage {
-        case .notCommanded:
-            reason + " The node waits in its updater with its firmware still on it and starts it only after an update: "
-                + "retry with the same file."
-        case .refused:
-            reason + " The node waits in its updater with its firmware still on it: retry with the file this update started with."
-        case .eraseUncertain:
-            reason + " The node may have erased its firmware and waits in its updater: retry with the same file."
-        case .erased:
-            reason + " The node erased its firmware and waits in its updater: retry with the same file."
-        }
-    }
-
     /// The node's answers to ota_request (AdminModule.cpp, firmware 2.8.0).
     public static func isHandoverAnswer(_ text: String) -> Bool {
         text.hasPrefix("Rebooting to") || text.range(of: "OTA", options: .caseInsensitive) != nil || text.hasPrefix("Unable to switch")

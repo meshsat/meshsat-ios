@@ -208,16 +208,147 @@ final class NodeFirmwareUpdateTests: XCTestCase {
         XCTAssertEqual(lostAfter, .failed("The link to the node's updater dropped at byte 1024.", stage: .erased))
     }
 
-    func testTheScreenSaysWhatEachStageLeavesAndAlwaysOffersTheSameFile() {
-        let r = "The node's updater did not answer the update command."
+    func testTheWordsAreAndroidsWordForWord() {
+        typealias Rec = NodeFirmwareRecovery
         XCTAssertEqual(
-            NodeOtaProtocol.failedInUpdater(r, .eraseUncertain),
-            r + " The node may have erased its firmware and waits in its updater: retry with the same file.")
+            Rec.whatTheNodeHas(.intact, refused: false),
+            " The node waits in its updater with its firmware still on it and starts it only after an update: retry with the same file.")
         XCTAssertEqual(
-            NodeOtaProtocol.failedInUpdater(r, .erased),
-            r + " The node erased its firmware and waits in its updater: retry with the same file.")
-        XCTAssertTrue(NodeOtaProtocol.failedInUpdater(r, .refused).hasSuffix("retry with the file this update started with."))
-        XCTAssertTrue(NodeOtaProtocol.failedInUpdater(r, .notCommanded).contains("with its firmware still on it"))
+            Rec.whatTheNodeHas(.intact, refused: true),
+            " The node waits in its updater with its firmware still on it: retry with the file this update started with.")
+        XCTAssertEqual(
+            Rec.whatTheNodeHas(.unknown, refused: false),
+            " The node waits in its updater, and whether its old firmware is still on it is not known: "
+                + "retry with the file the update started with.")
+        XCTAssertEqual(
+            Rec.whatTheNodeHas(.mayBeErased, refused: false),
+            " The node may have erased its firmware and waits in its updater: retry with the same file.")
+        XCTAssertEqual(
+            Rec.whatTheNodeHas(.erased, refused: false), " The node erased its firmware and waits in its updater: retry with the same file."
+        )
+        XCTAssertEqual(
+            "Bluetooth is off." + Rec.whatTheNodeHas(.erased, refused: false, bluetoothOff: true),
+            "Bluetooth is off. The node erased its firmware and waits in its updater: switch Bluetooth on and retry with the same file.")
+        for known in [Rec.Known.unknown, .mayBeErased, .erased] {
+            for refused in [false, true] {
+                XCTAssertFalse(Rec.whatTheNodeHas(known, refused: refused).contains("still on it and"), "\(known)")
+                XCTAssertFalse(Rec.whatTheNodeHas(known, refused: refused).contains("with its firmware still on it"), "\(known)")
+            }
+        }
+    }
+
+    // MARK: The recovery session across attempts (R63-F1), as NodeFirmwareRecoveryFlowTest.kt
+
+    private func failed(_ stage: NodeOtaProtocol.Stage, _ reason: String = "The node's updater did not answer over Bluetooth.")
+        -> NodeOtaProtocol.Outcome
+    { .failed(reason, stage: stage) }
+
+    private func text(_ r: NodeFirmwareRecovery.Result, file: StaticString = #filePath, line: UInt = #line) -> String {
+        guard case .failed(let t) = r else {
+            XCTFail("expected a failure, got \(r)", file: file, line: line)
+            return ""
+        }
+        return t
+    }
+
+    func testARetryAcrossAttemptsKeepsTheStrongestStateTheSessionSaw() async throws {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.check(appImage(), nodeEnv: env)))
+        let session = NodeFirmwareRecovery()
+        session.began(image, address: "44:1B:F6:F9:41:7D")
+        let step1 = text(await session.attempt { self.failed(.eraseUncertain) })
+        XCTAssertTrue(step1.contains("may have erased its firmware"), step1)
+        XCTAssertEqual(session.known, .mayBeErased)
+        // The retry's transport starts again at "not commanded": the session keeps what it saw.
+        let second = text(await session.attempt { self.failed(.notCommanded) })
+        XCTAssertTrue(second.contains("may have erased its firmware"), second)
+        XCTAssertFalse(second.contains("still on it"), second)
+        XCTAssertEqual(session.known, .mayBeErased)
+        let step2 = text(await session.attempt { self.failed(.erased) })
+        XCTAssertTrue(step2.contains("erased its firmware and waits"), step2)
+        XCTAssertEqual(session.known, .erased)
+        let fourth = text(await session.attempt { self.failed(.refused, "The node refused the update: Hash Rejected") })
+        XCTAssertTrue(fourth.contains("erased its firmware and waits"), fourth)
+        XCTAssertFalse(fourth.contains("still on it"), fourth)
+        XCTAssertEqual(session.kept?.image, image, "the image is kept")
+        let done = await session.attempt { .done }
+        XCTAssertEqual(done, .done)
+        XCTAssertNil(session.known, "a finished update clears the session")
+        XCTAssertNil(session.kept)
+    }
+
+    func testARecoveryWithNoHistoryNeverSaysTheOldFirmwareIsStillThere() async throws {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.checkForWaitingUpdater(appImage())))
+        let session = NodeFirmwareRecovery()
+        session.beganByHand(image, address: "")
+        let first = text(await session.attempt { self.failed(.notCommanded) })
+        XCTAssertTrue(first.contains("whether its old firmware is still on it is not known"), first)
+        XCTAssertFalse(first.contains("with its firmware still on it"), first)
+        XCTAssertEqual(session.known, .unknown)
+        let second = text(await session.attempt { self.failed(.refused, "The node refused the update: Hash Rejected") })
+        XCTAssertTrue(second.contains("is not known"), second)
+        XCTAssertFalse(second.contains("with its firmware still on it"), second)
+        let step3 = text(await session.attempt { self.failed(.eraseUncertain) })
+        XCTAssertTrue(step3.contains("may have erased"), step3)
+        let fourth = text(await session.attempt { self.failed(.notCommanded) })
+        XCTAssertTrue(fourth.contains("may have erased"), fourth)
+        XCTAssertEqual(session.known, .mayBeErased)
+    }
+
+    func testPickingTheFileAgainForTheUpdaterKeepsWhatTheSessionKnows() async throws {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.check(appImage(), nodeEnv: env)))
+        let session = NodeFirmwareRecovery()
+        session.began(image, address: "44:1B:F6:F9:41:7D")
+        let step4 = text(await session.attempt { self.failed(.erased) })
+        XCTAssertTrue(step4.contains("erased its firmware"), step4)
+        session.beganByHand(image, address: "44:1B:F6:F9:41:7D")
+        let again = text(await session.attempt { self.failed(.notCommanded) })
+        XCTAssertTrue(again.contains("erased its firmware and waits"), again)
+        XCTAssertEqual(session.known, .erased)
+    }
+
+    func testASessionThatNeverWroteItsCommandSaysTheFirmwareIsThereAndBluetoothOffKeepsTheSessionsWords() async throws {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.check(appImage(), nodeEnv: env)))
+        let session = NodeFirmwareRecovery()
+        session.began(image, address: "44:1B:F6:F9:41:7D")
+        let refused = text(await session.attempt { self.failed(.refused, "The node refused the update: Hash Rejected") })
+        XCTAssertTrue(refused.contains("with its firmware still on it: retry with the file this update started with."), refused)
+        XCTAssertEqual(session.known, .intact)
+        _ = await session.attempt { self.failed(.erased) }
+        XCTAssertEqual(
+            session.bluetoothOffText(),
+            "Bluetooth is off. The node erased its firmware and waits in its updater: switch Bluetooth on and retry with the same file.")
+        XCTAssertEqual(
+            NodeFirmwareRecovery().bluetoothOffText(),
+            "Bluetooth is off. The node waits in its updater, and whether its old firmware is still on it is not known: "
+                + "switch Bluetooth on and retry with the file the update started with.",
+            "with no session, Bluetooth off says nothing is known")
+    }
+
+    func testANewHandoverStartsANewSession() async throws {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.check(appImage(), nodeEnv: env)))
+        let session = NodeFirmwareRecovery()
+        session.began(image, address: "44:1B:F6:F9:41:7D")
+        _ = await session.attempt { self.failed(.erased) }
+        let done = await session.attempt { .done }
+        XCTAssertEqual(done, .done)
+        session.began(image, address: "44:1B:F6:F9:41:7D")
+        let next = text(await session.attempt { self.failed(.notCommanded) })
+        XCTAssertTrue(next.contains("with its firmware still on it"), next)
+        XCTAssertEqual(session.known, .intact)
+    }
+
+    func testTheMergeOnlyMovesUp() {
+        typealias Kno = NodeFirmwareRecovery.Known
+        XCTAssertEqual(Kno.merge(.erased, .intact), .erased)
+        XCTAssertEqual(Kno.merge(.erased, .unknown), .erased)
+        XCTAssertEqual(Kno.merge(.unknown, .mayBeErased), .mayBeErased)
+        XCTAssertEqual(Kno.merge(.unknown, .intact), .unknown)
+        XCTAssertEqual(Kno.merge(.intact, .unknown), .unknown)
+        XCTAssertEqual(Kno.merge(nil, .intact), .intact)
+        XCTAssertEqual(Kno.of(.notCommanded), .intact)
+        XCTAssertEqual(Kno.of(.refused), .intact)
+        XCTAssertEqual(Kno.of(.eraseUncertain), .mayBeErased)
+        XCTAssertEqual(Kno.of(.erased), .erased)
     }
 
     func testAWaitingUpdaterTakesAnAppImageWithoutTheEnvCheckButNeverAFactoryImage() {

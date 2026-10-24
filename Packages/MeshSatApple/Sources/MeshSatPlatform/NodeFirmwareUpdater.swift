@@ -11,7 +11,9 @@
 // command on its old firmware may be erased (MESHSAT-1684). So the image and the node's address are
 // kept from then on, and every failure of steps 2 to 4 offers `retry` with the same image, without
 // step 1. A node left in its loader when the kept image is gone (the app restarted) gets the same
-// file again through `sendToUpdater`: the scan finds the loader by its service.
+// file again through `sendToUpdater`: the scan finds the loader by its service. What is known about
+// the node's firmware lives with the kept image (MeshSatMeshtastic's NodeFirmwareRecovery) and is
+// merged across attempts without going back (review r63, R63-F1).
 import Foundation
 import Logging
 import MeshSatBLE
@@ -42,8 +44,8 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
     private let clock: any DriverClock
     /// The update that runs, set before its task starts so a quick one cannot outrun it.
     private var active: UUID?
-    private var pending: NodeFirmwareImage?
-    private var pendingAddress: String?
+    /// The kept image, the node's address and what is known about its firmware.
+    let recovery = NodeFirmwareRecovery()
 
     init(clock: any DriverClock = SystemDriverClock()) { self.clock = clock }
 
@@ -88,7 +90,7 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
             case .linkDropped: Self.log.warning("No handover answer, but the node dropped the link: going on")
             }
             // The node is going to its loader: from here only a finished update brings it back.
-            keep(image, address)
+            recovery.began(image, address: address)
             await transfer(central: central, address: address, image: image)
         }
     }
@@ -99,23 +101,20 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
     public func sendToUpdater(central: MeshtasticCentral, image: NodeFirmwareImage) {
         guard !running else { return }
         let address = central.lastAddress ?? ""
-        keep(image, address)
+        recovery.beganByHand(image, address: address)
         run { [self] in await transfer(central: central, address: address, image: image) }
     }
 
     /// Send the kept image to a node that stayed in its loader after a failed transfer.
     public func retry(central: MeshtasticCentral) {
         guard !running else { return }
-        let kept: (NodeFirmwareImage, String)? = locked {
-            guard let image = pending else { return nil }
-            return (image, pendingAddress ?? central.lastAddress ?? "")
-        }
-        guard let (image, address) = kept else { return }
-        run { [self] in await transfer(central: central, address: address, image: image) }
+        guard let kept = recovery.kept else { return }
+        let address = kept.address.isEmpty ? (central.lastAddress ?? "") : kept.address
+        run { [self] in await transfer(central: central, address: address, image: kept.image) }
     }
 
     /// True while an image is kept for a node in its loader.
-    public var hasPending: Bool { locked { pending != nil } }
+    public var hasPending: Bool { recovery.kept != nil }
 
     public func reset() {
         if !running { state.send(.idle) }
@@ -140,40 +139,30 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
         state.send(.working("The node is restarting into its updater...", fraction: nil))
         await clock.sleep(ms: Self.restartIntoLoaderMs)
         guard central.bluetoothOn.value else {
-            state.send(
-                .failed(
-                    "Bluetooth is off. The node waits in its updater: switch Bluetooth on and retry with the same file.", canRetry: true,
-                    inUpdater: true))
+            state.send(.failed(recovery.bluetoothOffText(), canRetry: true, inUpdater: true))
             return
         }
-        let outcome = await NodeOtaTransport(clock: clock).update(image) { [self] step in
-            switch step {
-            case .connecting: state.send(.working("Connecting to the node's updater...", fraction: nil))
-            case .erasing: state.send(.working("The node is making room for the new firmware...", fraction: nil))
-            case .sending(let sent, let total):
-                state.send(.working("Sending the firmware: \(Int64(sent) * 100 / Int64(total)) %", fraction: Double(sent) / Double(total)))
-            case .verifying: state.send(.working("The node is checking and installing the firmware...", fraction: 1))
+        // This attempt's progress is the transport's; what it means for the node is the session's.
+        let result = await recovery.attempt { [self] in
+            await NodeOtaTransport(clock: clock).update(image) { [self] step in
+                switch step {
+                case .connecting: state.send(.working("Connecting to the node's updater...", fraction: nil))
+                case .erasing: state.send(.working("The node is making room for the new firmware...", fraction: nil))
+                case .sending(let sent, let total):
+                    state.send(
+                        .working("Sending the firmware: \(Int64(sent) * 100 / Int64(total)) %", fraction: Double(sent) / Double(total)))
+                case .verifying: state.send(.working("The node is checking and installing the firmware...", fraction: 1))
+                }
             }
         }
-        switch outcome {
+        switch result {
         case .done:
-            locked {
-                pending = nil
-                pendingAddress = nil
-            }
             state.send(.working("Installed. The node is restarting...", fraction: 1))
             await clock.sleep(ms: Self.restartIntoFirmwareMs)
             state.send(.done(version: image.version.isEmpty ? "the new firmware" : image.version))
-        case .failed(let reason, let stage):
+        case .failed(let text):
             // The node went to its loader before the transfer started: every failure leaves it there.
-            state.send(.failed(NodeOtaProtocol.failedInUpdater(reason, stage), canRetry: true, inUpdater: true))
-        }
-    }
-
-    private func keep(_ image: NodeFirmwareImage, _ address: String) {
-        locked {
-            pending = image
-            pendingAddress = address
+            state.send(.failed(text, canRetry: true, inUpdater: true))
         }
     }
 
