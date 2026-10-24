@@ -73,6 +73,12 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
     var finalMoStatus: String? = "mo_ack_received"
     /// Whether the modem answers a cancel (with 200, then the message's one final status).
     var answersCancel = true
+    /// The bars a constellationState read answers; nil: the modem does not answer it (MESHSAT-1670).
+    var signalBars: Int? {
+        get { locked { bars } }
+        set { locked { bars = newValue } }
+    }
+    private var bars: Int? = 3
     let messageId = 7
 
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
@@ -152,7 +158,8 @@ final class FakeJsprModem: ModemLink, @unchecked Sendable {
                     + "\"build_info\": \"fake\"}, \"hash\": \"abc\"}"
             ]
         case ("GET", "constellationState"):
-            return ["200 constellationState {\"constellation_visible\": true, \"signal_bars\": 3, \"signal_level\": -110}"]
+            guard let b = signalBars else { return [] }
+            return ["200 constellationState {\"constellation_visible\": true, \"signal_bars\": \(b), \"signal_level\": -110}"]
         case ("PUT", "messageOriginate"):
             return originate(request)
         case ("PUT", "messageOriginateSegment"):
@@ -559,5 +566,88 @@ final class Iridium9704DriverTests: XCTestCase {
         for bad in ["Q", "=", "QQ=", "QQ=x", "QUI=QQ==", "QUJDQ"] {
             XCTAssertNil(Iridium9704Driver.jsprSegmentBytes(bad), bad)
         }
+    }
+
+    // MARK: The signal (MESHSAT-1670)
+
+    func testSignalAnUnansweredReadKeepsTheLastReading() {
+        // An unanswered constellationState read set 0 bars, so the app showed 0/5 while the modem
+        // sent messages (MESHSAT-1670).
+        XCTAssertEqual(Iridium9704Driver.signalAfterPoll(previous: 3, answeredBars: nil), 3)
+        XCTAssertEqual(Iridium9704Driver.signalAfterPoll(previous: 3, answeredBars: 0), 0)
+        XCTAssertEqual(Iridium9704Driver.signalAfterPoll(previous: 0, answeredBars: 4), 4)
+        XCTAssertEqual(Iridium9704Driver.signalAfterPoll(previous: 2, answeredBars: 9), 5)
+        XCTAssertEqual(Iridium9704Driver.signalAfterPoll(previous: 2, answeredBars: -1), 0)
+        XCTAssertEqual(Iridium9704Driver.signalTimeoutMs, 6_000)
+    }
+
+    func testATimedOutReadKeepsTheLastBarsAndTheirTimeAndAnAnswered0Shows0() async {
+        let modem = FakeJsprModem()
+        let driver = await ready(modem)
+        let first = driver.reading.value
+        XCTAssertEqual(first?.bars, 3, "the init's read is a reading")
+        modem.signalBars = nil
+        let kept = await driver.pollSignal()
+        XCTAssertEqual(kept, 3, "a read the modem did not answer keeps the last bars")
+        XCTAssertEqual(driver.reading.value, first, "and the reading stays as old as it is")
+        let signal = await driver.signal
+        XCTAssertEqual(signal, 3)
+        XCTAssertEqual(driver.pollStats.value.missed, 1)
+        modem.signalBars = 0
+        let zero = await driver.pollSignal()
+        XCTAssertEqual(zero, 0, "an answered 0 is a real 0")
+        XCTAssertEqual(driver.reading.value?.bars, 0)
+        XCTAssertGreaterThan(driver.reading.value?.atMs ?? 0, first?.atMs ?? 0)
+        XCTAssertEqual(driver.pollStats.value.answered, 2)
+        await driver.detach()
+    }
+
+    func testAnEventWithoutBarsIsNoReadingAndANewLinkStartsWithNone() async {
+        let modem = FakeJsprModem()
+        let driver = await ready(modem)
+        let before = driver.reading.value
+        modem.say(["299 constellationState {\"constellation_visible\": false}"])
+        modem.say(["299 constellationState {\"constellation_visible\": true, \"signal_bars\": 5, \"signal_level\": -100}"])
+        let five = await eventually { driver.reading.value?.bars == 5 }
+        XCTAssertTrue(five, "an event with bars is a reading")
+        XCTAssertNotEqual(driver.reading.value, before)
+        await driver.detach()
+        await driver.attach(FakeJsprModem())
+        XCTAssertNil(driver.reading.value, "a new link starts with no reading")
+        await driver.detach()
+    }
+
+    func testTheThresholdIsTwoPollIntervalsPlusThePollTimeout() {
+        let t0: Int64 = 1_000_000
+        XCTAssertEqual(SignalFreshness.staleAfterMs, 66_000)
+        let r = SignalReading(bars: 4, atMs: t0)
+        XCTAssertEqual(SignalFreshness.kind(r, nowMs: t0), .fresh)
+        XCTAssertEqual(SignalFreshness.kind(r, nowMs: t0 + 66_000), .fresh)
+        XCTAssertEqual(SignalFreshness.kind(r, nowMs: t0 + 66_001), .stale)
+        XCTAssertEqual(SignalFreshness.kind(nil, nowMs: t0), SignalFreshness.Kind.none)
+    }
+
+    func testTheWordsAreAndroids() {
+        let t0: Int64 = 1_000_000
+        let r = SignalReading(bars: 3, atMs: t0)
+        XCTAssertEqual(SignalFreshness.describe(r, nowMs: t0 + 10_000), "3/5")
+        XCTAssertEqual(SignalFreshness.describe(r, nowMs: t0 + 70_000), "3/5, last reading 70 s ago")
+        XCTAssertEqual(SignalFreshness.describe(r, nowMs: t0 + 4 * 60_000 + 30_000), "3/5, last reading 4 min ago")
+        XCTAssertEqual(SignalFreshness.describe(r, nowMs: t0 + 3 * 3_600_000 + 1), "3/5, last reading 3 h ago")
+        XCTAssertEqual(SignalFreshness.describe(nil, nowMs: t0), "?/5, no reading yet")
+        XCTAssertEqual(SignalFreshness.compact(r, nowMs: t0), "3/5")
+        XCTAssertEqual(SignalFreshness.compact(r, nowMs: t0 + 150_000), "3/5 (2 min ago)")
+        XCTAssertEqual(SignalFreshness.compact(nil, nowMs: t0), "?/5")
+        XCTAssertEqual(SignalFreshness.describe(SignalReading(bars: 0, atMs: t0), nowMs: t0), "0/5")
+    }
+
+    func testRoundTripStatistics() {
+        XCTAssertEqual(SignalPollStats().describe(), "")
+        let s = SignalPollStats.of([300, 120, 2400], answered: 3, missed: 1)
+        XCTAssertEqual(s.minMs, 120)
+        XCTAssertEqual(s.medianMs, 300)
+        XCTAssertEqual(s.maxMs, 2400)
+        XCTAssertEqual(s.describe(), "120 / 300 / 2400 ms (3 answered, 1 missed)")
+        XCTAssertEqual(SignalPollStats.of([], answered: 0, missed: 2).describe(), "0 / 0 / 0 ms (0 answered, 2 missed)")
     }
 }

@@ -6,6 +6,7 @@
 // - "Node firmware" (MESHSAT-1672): the node's firmware updated over Bluetooth, from the
 //   published release (only on a "Check for update" tap) or from a file. Versions end in a
 //   commit hash, so a release is only ever the same or another one, never newer.
+// - SignalReadingRow (MESHSAT-1670): the 9704's bars with their age once stale.
 import MeshSatMeshtastic
 import MeshSatPlatform
 import SwiftUI
@@ -207,6 +208,26 @@ private enum ReleaseCheck: Equatable {
         switch self {
         case .checking, .downloading: true
         default: false
+        }
+    }
+}
+
+/// The 9704's signal as the screens show it (MESHSAT-1670, SettingsScreen.kt's SignalReadingRow):
+/// the bars, their age once stale, "?" before the first reading; looked at again every 5 s.
+struct SignalReadingRow: View {
+    let reading: SignalReading?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { timeline in
+            let nowMs = Int64(timeline.date.timeIntervalSince1970 * 1000)
+            let fresh = SignalFreshness.kind(reading, nowMs: nowMs) == .fresh
+            HStack(alignment: .top, spacing: 8) {
+                Text("Signal").msText(.bodySmall, color: MSColors.textMuted)
+                Spacer(minLength: 8)
+                Text(SignalFreshness.describe(reading, nowMs: nowMs))
+                    .msText(.bodySmall, color: fresh ? MSColors.textPrimary : MSColors.textMuted)
+                    .multilineTextAlignment(.trailing)
+            }
         }
     }
 }

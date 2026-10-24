@@ -39,6 +39,9 @@ public final class SettingsModel {
     public private(set) var imtState: Iridium9704Driver.State = .disconnected
     public private(set) var imtInfo = Iridium9704Driver.ModemInfo()
     public private(set) var imtSignal = 0
+    /// The 9704's last signal reading with its time (MESHSAT-1670), and its reads' round trips.
+    public private(set) var imtReading: SignalReading?
+    public private(set) var imtPollStats = SignalPollStats()
     /// A key is stored for the kits' encrypted satellite chains (the conversation key of "iridium:shared").
     public private(set) var satelliteChainKeySet = false
     /// That key's check value (SatelliteChain.keyCheck): the same check in the kit's key list means
@@ -79,6 +82,16 @@ public final class SettingsModel {
         tasks.append(
             Task { [weak self] in
                 for await bars in imtDriver.signalReadings.subscribe() { self?.imtSignal = bars }
+            })
+        let imtReadings = imtDriver.reading.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await r in imtReadings { self?.imtReading = r }
+            })
+        let imtStats = imtDriver.pollStats.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await st in imtStats { self?.imtPollStats = st }
             })
         let central = gateway.central
         let myInfo = central.radio.myInfo.subscribe()

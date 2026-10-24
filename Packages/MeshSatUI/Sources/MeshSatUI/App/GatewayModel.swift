@@ -51,6 +51,10 @@ public final class GatewayModel {
     public private(set) var nodeLogPaused = false
     public private(set) var nodeDebugLog = false
     public private(set) var modemSignal = 0
+    /// The node's RockBLOCK 9704 (MESHSAT-1507): its state, and its last signal reading with the
+    /// time it was taken, so the lane can say when it is old (MESHSAT-1670).
+    public private(set) var imtState: Iridium9704Driver.State = .disconnected
+    public private(set) var imtReading: SignalReading?
     /// IridiumSpp.linkBroken: writes to the node's pipe do not land (MESHSAT-1270).
     public private(set) var modemLinkBroken = false
     /// IridiumSpp.modemSilent: the pipe is ours but the modem answers no AT.
@@ -182,6 +186,7 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await bars in driver.signalReadings.subscribe() { self?.modemSignal = bars }
             })
+        followImt(gateway.imtDriver)
         followModemFlags(driver)
         followNodeLog(central)
         tasks.append(
@@ -267,6 +272,20 @@ public final class GatewayModel {
     }
 
     /// IridiumSpp.linkBroken and modemSilent, read by the Home lanes and the node banner.
+    /// The node's 9704: its state and its last signal reading (MESHSAT-1507, MESHSAT-1670).
+    private func followImt(_ imt: Iridium9704Driver) {
+        let states = imt.stateChanges.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await s in states { self?.imtState = s }
+            })
+        let readings = imt.reading.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await r in readings { self?.imtReading = r }
+            })
+    }
+
     private func followModemFlags(_ driver: IridiumATDriver) {
         tasks.append(
             Task { [weak self] in

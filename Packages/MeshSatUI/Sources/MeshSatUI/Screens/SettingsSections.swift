@@ -30,7 +30,7 @@ public struct SettingsSatelliteSection: View {
         // The node's 9704 (MESHSAT-1624), in Android's words.
         if settings.nodeCarries9704 {
             switch settings.imtState {
-            case .ready: return "Connected (Signal: \(settings.imtSignal)/5)"
+            case .ready: return "Connected (9704)"
             case .initializing: return "Bringing the 9704 up..."
             case .disconnected: return pipeWords
             default: return "Checking the modem..."
@@ -54,6 +54,12 @@ public struct SettingsSatelliteSection: View {
             VStack(spacing: MSSpace.screen) {
                 SectionCard("Satellite modem on the node") {
                     ConnectionStatusRow(label: "Status", connected: connected, statusText: statusText, color: MSColors.iridium)
+                    if settings.nodeCarries9704 && settings.imtState == .ready {
+                        // A reading carries its time; the row marks it stale as it ages (MESHSAT-1670).
+                        SignalReadingRow(reading: settings.imtReading)
+                        let stats = settings.imtPollStats.describe()
+                        if !stats.isEmpty { InfoRow("Signal read (min / median / max)", stats) }
+                    }
                     NodeModemRows()
                     SettingRow("Use the node's modem") {
                         MSSwitch(isOn: settings.binding(SettingsKey.iridiumNodePipeEnabled), label: "Use the node's modem")

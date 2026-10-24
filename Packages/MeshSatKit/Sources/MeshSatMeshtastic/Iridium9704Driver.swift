@@ -24,7 +24,12 @@ import MeshSatWire
 public actor Iridium9704Driver {
     // MARK: Constants (the Kotlin companion object)
     public static let jsprTimeoutMs: Int64 = 10_000
-    public static let signalTimeoutMs: Int64 = 2_000
+    /// Through the node's Bluetooth pipe a constellationState answer can take longer than 2 s, and a
+    /// missed one used to read as 0 bars (MESHSAT-1670).
+    public static let signalTimeoutMs: Int64 = SignalFreshness.pollTimeoutMs
+    /// How often the driver looks whether a signal reading is due (MESHSAT-1670): it asks the modem
+    /// only when no reading came for SignalFreshness.pollIntervalMs and no send is under way.
+    public static let signalCheckMs: Int64 = 5_000
     public static let moBudgetMs: Int64 = 150_000
     public static let moCancelSettleMs: Int64 = 20_000
     /// A send's answer when the modem never settled its cancel: the message may still go out.
@@ -41,6 +46,15 @@ public actor Iridium9704Driver {
     /// client queued on it (MESHSAT-1507), so another id never settles this send. A status without
     /// an id (-1) still does, as before.
     public static func moStatusSettles(inFlightId: Int, statusId: Int) -> Bool { statusId < 0 || statusId == inFlightId }
+
+    /// The bars after a signal read: the modem's answer, or the last reading when it did not answer
+    /// in time. An unanswered read used to set 0, so the app showed 0/5 while the modem was sending
+    /// (MSC-2 unit 0001, 24 Oct 2026, MESHSAT-1670); the Bridge keeps its last reading the same way
+    /// (internal/transport/direct_imt.go GetSignal and GetSignalFast).
+    public static func signalAfterPoll(previous: Int, answeredBars: Int?) -> Int {
+        guard let answeredBars else { return previous }
+        return min(max(answeredBars, 0), 5)
+    }
 
     public enum State: Sendable, Equatable {
         case disconnected, connecting, connected, initializing, ready
@@ -78,6 +92,10 @@ public actor Iridium9704Driver {
     public nonisolated let stateChanges = Broadcast<State>(replayLatest: true)
     /// Every reading, polled or unsolicited, repeated values included.
     public nonisolated let signalReadings = Broadcast<Int>(bufferSize: 1)
+    /// The last signal reading and its time, nil until the modem gave one on this link (MESHSAT-1670).
+    public nonisolated let reading = StateBroadcast<SignalReading?>(nil)
+    /// The signal reads' round trips on this link, for the bench (MESHSAT-1670).
+    public nonisolated let pollStats = StateBroadcast<SignalPollStats>(SignalPollStats())
     public nonisolated let errors = Broadcast<String>()
 
     // MARK: Internals
@@ -89,7 +107,11 @@ public actor Iridium9704Driver {
     private var link: ModemLink?
     private var attachTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    private var signalWatchTask: Task<Void, Never>?
     private var polling = false
+    private var pollRoundTrips: [Int64] = []
+    private var pollsAnswered = 0
+    private var pollsMissed = 0
     /// Where a message that came in goes, e.g. to be stored and shown.
     private var mtSink: (@Sendable ([UInt8]) async throws -> Void)?
     private var unsolicited: [JsprResponse] = []
@@ -134,6 +156,7 @@ public actor Iridium9704Driver {
         input.clear()
         let input = self.input
         newLink.setReceiver { bytes in input.offer(bytes) }
+        forgetReadings()
         state = .connected
         attachTask = Task { [weak self] in await self?.initialize(newLink) }
     }
@@ -156,6 +179,8 @@ public actor Iridium9704Driver {
         polling = false
         pollTask?.cancel()
         pollTask = nil
+        signalWatchTask?.cancel()
+        signalWatchTask = nil
         attachTask?.cancel()
         attachTask = nil
         old.setReceiver(nil)
@@ -216,6 +241,7 @@ public actor Iridium9704Driver {
             state = .ready
             Self.log.info("9704 initialized: \(modemInfo)")
             startPollLoop(forLink)
+            startSignalWatch(forLink)
         } catch {
             // A detach meanwhile is not a failed init.
             guard link === forLink else { return }
@@ -396,9 +422,11 @@ public actor Iridium9704Driver {
     private func handleUnsolicited(_ resp: JsprResponse) async {
         switch resp.target {
         case "constellationState":
-            signal = Self.optInt(resp.json, "signal_bars", 0)
-            signalReadings.send(signal)
-            Self.log.debug("Signal: \(signal)/5")
+            // An event without the field is no reading, never 0 bars (MESHSAT-1670).
+            if resp.json["signal_bars"] != nil {
+                recordReading(Self.optInt(resp.json, "signal_bars", 0))
+                Self.log.debug("Signal: \(signal)/5")
+            }
         case "messageOriginateSegment": await handleMoSegmentRequest(resp.json)
         case "messageOriginateStatus": handleMoStatus(resp.json)
         case "messageTerminate": handleMtNotification(resp.json)
@@ -624,20 +652,76 @@ public actor Iridium9704Driver {
     /// The JSPR link is usable for commands: Connected, Initializing (the init uses it) or Ready.
     private var isWireReady: Bool { state == .connected || state == .initializing || state == .ready }
 
-    /// Poll the signal strength, 0-5.
+    /// Poll the signal strength, 0-5: the answer, or the last reading when the modem did not answer
+    /// (which then stays as old as it is, MESHSAT-1670). Each answered read's round trip goes into
+    /// `pollStats`.
     @discardableResult
     public func pollSignal() async -> Int {
         guard isWireReady else { return 0 }
         do {
+            let startMs = clock.nowMs()
             let resp = try await sendJspr("GET", "constellationState", timeoutMs: Self.signalTimeoutMs)
-            let bars = resp.map { Self.optInt($0.json, "signal_bars", 0) } ?? 0
-            signal = bars
-            signalReadings.send(bars)
-            return bars
+            let answered = resp.flatMap { $0.json["signal_bars"] != nil ? Self.optInt($0.json, "signal_bars", 0) : nil }
+            notePoll(answered == nil ? nil : clock.nowMs() - startMs)
+            if let answered {
+                recordReading(answered)
+            } else {
+                Self.log.debug("Signal: no answer in \(Self.signalTimeoutMs / 1000) s, keeping \(signal)/5")
+            }
+            return Self.signalAfterPoll(previous: signal, answeredBars: answered)
         } catch {
             errors.send("9704 signal poll failed: \(error)")
-            return 0
+            return signal
         }
+    }
+
+    /// A reading the modem gave, by answer or by event (MESHSAT-1670).
+    private func recordReading(_ bars: Int) {
+        let b = min(max(bars, 0), 5)
+        signal = b
+        reading.send(SignalReading(bars: b, atMs: clock.nowMs()))
+        signalReadings.send(b)
+    }
+
+    private func notePoll(_ roundTripMs: Int64?) {
+        if let roundTripMs {
+            pollsAnswered += 1
+            pollRoundTrips.append(roundTripMs)
+            if pollRoundTrips.count > SignalPollStats.keep { pollRoundTrips.removeFirst(pollRoundTrips.count - SignalPollStats.keep) }
+        } else {
+            pollsMissed += 1
+        }
+        pollStats.send(SignalPollStats.of(pollRoundTrips, answered: pollsAnswered, missed: pollsMissed))
+    }
+
+    /// A new link starts with no reading and no round trips (MESHSAT-1670).
+    private func forgetReadings() {
+        reading.send(nil)
+        pollRoundTrips.removeAll()
+        pollsAnswered = 0
+        pollsMissed = 0
+        pollStats.send(SignalPollStats())
+    }
+
+    /// Fill the gaps between the modem's own constellationState events (MESHSAT-1670): ask when no
+    /// reading came for SignalFreshness.pollIntervalMs, never while a send is under way.
+    private func startSignalWatch(_ forLink: ModemLink) {
+        signalWatchTask?.cancel()
+        signalWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, await self.signalWatchOnce(forLink) else { return }
+            }
+        }
+    }
+
+    /// One look at whether a reading is due; false once the watch should stop.
+    private func signalWatchOnce(_ forLink: ModemLink) async -> Bool {
+        await clock.sleep(ms: Self.signalCheckMs)
+        guard polling, link === forLink else { return false }
+        guard state == .ready, moStatus == .idle else { return true }
+        let last = reading.value
+        if last == nil || clock.nowMs() - (last?.atMs ?? 0) >= SignalFreshness.pollIntervalMs { await pollSignal() }
+        return true
     }
 
     /// The SIM status as the modem's JSON text, nil when not answered.

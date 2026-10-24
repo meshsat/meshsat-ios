@@ -44,6 +44,12 @@ public struct DashboardScreen: View {
         cards.iridiumQueueDepth > 0 ? "\(Words.count(cards.iridiumQueueDepth, "message")) waiting to go out. " : ""
     }
 
+    /// The 9704's reading with its age once stale, "?" before the first (MESHSAT-1670); the 9603's bars.
+    private var satelliteMetric: String? {
+        if model.imtState == .ready { return SignalFreshness.compact(model.imtReading, nowMs: nowMs) }
+        return model.modemState == .connected ? "\(model.modemSignal)/5" : nil
+    }
+
     private var satellite: (LaneState, String) {
         if bluetoothOffWithNode {
             return (.failed, (satQueueLine + "Bluetooth is off on this phone. Switch it on to reach the node's modem.").trimmed)
@@ -51,6 +57,9 @@ public struct DashboardScreen: View {
         if model.modemLinkBroken {
             return (.failed, (satQueueLine + "The phone cannot reach the node's modem. Getting the link back.").trimmed)
         }
+        // A RockBLOCK 9704 on the node's pipe has its own driver (MESHSAT-1507), as HomeLanes.kt.
+        if model.imtState == .ready { return (.working, (satQueueLine + (passLine ?? "Modem ready.")).trimmed) }
+        if model.imtState != .disconnected { return (.trying, "Bringing the 9704 up.") }
         switch model.modemState {
         case .connected: return (.working, (satQueueLine + (passLine ?? "Modem ready.")).trimmed)
         case .connecting:
@@ -136,7 +145,7 @@ public struct DashboardScreen: View {
                     let sat = satellite
                     TransportLane(
                         icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
-                        metric: model.modemState == .connected ? "\(model.modemSignal)/5" : nil,
+                        metric: satelliteMetric,
                         detail: sat.1, state: sat.0, inFlight: cards.iridiumQueueDepth > 0
                     ) {
                         router.navigate(model.modemState == .connected ? .passes : .setupSection(.satellite))

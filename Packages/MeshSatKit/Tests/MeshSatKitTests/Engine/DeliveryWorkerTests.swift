@@ -103,6 +103,21 @@ final class DeliveryWorkerTests: XCTestCase {
         dispatcher.stop()
     }
 
+    /// MESHSAT-1670: retries already past maxRetries, so a 9603 failure would be dropped here.
+    func testA9704SendThatSawNoSatelliteIsRetriedWithinAMinuteAndNeverUsedUp() async {
+        let store = FakeDeliveryStore(rows: [row(11, retries: 5, maxRetries: 3)])
+        store.live = true
+        let dispatcher = make(store) { _, _, _, _, _, _ in "9704 MO failed: cancelled" }
+        let before = Int64(Date().timeIntervalSince1970 * 1000)
+        dispatcher.startWorker("iridium_0")
+        let settled = await waitUntil { store.log.contains("retry:11") || store.log.contains("status:11:dead") }
+        dispatcher.stop()
+        XCTAssertTrue(settled, "\(store.log)")
+        XCTAssertFalse(store.log.contains("status:11:dead"), "a 9704 miss must not be dropped by the retry limit")
+        let wait = (store.row(11)?.nextRetry ?? 0) - before
+        XCTAssertTrue((55_000...65_000).contains(wait), "retry in about a minute, was \(wait) ms")
+    }
+
     func testALaterSendThatFailsDoesNotRetryAConfirmedDelivery() async {
         await earlierSendConfirmsWhileALaterOneFails(retriesBefore: 1)
     }

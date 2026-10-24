@@ -560,7 +560,10 @@ public final class Dispatcher: @unchecked Sendable {
             return
         }
         let newRetries = del.retries + 1
-        if del.maxRetries > 0 && newRetries >= del.maxRetries {
+        // A 9704 attempt that found no satellite is not used up against the retry limit: the
+        // delivery's lifetime bounds it, and it comes back within a minute (see imtRetryAt).
+        let imtMiss = Self.isImtMiss(error)
+        if !imtMiss && del.maxRetries > 0 && newRetries >= del.maxRetries {
             guard ((try? await store.finishSend(id: id, "dead", lastError: error, now: clock.nowMs())) ?? 0) > 0 else {
                 return confirmedMeanwhile(channelId, id, error)
             }
@@ -568,7 +571,10 @@ public final class Dispatcher: @unchecked Sendable {
             Self.log.warning("Delivery \(id) exhausted retries (\(newRetries)): \(error)")
             return
         }
-        let nextRetry = calculateNextRetry(channelId, retries: newRetries, priority: del.priority, moStatus: Self.moStatusOf(error))
+        let nextRetry =
+            imtMiss
+            ? Self.imtRetryAt(nowMs: clock.nowMs(), retries: newRetries)
+            : calculateNextRetry(channelId, retries: newRetries, priority: del.priority, moStatus: Self.moStatusOf(error))
         let retried = try? await store.scheduleRetry(
             id: id, retries: newRetries, nextRetry: nextRetry, lastError: error, now: clock.nowMs())
         guard (retried ?? 0) > 0 else { return confirmedMeanwhile(channelId, id, error) }
@@ -640,6 +646,28 @@ public final class Dispatcher: @unchecked Sendable {
             let r = Range(m.range(at: 1), in: visitedJson)
         else { return "" }
         return String(visitedJson[r])
+    }
+
+    /// A send through a RockBLOCK 9704 (IMT) that did not go out in its attempt, as
+    /// GatewayController+Imt words it: "9704 MO failed: ...", "9704 not ready", "9704 not
+    /// available". A sealing or chain error never starts that way and keeps its own handling
+    /// (MESHSAT-1670).
+    public static func isImtMiss(_ error: String) -> Bool { error.hasPrefix("9704 ") }
+
+    /// When to try a 9704 send again: 15 s, 30 s, then every 60 s. The 9704 is not the 9603: there
+    /// is no 3-minute registration rule, the modem itself waits for a satellite while it holds the
+    /// message (150 s per attempt, Iridium9704Driver.moBudgetMs), and Ground Control's guidance is
+    /// to retry quickly. Under the 9603's schedule (3 minutes doubling to 30) a message waited up to
+    /// half an hour behind passes it could have taken (MSC-2 unit 0001, 24 Oct 2026, MESHSAT-1670).
+    /// A send that works, or a bar from the modem, still drains the queue at once.
+    public static func imtRetryAt(nowMs: Int64, retries: Int) -> Int64 {
+        let wait: Int64
+        switch retries {
+        case ...1: wait = 15_000
+        case 2: wait = 30_000
+        default: wait = 60_000
+        }
+        return nowMs + wait
     }
 
     /// The +SBDIX MO status in a satellite delivery's error ("Not sent: status 32, ..."), or nil.

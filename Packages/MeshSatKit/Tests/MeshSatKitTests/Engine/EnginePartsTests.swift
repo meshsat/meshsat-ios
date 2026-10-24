@@ -41,6 +41,21 @@ final class SatelliteRetryTests: XCTestCase {
             Dispatcher.satelliteRetryAt(nowMs: now, retries: 40, moStatus: 13, initialWaitMs: initial, maxWaitMs: max), now + 30 * 60_000)
     }
 
+    func testA9704SendThatSawNoSatelliteComesBackWithinAMinuteNotOnThe9603Schedule() {
+        XCTAssertEqual(Dispatcher.imtRetryAt(nowMs: now, retries: 1), now + 15_000)
+        XCTAssertEqual(Dispatcher.imtRetryAt(nowMs: now, retries: 2), now + 30_000)
+        for retries in [3, 4, 10, 40] { XCTAssertEqual(Dispatcher.imtRetryAt(nowMs: now, retries: retries), now + 60_000) }
+    }
+
+    func testOnlyThe9704sOwnSendFailuresCountAsA9704Miss() {
+        XCTAssertTrue(Dispatcher.isImtMiss("9704 MO failed: cancelled"))
+        XCTAssertTrue(Dispatcher.isImtMiss("9704 MO failed: timeout"))
+        XCTAssertTrue(Dispatcher.isImtMiss("9704 not ready"))
+        XCTAssertFalse(Dispatcher.isImtMiss("\(Dispatcher.never) Not sent: no key"))
+        XCTAssertFalse(Dispatcher.isImtMiss("\(Dispatcher.unconfirmed) the 9704 did not answer the cancel of a message it held"))
+        XCTAssertFalse(Dispatcher.isImtMiss("Not sent: status 32, no network service, MOMSN 228"))
+    }
+
     func testTheModemsStatusIsReadFromTheDeliverysError() {
         XCTAssertEqual(Dispatcher.moStatusOf("Not sent: status 32, no network service, MOMSN 228"), 32)
         XCTAssertEqual(Dispatcher.moStatusOf("\(Dispatcher.unconfirmed) status 18, the radio link dropped, MOMSN 12 (part 1 of 2)"), 18)
