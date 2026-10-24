@@ -277,4 +277,21 @@ final class HChainVectorsTests: XCTestCase {
             }
         }
     }
+
+    /// On a phone whose setting seals nothing, a plain text behind the version byte reads as a
+    /// plain text (MESHSAT-1675). Of the Bridge's refused wires only "not_base64" is one, and it
+    /// reads as the words it carries, never as sealed; every other stays unopened.
+    func testOnASettingThatSealsNothingOnlyAPlainTextBehindTheVersionByteReadsNeverSealed() throws {
+        let v = try HChainVectors.load().vectors
+        for (section, rows) in [("envelope_reject", v.envelopeReject), ("legacy_reject", v.legacyReject)] {
+            for x in rows {
+                let mt = SatelliteChain.readMt(hexBytes(x.bytesHex), keyHex: x.keyHex, readsPlain: true)
+                if section == "legacy_reject" && x.name == "not_base64" {
+                    XCTAssertEqual(mt, .text("not base64 at all!", sealed: false), x.name)
+                } else {
+                    guard case .unopened = mt else { return XCTFail("\(section) \(x.name) read as \(mt)") }
+                }
+            }
+        }
+    }
 }

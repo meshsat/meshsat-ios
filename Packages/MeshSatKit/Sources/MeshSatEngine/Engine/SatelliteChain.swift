@@ -129,10 +129,11 @@ public enum SatelliteChain {
     }
 
     /// What the service makes of one IMT payload on setting `mode`: `readMt` with the chain the
-    /// setting picks first (H when it picks none). The key is read only for a versioned payload.
+    /// setting picks first (H when it picks none), and a plain text behind the version byte read
+    /// only when the setting seals nothing. The key is read only for a versioned payload.
     public static func inbound(_ payload: [UInt8], mode: String?, key: () async -> String?) async -> MtMessage {
         let keyHex = payload.first == protocolVersion ? await key() : nil
-        return readMt(payload, keyHex: keyHex, preferred: chainOf(mode) ?? .h)
+        return readMt(payload, keyHex: keyHex, preferred: chainOf(mode) ?? .h, readsPlain: chainOf(mode) == nil)
     }
 
     /// What an IMT message from the satellite is, once it is not a Reticulum packet (Android's
@@ -147,10 +148,14 @@ public enum SatelliteChain {
     /// Reads one IMT payload. One that starts with the version byte is MeshSat's: it is opened with
     /// `preferred`, the chain this phone is set to, and while the two ends switch chains with the
     /// other one, each authenticated by its AES-GCM tag, so nothing that did not come from the
-    /// key's holder ever reads as text. One that opens with neither is `.unopened`. Anything else is
-    /// a plain text as before (a typed text never starts with byte 0x01).
+    /// key's holder ever reads as text. One that opens with neither is `.unopened`, unless
+    /// `readsPlain` (a phone whose setting seals nothing) and it is a plain text behind the version
+    /// byte (`versionedPlainText`), which reads as a plain text, never as sealed. A phone set to seal
+    /// keeps it unopened, as a Bridge's sealed link drops what does not authenticate. Anything else
+    /// is a plain text as before (a typed text never starts with byte 0x01).
     public static func readMt(
-        _ payload: [UInt8], keyHex: String?, pipeline: TransformPipeline = TransformPipeline(), preferred: Chain = .h
+        _ payload: [UInt8], keyHex: String?, pipeline: TransformPipeline = TransformPipeline(), preferred: Chain = .h,
+        readsPlain: Bool = false
     ) -> MtMessage {
         guard payload.first == protocolVersion else { return .text(String(decoding: payload, as: UTF8.self), sealed: false) }
         let firstError: Error
@@ -164,7 +169,47 @@ public enum SatelliteChain {
             let text = try open(payload, keyHex: keyHex, pipeline: pipeline, chain: preferred.other)
             return .text(String(decoding: text, as: UTF8.self), sealed: true, chain: preferred.other)
         } catch {
+            if readsPlain, let text = versionedPlainText(payload) { return .text(text, sealed: false) }
             return .unopened(reason: (firstError as? TransformError)?.description ?? "does not open")
+        }
+    }
+
+    /// The text of a plain message behind the version byte: the version byte, then the text's UTF-8
+    /// bytes, as the Hub's routes sent a text to a 9704 until MESHSAT-1675. Read only once neither
+    /// sealed chain opens it, and only when the rest is printable UTF-8 not shaped like a legacy
+    /// wire (base64 of at least a nonce, one byte and a tag), so a sealed message under a wrong key
+    /// never reads as text: the 30 random bytes of the shortest sealed wire pass as printable UTF-8
+    /// about once in 10^10, 40 once in 10^13. The Hub's compressed form (version byte, SMAZ2) is not
+    /// read: noise passes for it once in 60 at that length. Nil otherwise. [MESHSAT-1675]
+    public static func versionedPlainText(_ payload: [UInt8]) -> String? {
+        guard payload.count >= 2, payload[0] == protocolVersion, let text = utf8(Array(payload[1...])) else { return nil }
+        // Kotlin's Char.isISOControl: U+0000-U+001F and U+007F-U+009F.
+        let control = text.unicodeScalars.contains { s in
+            (s.value <= 0x1F || (0x7F...0x9F).contains(s.value)) && s != "\n" && s != "\r" && s != "\t"
+        }
+        if control { return nil }
+        if text.utf16.count >= legacyMinWireChars, text.utf16.count % 4 == 0, isBase64Text(text) { return nil }
+        return text
+    }
+
+    /// A legacy wire's shortest base64: 12-byte nonce, one byte, 16-byte tag.
+    private static let legacyMinWireChars = 40
+
+    /// `^[A-Za-z0-9+/_-]+={0,2}$`, matched whole, as Android's BASE64_TEXT.
+    private static func isBase64Text(_ text: String) -> Bool {
+        let scalars = Array(text.unicodeScalars)
+        var end = scalars.count
+        var pads = 0
+        while end > 0, scalars[end - 1] == "=", pads < 2 {
+            end -= 1
+            pads += 1
+        }
+        guard end > 0 else { return false }
+        return scalars[0..<end].allSatisfy { s in
+            switch s {
+            case "A"..."Z", "a"..."z", "0"..."9", "+", "/", "_", "-": return true
+            default: return false
+            }
         }
     }
 
@@ -176,9 +221,12 @@ public enum SatelliteChain {
     }
 
     /// Strict UTF-8, as Java's decoder with REPORT: a malformed or truncated sequence is not text.
-    private static func isUtf8(_ bytes: [UInt8]) -> Bool {
+    private static func isUtf8(_ bytes: [UInt8]) -> Bool { utf8(bytes) != nil }
+
+    /// `bytes` as UTF-8, or nil when it is not UTF-8.
+    private static func utf8(_ bytes: [UInt8]) -> String? {
         let failed = transcode(bytes.makeIterator(), from: UTF8.self, to: UTF32.self, stoppingOnError: true) { _ in }
-        return !failed
+        return failed ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
     /// What the Hub birth declares for the modem (egress_format): "sealed" for either encrypted

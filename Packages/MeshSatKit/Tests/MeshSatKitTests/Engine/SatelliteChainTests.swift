@@ -342,6 +342,71 @@ final class SatelliteChainTests: XCTestCase {
             if case .text = wrong { XCTFail("\(String(describing: mode)), wrong key: opened") }
         }
     }
+
+    // MARK: MESHSAT-1675, a plain text behind the version byte, as the Hub's routes sent one
+
+    private let hubText = "Test from the Hub, reply when you read this"
+    private func versioned(_ text: String) -> [UInt8] { [SatelliteChain.protocolVersion] + Array(text.utf8) }
+    private let plainModes: [String?] = [nil, SatelliteChain.modeUndeclared, SatelliteChain.modePlain]
+    private let sealingModes = [SatelliteChain.modeSealed, SatelliteChain.modeLegacy]
+
+    func testOnASettingThatSealsNothingAPlainTextBehindTheVersionByteReadsAsPlainText() async {
+        let texts = [hubText, "Καλημέρα from Leiden 16:20", "two lines\nand a tab\there", "ok"]
+        for mode in plainModes {
+            for t in texts {
+                for k in [key, otherKey, nil] {
+                    let got = await SatelliteChain.inbound(versioned(t), mode: mode) { k }
+                    XCTAssertEqual(got, .text(t, sealed: false), "\(String(describing: mode)), key \(String(describing: k)): \(t)")
+                }
+            }
+        }
+    }
+
+    func testOnASettingThatSealsItStaysUnopenedAsABridgesSealedLinkDropsIt() async {
+        for mode in sealingModes {
+            let got = await SatelliteChain.inbound(versioned(hubText), mode: mode) { self.key }
+            guard case .unopened = got else { return XCTFail("\(mode) read as \(got)") }
+        }
+    }
+
+    func testASealedMessageUnderAWrongKeyOrNoneNeverReadsAsAPlainText() async throws {
+        var rnd = SeededBytes(seed: 1675)
+        for i in 0..<300 {
+            let n = 1 + Int(rnd.next(1)[0]) % 120
+            let text = rnd.next(n).map { 0x20 + $0 % 0x5f }
+            let h = try SatelliteChain.seal(text, keyHex: key)
+            let legacy = try SatelliteChain.seal(text, keyHex: key, chain: .legacy)
+            for mode in plainModes {
+                for k in [otherKey, nil] {
+                    let gotH = await SatelliteChain.inbound(h, mode: mode) { k }
+                    if case .text = gotH { XCTFail("H \(i), \(String(describing: mode)), key \(String(describing: k)): \(gotH)") }
+                    let gotLegacy = await SatelliteChain.inbound(legacy, mode: mode) { k }
+                    if case .text = gotLegacy {
+                        XCTFail("legacy \(i), \(String(describing: mode)), key \(String(describing: k)): \(gotLegacy)")
+                    }
+                }
+            }
+        }
+        // Noise of every sealed length: never a text.
+        for i in 0..<20_000 {
+            let body = rnd.next(30 + Int(rnd.next(1)[0]) % 91)
+            let mt = SatelliteChain.readMt([SatelliteChain.protocolVersion] + body, keyHex: otherKey, readsPlain: true)
+            guard case .unopened = mt else { return XCTFail("noise \(i) read as \(mt)") }
+        }
+    }
+
+    func testTheHubsCompressedFormALegacyShapedTextAndTheVersionByteAloneStayUnopened() {
+        // What the Hub's send API wrote before MESHSAT-1675, from its own compressor:
+        // version byte, then SMAZ2 on the Meshtastic table.
+        let hubSmaz2 = hexBytes("01" + "5487740883208165204875622c2083f279089120df7508ac0881")
+        let legacyShaped = versioned("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNk")
+        for wire in [hubSmaz2, legacyShaped, [SatelliteChain.protocolVersion]] {
+            let mt = SatelliteChain.readMt(wire, keyHex: key, readsPlain: true)
+            guard case .unopened = mt else { return XCTFail("\(wire.count) bytes read as \(mt)") }
+        }
+        // A text without the version byte reads as before on every setting.
+        XCTAssertEqual(SatelliteChain.readMt(Array(hubText.utf8), keyHex: key), .text(hubText, sealed: false))
+    }
 }
 
 /// Counts calls from any task.
