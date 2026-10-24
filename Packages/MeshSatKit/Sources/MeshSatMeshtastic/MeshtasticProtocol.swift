@@ -60,6 +60,8 @@ public enum MeshtasticProtocol {
         case deviceMetadata(MeshDeviceMetadata)
         case configCompleteId(UInt32)
         case config(Meshtastic_Config)
+        /// A ClientNotification's text, e.g. "Rebooting to BLE OTA" (MESHSAT-1672).
+        case clientNotification(String)
         case unhandled
     }
 
@@ -75,6 +77,7 @@ public enum MeshtasticProtocol {
         if let md = a.extractDeviceMetadata(fromRadio) { return .deviceMetadata(md) }
         if case .config(let config)? = fromRadio.payloadVariant { return .config(config) }
         if case .configCompleteID(let id)? = fromRadio.payloadVariant { return .configCompleteId(id) }
+        if case .clientNotification(let n)? = fromRadio.payloadVariant { return .clientNotification(n.message) }
 
         guard let portnum = a.getPortnum(fromRadio) else { return .unhandled }
         return packetResult(fromRadio, portnum: portnum, nowMs: nowMs)

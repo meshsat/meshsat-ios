@@ -74,7 +74,8 @@ public enum MeshtasticProtoAdapter {
         guard case .myInfo(let mi)? = fromRadio.payloadVariant else { return nil }
         // firmware_version left MyNodeInfo in recent protos; it comes with DeviceMetadata.
         return MeshtasticProtocol.MyNodeInfo(
-            myNodeNum: mi.myNodeNum, firmwareVersion: "", rebootCount: Int(mi.rebootCount), minAppVersion: Int(mi.minAppVersion))
+            myNodeNum: mi.myNodeNum, firmwareVersion: "", rebootCount: Int(mi.rebootCount), minAppVersion: Int(mi.minAppVersion),
+            pioEnv: mi.pioEnv)
     }
 
     /// NodeInfo from the radio's own node list. hops_away has no presence in the bundled proto
@@ -421,6 +422,18 @@ public enum MeshtasticProtoAdapter {
     public static func buildAdminSetFavoriteNode(myNodeNum: UInt32, nodeNum: UInt32) -> [UInt8] {
         var admin = Meshtastic_AdminMessage()
         admin.setFavoriteNode = nodeNum
+        return wrapAdminToRadio(myNodeNum: myNodeNum, destNode: myNodeNum, admin: admin)
+    }
+
+    /// Ask the node to reboot into its OTA loader for a firmware update over Bluetooth, naming the
+    /// image's SHA-256 (AdminMessage.ota_request, field 102; MESHSAT-1672). The node answers with a
+    /// ClientNotification "Rebooting to BLE OTA", or a warning saying why it will not.
+    public static func buildAdminOtaRequest(myNodeNum: UInt32, sha256: [UInt8]) -> [UInt8] {
+        var event = Meshtastic_AdminMessage.OTAEvent()
+        event.rebootOtaMode = .otaBle
+        event.otaHash = Data(sha256)
+        var admin = Meshtastic_AdminMessage()
+        admin.otaRequest = event
         return wrapAdminToRadio(myNodeNum: myNodeNum, destNode: myNodeNum, admin: admin)
     }
 

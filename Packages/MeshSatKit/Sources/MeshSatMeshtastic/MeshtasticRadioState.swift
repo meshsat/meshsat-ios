@@ -44,6 +44,8 @@ public final class MeshtasticRadioState: @unchecked Sendable {
     public let neighborReports = StateBroadcast<[UInt32: MeshtasticProtocol.NeighborReport]>([:])
     /// How our radio heard the last over-the-air packet from each node, by node number.
     public let linkSignals = StateBroadcast<[UInt32: MeshtasticProtocol.MeshLinkSignal]>([:])
+    /// The node's ClientNotification texts as they arrive (MESHSAT-1672: the OTA handover answers here).
+    public let clientNotifications = Broadcast<String>(bufferSize: 16)
 
     private let now: @Sendable () -> Int64
 

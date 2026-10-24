@@ -28,6 +28,11 @@ public final class SettingsModel {
     public private(set) var nodeStats: IridiumPipeContract.Stats?
     /// The connected node takes the owner's LED and screen switches (CONTROL, MESHSAT-1671).
     public private(set) var pipeHasControl = false
+    /// The node's firmware as it reports it (MESHSAT-1672): its version (DeviceMetadata) and the
+    /// PlatformIO build it was made for (MyNodeInfo.pio_env), and where an update stands.
+    public private(set) var nodeFirmwareVersion = ""
+    public private(set) var nodePioEnv = ""
+    public private(set) var firmwareUpdate: NodeFirmwareUpdater.State = .idle
     /// The node's whole STATUS, for its flags: bit 4 says it carries a 9704 (MESHSAT-1507).
     public private(set) var pipeStatus: IridiumPipeContract.Status?
     /// The node's RockBLOCK 9704 (MESHSAT-1624): its state, what it reported, its signal.
@@ -76,6 +81,21 @@ public final class SettingsModel {
                 for await bars in imtDriver.signalReadings.subscribe() { self?.imtSignal = bars }
             })
         let central = gateway.central
+        let myInfo = central.radio.myInfo.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await info in myInfo { self?.nodePioEnv = info?.pioEnv ?? "" }
+            })
+        let metadata = central.radio.deviceMetadata.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await md in metadata { self?.nodeFirmwareVersion = md?.firmwareVersion ?? "" }
+            })
+        let update = NodeFirmwareUpdater.shared.state.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await s in update { self?.firmwareUpdate = s }
+            })
         tasks.append(
             Task { [weak self] in
                 var ownerTask: Task<Void, Never>?
@@ -188,6 +208,12 @@ public final class SettingsModel {
     public func provisionFromQr(_ url: String) { gateway.provisionClaim.fromQr(url) }
     /// After the Hub settings were typed by hand: the client starts again on them.
     public func restartHub() { Task { await gateway.restartHubReporter() } }
+
+    // MARK: The node's firmware (MESHSAT-1672)
+
+    public func startFirmwareUpdate(_ image: NodeFirmwareImage) { NodeFirmwareUpdater.shared.start(central: gateway.central, image: image) }
+    public func retryFirmwareUpdate() { NodeFirmwareUpdater.shared.retry(central: gateway.central) }
+    public func resetFirmwareUpdate() { NodeFirmwareUpdater.shared.reset() }
 
     /// Switch the node's status LED or screen (MESHSAT-1671); the switch shows what the node then
     /// reports in STATUS, not what was asked. False when the node has no CONTROL or the write failed.

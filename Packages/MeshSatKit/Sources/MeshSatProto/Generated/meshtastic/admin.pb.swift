@@ -25,6 +25,45 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// Firmware update mode for OTA updates (upstream protobufs, admin.proto; MESHSAT-1672).
+public nonisolated enum Meshtastic_OTAMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case noRebootOta // = 0
+  case otaBle // = 1
+  case otaWifi // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .noRebootOta
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .noRebootOta
+    case 1: self = .otaBle
+    case 2: self = .otaWifi
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .noRebootOta: return 0
+    case .otaBle: return 1
+    case .otaWifi: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Meshtastic_OTAMode] = [
+    .noRebootOta,
+    .otaBle,
+    .otaWifi,
+  ]
+
+}
+
 public nonisolated struct Meshtastic_AdminMessage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -355,6 +394,16 @@ public nonisolated struct Meshtastic_AdminMessage: Sendable {
     set {payloadVariant = .nodedbReset(newValue)}
   }
 
+  /// Reboot into the ESP32 OTA loader in app1 for a firmware update over BLE or WiFi, with the
+  /// image's SHA-256 (upstream protobufs, admin.proto; MESHSAT-1672).
+  public var otaRequest: Meshtastic_AdminMessage.OTAEvent {
+    get {
+      if case .otaRequest(let v)? = payloadVariant {return v}
+      return Meshtastic_AdminMessage.OTAEvent()
+    }
+    set {payloadVariant = .otaRequest(newValue)}
+  }
+
   public var sessionPasskey: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -403,6 +452,9 @@ public nonisolated struct Meshtastic_AdminMessage: Sendable {
     case shutdownSeconds(Int32)
     case factoryResetConfig(Int32)
     case nodedbReset(Int32)
+    /// Reboot into the ESP32 OTA loader in app1 for a firmware update over BLE or WiFi, with the
+    /// image's SHA-256 (upstream protobufs, admin.proto; MESHSAT-1672).
+    case otaRequest(Meshtastic_AdminMessage.OTAEvent)
 
   }
 
@@ -548,6 +600,20 @@ public nonisolated struct Meshtastic_AdminMessage: Sendable {
       .paxcounterConfig,
     ]
 
+  }
+
+  public nonisolated struct OTAEvent: Sendable {
+    // SwiftProtobuf.Message conformance is added in an extension below. See the
+    // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+    // methods supported on all messages.
+
+    public var rebootOtaMode: Meshtastic_OTAMode = .noRebootOta
+
+    public var otaHash: Data = Data()
+
+    public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+    public init() {}
   }
 
   public init() {}
@@ -755,9 +821,13 @@ public nonisolated struct Meshtastic_StoreAndForward: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "meshtastic"
 
+nonisolated extension Meshtastic_OTAMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0NO_REBOOT_OTA\0\u{1}OTA_BLE\0\u{1}OTA_WIFI\0")
+}
+
 nonisolated extension Meshtastic_AdminMessage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AdminMessage"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}get_channel_request\0\u{3}get_channel_response\0\u{3}get_owner_request\0\u{3}get_owner_response\0\u{3}get_config_request\0\u{3}get_config_response\0\u{3}get_module_config_request\0\u{3}get_module_config_response\0\u{4}\u{2}get_canned_message_module_messages_request\0\u{3}get_canned_message_module_messages_response\0\u{3}get_device_metadata_request\0\u{3}get_device_metadata_response\0\u{3}get_ringtone_request\0\u{3}get_ringtone_response\0\u{3}get_device_connection_status_request\0\u{4}\u{3}get_node_remote_hardware_pins_request\0\u{4}\u{d}set_owner\0\u{3}set_channel\0\u{3}set_config\0\u{3}set_module_config\0\u{3}set_canned_message_module_messages\0\u{3}set_ringtone_message\0\u{3}remove_by_nodenum\0\u{3}set_favorite_node\0\u{3}remove_favorite_node\0\u{3}set_fixed_position\0\u{3}remove_fixed_position\0\u{3}set_time_only\0\u{4}\u{4}set_ignored_node\0\u{3}remove_ignored_node\0\u{3}toggle_muted_node\0\u{4}\u{f}begin_edit_settings\0\u{3}commit_edit_settings\0\u{4}\u{1d}factory_reset_device\0\u{3}reboot_ota_seconds\0\u{3}exit_simulator\0\u{3}reboot_seconds\0\u{3}shutdown_seconds\0\u{3}factory_reset_config\0\u{3}nodedb_reset\0\u{3}session_passkey\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}get_channel_request\0\u{3}get_channel_response\0\u{3}get_owner_request\0\u{3}get_owner_response\0\u{3}get_config_request\0\u{3}get_config_response\0\u{3}get_module_config_request\0\u{3}get_module_config_response\0\u{4}\u{2}get_canned_message_module_messages_request\0\u{3}get_canned_message_module_messages_response\0\u{3}get_device_metadata_request\0\u{3}get_device_metadata_response\0\u{3}get_ringtone_request\0\u{3}get_ringtone_response\0\u{3}get_device_connection_status_request\0\u{4}\u{3}get_node_remote_hardware_pins_request\0\u{4}\u{d}set_owner\0\u{3}set_channel\0\u{3}set_config\0\u{3}set_module_config\0\u{3}set_canned_message_module_messages\0\u{3}set_ringtone_message\0\u{3}remove_by_nodenum\0\u{3}set_favorite_node\0\u{3}remove_favorite_node\0\u{3}set_fixed_position\0\u{3}remove_fixed_position\0\u{3}set_time_only\0\u{4}\u{4}set_ignored_node\0\u{3}remove_ignored_node\0\u{3}toggle_muted_node\0\u{4}\u{f}begin_edit_settings\0\u{3}commit_edit_settings\0\u{4}\u{1d}factory_reset_device\0\u{3}reboot_ota_seconds\0\u{3}exit_simulator\0\u{3}reboot_seconds\0\u{3}shutdown_seconds\0\u{3}factory_reset_config\0\u{3}nodedb_reset\0\u{3}session_passkey\0\u{3}ota_request\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1136,6 +1206,19 @@ nonisolated extension Meshtastic_AdminMessage: SwiftProtobuf.Message, SwiftProto
         }
       }()
       case 101: try { try decoder.decodeSingularBytesField(value: &self.sessionPasskey) }()
+      case 102: try {
+        var v: Meshtastic_AdminMessage.OTAEvent?
+        var hadOneofValue = false
+        if let current = self.payloadVariant {
+          hadOneofValue = true
+          if case .otaRequest(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payloadVariant = .otaRequest(v)
+        }
+      }()
       default: break
       }
     }
@@ -1307,11 +1390,14 @@ nonisolated extension Meshtastic_AdminMessage: SwiftProtobuf.Message, SwiftProto
       guard case .nodedbReset(let v)? = self.payloadVariant else { preconditionFailure() }
       try visitor.visitSingularInt32Field(value: v, fieldNumber: 100)
     }()
-    case nil: break
+    default: break
     }
     if !self.sessionPasskey.isEmpty {
       try visitor.visitSingularBytesField(value: self.sessionPasskey, fieldNumber: 101)
     }
+    try { if case .otaRequest(let v)? = self.payloadVariant {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 102)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1329,6 +1415,41 @@ nonisolated extension Meshtastic_AdminMessage.ConfigType: SwiftProtobuf._ProtoNa
 
 nonisolated extension Meshtastic_AdminMessage.ModuleConfigType: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MQTT_CONFIG\0\u{1}SERIAL_CONFIG\0\u{1}EXTNOTIF_CONFIG\0\u{1}STOREFORWARD_CONFIG\0\u{1}RANGETEST_CONFIG\0\u{1}TELEMETRY_CONFIG\0\u{1}CANNEDMSG_CONFIG\0\u{1}AUDIO_CONFIG\0\u{1}REMOTEHARDWARE_CONFIG\0\u{1}NEIGHBORINFO_CONFIG\0\u{1}AMBIENTLIGHTING_CONFIG\0\u{1}DETECTIONSENSOR_CONFIG\0\u{1}PAXCOUNTER_CONFIG\0")
+}
+
+nonisolated extension Meshtastic_AdminMessage.OTAEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = Meshtastic_AdminMessage.protoMessageName + ".OTAEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}reboot_ota_mode\0\u{3}ota_hash\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.rebootOtaMode) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.otaHash) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.rebootOtaMode != .noRebootOta {
+      try visitor.visitSingularEnumField(value: self.rebootOtaMode, fieldNumber: 1)
+    }
+    if !self.otaHash.isEmpty {
+      try visitor.visitSingularBytesField(value: self.otaHash, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Meshtastic_AdminMessage.OTAEvent, rhs: Meshtastic_AdminMessage.OTAEvent) -> Bool {
+    if lhs.rebootOtaMode != rhs.rebootOtaMode {return false}
+    if lhs.otaHash != rhs.otaHash {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
 }
 
 nonisolated extension Meshtastic_StoreAndForward: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

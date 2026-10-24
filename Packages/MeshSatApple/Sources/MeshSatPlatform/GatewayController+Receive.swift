@@ -106,13 +106,27 @@ extension GatewayController {
                 MessageRecord(
                     timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId,
                     text: "\u{26A0}\u{FE0F} Sensor alert: \(ds.name)"))
+        case .channel, .deviceMetadata, .config, .clientNotification:
+            onNodeState(result, radio)
+        case .neighborInfo, .traceroute, .rangeTest, .paxcounter, .reply, .configCompleteId, .unhandled:
+            break
+        }
+    }
+
+    /// The node's own state from a frame: a channel, its metadata, a config section, or a
+    /// ClientNotification (the OTA handover answers there, MESHSAT-1672).
+    private func onNodeState(_ result: MeshtasticProtocol.FromRadioResult, _ radio: MeshtasticRadioState) {
+        switch result {
         case .channel(let ch):
             radio.addChannel(ch)
         case .deviceMetadata(let md):
             radio.setDeviceMetadata(md)
         case .config(let config):
             radio.setConfig(config)
-        case .neighborInfo, .traceroute, .rangeTest, .paxcounter, .reply, .configCompleteId, .unhandled:
+        case .clientNotification(let text):
+            Self.log.info("Node notification: \(text)")
+            radio.clientNotifications.send(text)
+        default:
             break
         }
     }

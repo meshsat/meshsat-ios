@@ -128,11 +128,15 @@ extension MeshtasticProtocol {
         public var firmwareVersion: String
         public var rebootCount: Int
         public var minAppVersion: Int
-        public init(myNodeNum: UInt32 = 0, firmwareVersion: String = "", rebootCount: Int = 0, minAppVersion: Int = 0) {
+        /// The PlatformIO env the node's firmware was built for (MESHSAT-1672); empty on old firmware.
+        public var pioEnv: String
+        public init(myNodeNum: UInt32 = 0, firmwareVersion: String = "", rebootCount: Int = 0, minAppVersion: Int = 0, pioEnv: String = "")
+        {
             self.myNodeNum = myNodeNum
             self.firmwareVersion = firmwareVersion
             self.rebootCount = rebootCount
             self.minAppVersion = minAppVersion
+            self.pioEnv = pioEnv
         }
     }
 

@@ -76,7 +76,23 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     /// (MESHSAT-1505): CoreBluetooth ignores discoverServices before that.
     private var restoredPending: CBPeripheral?
     private var lastAddressValue: String?
+    private var heldValue = false
     private let whoIsAsked = WhoIsLimiter()
+
+    /// While a firmware update runs (MESHSAT-1672) the node is the OTA loader's, and the loader
+    /// takes one connection: no connect or reconnect from here until the update lets go.
+    public var heldForFirmwareUpdate: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return heldValue
+        }
+        set {
+            lock.lock()
+            heldValue = newValue
+            lock.unlock()
+        }
+    }
 
     /// Last connected node identifier, used for `reconnect`.
     public var lastAddress: String? {
@@ -181,6 +197,11 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
 
     private func connect(id: UUID) {
         guard let c = manager() else { return }
+        if heldForFirmwareUpdate {
+            Self.log.info("Not connecting to \(id.uuidString): a firmware update holds the node")
+            state.send(.disconnected)
+            return
+        }
         // With Bluetooth switched off there is nothing to connect with, and saying "Connecting"
         // would stay on the screen for ever (MESHSAT-615). Off is a state, not an error.
         guard c.state == .poweredOn else {

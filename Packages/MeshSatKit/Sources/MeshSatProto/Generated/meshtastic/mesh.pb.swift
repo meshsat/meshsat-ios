@@ -1229,6 +1229,11 @@ public nonisolated struct Meshtastic_MyNodeInfo: Sendable {
 
   public var minAppVersion: UInt32 = 0
 
+  public var deviceID: Data = Data()
+
+  /// The PlatformIO env the node's firmware was built for, e.g. meshsat-tbeam-s3-rockblock9704 (MESHSAT-1672).
+  public var pioEnv: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2673,7 +2678,7 @@ nonisolated extension Meshtastic_NodeInfo: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension Meshtastic_MyNodeInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MyNodeInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}my_node_num\0\u{4}\u{7}reboot_count\0\u{4}\u{3}min_app_version\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}my_node_num\0\u{4}\u{7}reboot_count\0\u{4}\u{3}min_app_version\0\u{3}device_id\0\u{3}pio_env\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2684,6 +2689,8 @@ nonisolated extension Meshtastic_MyNodeInfo: SwiftProtobuf.Message, SwiftProtobu
       case 1: try { try decoder.decodeSingularUInt32Field(value: &self.myNodeNum) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.rebootCount) }()
       case 11: try { try decoder.decodeSingularUInt32Field(value: &self.minAppVersion) }()
+      case 12: try { try decoder.decodeSingularBytesField(value: &self.deviceID) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.pioEnv) }()
       default: break
       }
     }
@@ -2699,6 +2706,12 @@ nonisolated extension Meshtastic_MyNodeInfo: SwiftProtobuf.Message, SwiftProtobu
     if self.minAppVersion != 0 {
       try visitor.visitSingularUInt32Field(value: self.minAppVersion, fieldNumber: 11)
     }
+    if !self.deviceID.isEmpty {
+      try visitor.visitSingularBytesField(value: self.deviceID, fieldNumber: 12)
+    }
+    if !self.pioEnv.isEmpty {
+      try visitor.visitSingularStringField(value: self.pioEnv, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2706,6 +2719,8 @@ nonisolated extension Meshtastic_MyNodeInfo: SwiftProtobuf.Message, SwiftProtobu
     if lhs.myNodeNum != rhs.myNodeNum {return false}
     if lhs.rebootCount != rhs.rebootCount {return false}
     if lhs.minAppVersion != rhs.minAppVersion {return false}
+    if lhs.deviceID != rhs.deviceID {return false}
+    if lhs.pioEnv != rhs.pioEnv {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

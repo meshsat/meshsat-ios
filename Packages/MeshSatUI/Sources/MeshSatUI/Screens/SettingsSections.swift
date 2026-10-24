@@ -94,6 +94,8 @@ public struct SettingsSatelliteSection: View {
                 // The owner's switches for the node's light and screen (MESHSAT-1671).
                 if settings.pipePresent {
                     NodeLightAndScreenCard()
+                    // The node's firmware, updated over Bluetooth (MESHSAT-1672).
+                    NodeFirmwareCard()
                 }
                 Text(
                     "A RockBLOCK 9704 on an HC-05 needs Bluetooth Classic, which iPhones do not have. "

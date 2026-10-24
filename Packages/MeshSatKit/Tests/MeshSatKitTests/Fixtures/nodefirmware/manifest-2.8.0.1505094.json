@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "version": "2.8.0.1505094",
+  "tag": "meshsat-node-2.8.0.1505094",
+  "commit": "150509418cae046b65f8a817a8003b6e15c9250b",
+  "released_at": "2026-10-24T17:50:20Z",
+  "images": [
+    {
+      "env": "meshsat-tbeam-s3-rockblock",
+      "file": "firmware-meshsat-tbeam-s3-rockblock-2.8.0.1505094.bin",
+      "size": 2415840,
+      "sha256": "d538615f6bf4f9fe0a9b6796dc141041ee4a9fa6aa3e48c955efefb778305039"
+    },
+    {
+      "env": "meshsat-tbeam-s3-rockblock9704",
+      "file": "firmware-meshsat-tbeam-s3-rockblock9704-2.8.0.1505094.bin",
+      "size": 2419024,
+      "sha256": "63a1b73c025c474ebc8e988b8c3b2fbd5f59a112d4396c2facc157406fb88db8"
+    },
+    {
+      "env": "meshsat-xiao-s3-rockblock",
+      "file": "firmware-meshsat-xiao-s3-rockblock-2.8.0.1505094.bin",
+      "size": 2276576,
+      "sha256": "3bbf65b89c349f799001cd5d8a92bd36cb048c0f427a048baf3582e29ca7b311"
+    }
+  ]
+}
