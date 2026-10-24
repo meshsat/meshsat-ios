@@ -22,6 +22,8 @@ public protocol IridiumPipeLink: AnyObject, Sendable {
     /// The version 2 additions (MESHSAT-1378); a version 1 node has neither.
     var hasStats: Bool { get }
     var hasPass: Bool { get }
+    /// The owner's LED and screen switches (MESHSAT-1671); firmware before 24 Oct 2026 has none.
+    var hasControl: Bool { get }
     /// The largest write the link takes now (the MTU minus the ATT header).
     func chunkSize() -> Int
     /// Write `chunk` to the characteristic, acknowledged; the GattOpQueue status.
@@ -57,6 +59,9 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
     /// The node serves the version 2 additions.
     public var hasStats: Bool { link.hasStats }
     public var hasPass: Bool { link.hasPass }
+    /// The node takes the owner's LED and screen switches (MESHSAT-1671); firmware before 24 Oct
+    /// 2026 does not.
+    public var hasControl: Bool { link.hasControl }
     /// The pass list this link last gave the node, so an unchanged prediction is not rewritten.
     public var passesWritten: [IridiumPipeContract.PassWindow]? {
         get {
@@ -216,6 +221,18 @@ public final class IridiumBlePipe: ModemLink, @unchecked Sendable {
         if status != GattOpQueue.statusSuccess {
             let count = min(windows.count, IridiumPipeContract.passListMax)
             Self.log.warning("Iridium pipe: PASS write of \(count) windows failed, \(Self.attStatusText(status))")
+        }
+        return status == GattOpQueue.statusSuccess
+    }
+
+    /// Switch the node's status LED or screen on or off (MESHSAT-1671): one write with response.
+    /// The node keeps the switch across restarts and reports it in STATUS bits 5 and 6, which is
+    /// where the screen reads it back. False when the node has no CONTROL or the write failed.
+    public func writeControl(_ control: UInt8, off: Bool) async -> Bool {
+        guard link.hasControl else { return false }
+        let status = await link.write(uuid: IridiumPipeContract.controlUUID, IridiumPipeContract.encodeControl(control, off: off))
+        if status != GattOpQueue.statusSuccess {
+            Self.log.warning("Iridium pipe: CONTROL write \(control)=\(off ? "off" : "on") failed, \(Self.attStatusText(status))")
         }
         return status == GattOpQueue.statusSuccess
     }

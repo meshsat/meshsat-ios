@@ -11,6 +11,7 @@ final class FakePipeLink: IridiumPipeLink, @unchecked Sendable {
     var hasStatus = true
     var hasStats = false
     var hasPass = false
+    var hasControl = false
     var mtuPayload = 244
     /// Refuse the first N descriptor writes (the link is still being encrypted).
     var refuseNotifies = 0
@@ -25,11 +26,20 @@ final class FakePipeLink: IridiumPipeLink, @unchecked Sendable {
 
     func write(uuid: String, _ chunk: [UInt8]) async -> Int {
         if uuid == IridiumPipeContract.passUUID { return recordPassWrite(chunk) }
+        if uuid == IridiumPipeContract.controlUUID { return recordControlWrite(chunk) }
         XCTAssertEqual(uuid, IridiumPipeContract.rxUUID)
         return recordWrite(chunk)
     }
 
     private(set) var passWrites: [[UInt8]] = []
+    private(set) var controlWrites: [[UInt8]] = []
+
+    private func recordControlWrite(_ chunk: [UInt8]) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        controlWrites.append(chunk)
+        return writeStatus
+    }
 
     private func recordPassWrite(_ chunk: [UInt8]) -> Int {
         lock.lock()
@@ -287,5 +297,36 @@ final class IridiumBlePipeTests: XCTestCase {
         XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.passUUID))
         XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(IridiumPipeContract.rxUUID))
         XCTAssertFalse(IridiumBlePipe.isPipeCharacteristic(MeshtasticBleContract.fromRadioUUID))
+    }
+
+    /// STATUS bits 5 and 6 are the owner's LED and screen switches, and CONTROL writes
+    /// switch-value pairs, as IridiumPipeStreamsTest.kt has it (MESHSAT-1671).
+    func testStatusBits5And6AreTheOwnersSwitchesAndControlWritesSwitchValuePairs() {
+        let off = IridiumPipeContract.Flags(rawValue: 0x10 | 0x20 | 0x40)
+        XCTAssertTrue(off.contains(.modemIsJspr) && off.contains(.ledOff) && off.contains(.screenOff))
+        let on = IridiumPipeContract.Flags(rawValue: 0x10)
+        XCTAssertFalse(on.contains(.ledOff) || on.contains(.screenOff))
+        XCTAssertEqual(IridiumPipeContract.encodeControl(IridiumPipeContract.controlLed, off: true), [0x01, 0x01])
+        XCTAssertEqual(IridiumPipeContract.encodeControl(IridiumPipeContract.controlScreen, off: false), [0x02, 0x00])
+        XCTAssertEqual(IridiumPipeContract.controlUUID, "d6a8a903-6af1-4530-ab3d-49c39b636e04")
+        let status = IridiumPipeContract.parseStatus([2, 1, 0x30, 3])
+        XCTAssertEqual(status?.flags?.contains(.ledOff), true)
+        XCTAssertEqual(status?.flags?.contains(.screenOff), false)
+    }
+
+    func testAControlWriteGoesOutWithResponseAndANodeWithoutControlTakesNone() async {
+        let link = FakePipeLink()
+        let pipe = IridiumBlePipe(link: link)
+        let none = await pipe.writeControl(IridiumPipeContract.controlLed, off: true)
+        XCTAssertFalse(none, "firmware before 24 Oct 2026 has no CONTROL")
+        XCTAssertTrue(link.controlWrites.isEmpty)
+        link.hasControl = true
+        let led = await pipe.writeControl(IridiumPipeContract.controlLed, off: true)
+        let screen = await pipe.writeControl(IridiumPipeContract.controlScreen, off: false)
+        XCTAssertTrue(led && screen)
+        XCTAssertEqual(link.controlWrites, [[0x01, 0x01], [0x02, 0x00]])
+        link.writeStatus = 133
+        let failed = await pipe.writeControl(IridiumPipeContract.controlScreen, off: true)
+        XCTAssertFalse(failed)
     }
 }

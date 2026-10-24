@@ -22,6 +22,16 @@ public enum IridiumPipeContract {
     /// Pass windows from the phone, write with response; a write replaces the node's list.
     /// Accepted from any client on the service, whoever owns the modem.
     public static let passUUID = "5c1000e8-f411-4f3d-a4c9-5ee0610a8e66"
+    /// MESHSAT-1671 (24 Oct 2026): the owner's switches for the node itself, write with response:
+    /// pairs [switch][value], switch `controlLed` or `controlScreen`, value 0 on, 1 off. The node
+    /// keeps them across restarts and reports them in STATUS flags bits 5 and 6. Firmware before
+    /// 24 Oct 2026 has no CONTROL characteristic.
+    public static let controlUUID = "d6a8a903-6af1-4530-ab3d-49c39b636e04"
+    public static let controlLed: UInt8 = 0x01
+    public static let controlScreen: UInt8 = 0x02
+
+    /// One CONTROL pair: the switch, then 1 for off or 0 for on.
+    public static func encodeControl(_ control: UInt8, off: Bool) -> [UInt8] { [control, off ? 1 : 0] }
 
     /// The node buffers this much inbound data; writes are paced against it.
     public static let nodeInboundBytes = 1024
@@ -59,6 +69,10 @@ public enum IridiumPipeContract {
         /// The modem speaks JSPR, a RockBLOCK 9704 (8 Oct 2026): the client picks its 9704
         /// driver by it; clear on a 9603 and on an older node. [MESHSAT-1624]
         public static let modemIsJspr = Flags(rawValue: 1 << 4)
+        /// The owner switched the node's status LED off (MESHSAT-1671).
+        public static let ledOff = Flags(rawValue: 1 << 5)
+        /// The owner switched the node's screen off (MESHSAT-1671).
+        public static let screenOff = Flags(rawValue: 1 << 6)
     }
 
     public struct Status: Sendable, Equatable {

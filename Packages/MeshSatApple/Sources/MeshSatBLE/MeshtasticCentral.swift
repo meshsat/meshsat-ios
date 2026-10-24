@@ -418,6 +418,11 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
             // stale table, seen on Android after the contract v2 firmware (MESHSAT-1378).
             if !pipe.hasStats {
                 Self.log.info("Iridium pipe without STATS: contract v1 firmware, or a cached table awaiting the node's Service Changed")
+            } else if !pipe.hasControl {
+                // The same for CONTROL (MESHSAT-1671): firmware before 24 Oct 2026, or a table
+                // cached from before a firmware update, which the node's Service Changed replaces.
+                Self.log.info(
+                    "Iridium pipe without CONTROL: firmware before 24 Oct 2026, or a cached table awaiting the node's Service Changed")
             }
         }
         state.send(.connected)
@@ -445,6 +450,7 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
         var hasStatus: Bool { central.has(IridiumPipeContract.statusUUID) }
         var hasStats: Bool { central.has(IridiumPipeContract.statsUUID) }
         var hasPass: Bool { central.has(IridiumPipeContract.passUUID) }
+        var hasControl: Bool { central.has(IridiumPipeContract.controlUUID) }
         func chunkSize() -> Int { central.writeChunkSize() }
         func write(uuid: String, _ chunk: [UInt8]) async -> Int {
             guard let q = central.currentOps() else { return GattOpQueue.statusClosed }

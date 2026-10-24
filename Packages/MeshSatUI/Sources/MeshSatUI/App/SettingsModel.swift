@@ -26,6 +26,8 @@ public final class SettingsModel {
     /// The connected node serves STATS (contract v2, MESHSAT-1378), and its last value.
     public private(set) var pipeHasStats = false
     public private(set) var nodeStats: IridiumPipeContract.Stats?
+    /// The connected node takes the owner's LED and screen switches (CONTROL, MESHSAT-1671).
+    public private(set) var pipeHasControl = false
     /// The node's whole STATUS, for its flags: bit 4 says it carries a 9704 (MESHSAT-1507).
     public private(set) var pipeStatus: IridiumPipeContract.Status?
     /// The node's RockBLOCK 9704 (MESHSAT-1624): its state, what it reported, its signal.
@@ -86,6 +88,7 @@ public final class SettingsModel {
                     self?.pipePresent = pipe != nil
                     self?.pipeOwner = nil
                     self?.pipeHasStats = pipe?.hasStats ?? false
+                    self?.pipeHasControl = pipe?.hasControl ?? false
                     self?.nodeStats = nil
                     self?.pipeStatus = nil
                     guard let pipe else { continue }
@@ -185,6 +188,13 @@ public final class SettingsModel {
     public func provisionFromQr(_ url: String) { gateway.provisionClaim.fromQr(url) }
     /// After the Hub settings were typed by hand: the client starts again on them.
     public func restartHub() { Task { await gateway.restartHubReporter() } }
+
+    /// Switch the node's status LED or screen (MESHSAT-1671); the switch shows what the node then
+    /// reports in STATUS, not what was asked. False when the node has no CONTROL or the write failed.
+    public func writeNodeControl(_ control: UInt8, off: Bool) async -> Bool {
+        guard let pipe = gateway.central.iridiumPipe.value else { return false }
+        return await pipe.writeControl(control, off: off)
+    }
 
     // MARK: The node's 9704 and the kits' satellite chain (MESHSAT-1624)
 

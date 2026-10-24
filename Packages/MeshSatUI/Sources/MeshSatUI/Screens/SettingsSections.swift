@@ -91,6 +91,10 @@ public struct SettingsSatelliteSection: View {
                             }
                         }
                 }
+                // The owner's switches for the node's light and screen (MESHSAT-1671).
+                if settings.pipePresent {
+                    NodeLightAndScreenCard()
+                }
                 Text(
                     "A RockBLOCK 9704 on an HC-05 needs Bluetooth Classic, which iPhones do not have. "
                         + "MeshSat iOS uses the modem on the node, a 9603 or a 9704."
