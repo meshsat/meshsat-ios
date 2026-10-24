@@ -37,7 +37,15 @@ public struct NodeFirmwareImage: Sendable, Equatable {
     private static let appDescProjectOffset = appDescOffset + 48
 
     /// The checks, in order; `nodeEnv` is the node's pio_env (empty: the node did not say).
-    public static func check(_ bytes: [UInt8], nodeEnv: String) -> Check {
+    public static func check(_ bytes: [UInt8], nodeEnv: String) -> Check { check(bytes, nodeEnv: nodeEnv, requireEnv: true) }
+
+    /// The checks for a node waiting in its updater with no Meshtastic link, so no pio_env to
+    /// compare (MESHSAT-1684): the image must still be an app image that fits, and the updater
+    /// itself refuses, before erasing anything, every image but the one whose SHA-256 the node
+    /// was handed when the update began.
+    public static func checkForWaitingUpdater(_ bytes: [UInt8]) -> Check { check(bytes, nodeEnv: "", requireEnv: false) }
+
+    private static func check(_ bytes: [UInt8], nodeEnv: String, requireEnv: Bool) -> Check {
         if bytes.count < minImageBytes { return .refused("The file is too small to be firmware (\(bytes.count) bytes).") }
         if bytes.count > appSlotBytes {
             return .refused(
@@ -47,11 +55,13 @@ public struct NodeFirmwareImage: Sendable, Equatable {
         if le32(bytes, appDescOffset) != appDescMagic {
             return .refused("The file is not an app image. A .factory.bin is for a cable flash; pick the plain firmware-….bin.")
         }
-        if nodeEnv.trimmingCharacters(in: .whitespaces).isEmpty {
-            return .refused("The node did not say which firmware build it runs; reconnect to the node and try again.")
-        }
-        if !containsName(bytes, Array(nodeEnv.utf8)) {
-            return .refused("This firmware was not built for this node (\(nodeEnv)). Pick the file named firmware-\(nodeEnv)-….bin.")
+        if requireEnv {
+            if nodeEnv.trimmingCharacters(in: .whitespaces).isEmpty {
+                return .refused("The node did not say which firmware build it runs; reconnect to the node and try again.")
+            }
+            if !containsName(bytes, Array(nodeEnv.utf8)) {
+                return .refused("This firmware was not built for this node (\(nodeEnv)). Pick the file named firmware-\(nodeEnv)-….bin.")
+            }
         }
         return .ok(
             NodeFirmwareImage(

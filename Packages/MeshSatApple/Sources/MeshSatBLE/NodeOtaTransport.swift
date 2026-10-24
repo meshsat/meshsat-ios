@@ -63,27 +63,27 @@ public final class NodeOtaTransport: NSObject, NodeOtaLink, @unchecked Sendable 
         locked { central = c }
         defer { finish() }
         guard await wait(Self.poweredOnTimeoutMs, { $0.poweredOn }) else {
-            return .failed("Bluetooth is off.", loaderHasImage: false)
+            return .failed("Bluetooth is off.", stage: .notCommanded)
         }
         guard await connectToLoader() else {
             return .failed(
-                "The node's updater did not answer over Bluetooth. Keep the phone close to the node and try again.", loaderHasImage: false)
+                "The node's updater did not answer over Bluetooth. Keep the phone close to the node and try again.", stage: .notCommanded)
         }
         guard let p = locked({ peripheral }) else {
-            return .failed("The node's updater did not answer over Bluetooth.", loaderHasImage: false)
+            return .failed("The node's updater did not answer over Bluetooth.", stage: .notCommanded)
         }
         p.discoverServices([Self.serviceUUID])
         guard let servicesError = await waitResult(Self.discoverTimeoutMs, { $0.servicesDone }), servicesError == nil,
             let service = p.services?.first(where: { $0.uuid == Self.serviceUUID })
-        else { return .failed("The node's updater was not found on the node.", loaderHasImage: false) }
+        else { return .failed("The node's updater was not found on the node.", stage: .notCommanded) }
         p.discoverCharacteristics([Self.writeUUID, Self.notifyUUID], for: service)
         _ = await waitResult(Self.discoverTimeoutMs, { $0.characteristicsDone })
         let chars = service.characteristics ?? []
         guard let write = chars.first(where: { $0.uuid == Self.writeUUID }) else {
-            return .failed("The node's updater has no data characteristic.", loaderHasImage: false)
+            return .failed("The node's updater has no data characteristic.", stage: .notCommanded)
         }
         guard let notify = chars.first(where: { $0.uuid == Self.notifyUUID }) else {
-            return .failed("The node's updater has no answer characteristic.", loaderHasImage: false)
+            return .failed("The node's updater has no answer characteristic.", stage: .notCommanded)
         }
         locked {
             writeChar = write
@@ -91,7 +91,7 @@ public final class NodeOtaTransport: NSObject, NodeOtaLink, @unchecked Sendable 
         }
         p.setNotifyValue(true, for: notify)
         guard let notifyError = await waitResult(Self.opTimeoutMs, { $0.notifyDone }), notifyError == nil else {
-            return .failed("Could not subscribe to the node's updater.", loaderHasImage: false)
+            return .failed("Could not subscribe to the node's updater.", stage: .notCommanded)
         }
         Self.log.info("OTA: writes of up to \(p.maximumWriteValueLength(for: .withoutResponse)) bytes")
         return await NodeOtaProtocol.run(image: image, link: self, lines: lines, clock: clock, onStep: onStep)

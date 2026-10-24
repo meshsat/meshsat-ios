@@ -68,10 +68,20 @@ struct NodeFirmwareCard: View {
                     picked = nil
                     settings.resetFirmwareUpdate()
                 }
-            case .failed(let reason, let canRetry):
+            case .failed(let reason, let canRetry, let inUpdater):
                 Text(reason).msText(.bodySmall, color: MSColors.amber).frame(maxWidth: .infinity, alignment: .leading)
-                if canRetry { MSFilledButton("Retry with the same file", container: MSColors.teal) { settings.retryFirmwareUpdate() } }
-                MSOutlinedButton("Close") { settings.resetFirmwareUpdate() }
+                if canRetry && settings.firmwareHasPending {
+                    MSFilledButton("Retry with the same file", container: MSColors.teal) { settings.retryFirmwareUpdate() }
+                }
+                if inUpdater {
+                    // Back to the card with no file: picking the same one sends it to the updater.
+                    MSOutlinedButton("Choose the file again") {
+                        picked = nil
+                        settings.resetFirmwareUpdate()
+                    }
+                } else {
+                    MSOutlinedButton("Close") { settings.resetFirmwareUpdate() }
+                }
             }
         }
         .fileImporter(isPresented: $picking, allowedContentTypes: [.data, .item]) { result in
@@ -84,7 +94,17 @@ struct NodeFirmwareCard: View {
         if let image = picked {
             InfoRow("New firmware", image.version.isEmpty ? "unnamed" : image.version)
             InfoRow("Size", "\(image.size / 1024) KB, SHA-256 \(image.sha256Hex.prefix(8))")
-            MSFilledButton("Update the node now", container: MSColors.teal) { settings.startFirmwareUpdate(image) }
+            if settings.nodeLinkUp {
+                MSFilledButton("Update the node now", container: MSColors.teal) { settings.startFirmwareUpdate(image) }
+            } else {
+                MSFilledButton("Send it to the node's updater", container: MSColors.teal) { settings.sendFirmwareToUpdater(image) }
+                Text(
+                    "The node is not connected. If an update stopped and the node waits in its updater, "
+                        + "send it the same file that update started with."
+                )
+                .msText(.bodySmall, color: MSColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             MSOutlinedButton("Choose another file") { picked = nil }
         } else {
             releaseRows
@@ -188,7 +208,12 @@ struct NodeFirmwareCard: View {
             refusal = "The file could not be read."
             return
         }
-        switch NodeFirmwareImage.check([UInt8](data), nodeEnv: settings.nodePioEnv) {
+        // With no node connected the file goes to a waiting updater, which takes only the image whose
+        // SHA-256 the node was handed: the loader is the build check then (MESHSAT-1684).
+        let check =
+            settings.nodeLinkUp || !settings.nodePioEnv.isEmpty
+            ? NodeFirmwareImage.check([UInt8](data), nodeEnv: settings.nodePioEnv) : NodeFirmwareImage.checkForWaitingUpdater([UInt8](data))
+        switch check {
         case .refused(let reason): refusal = reason
         case .ok(let image): picked = image
         }

@@ -33,6 +33,10 @@ public final class SettingsModel {
     public private(set) var nodeFirmwareVersion = ""
     public private(set) var nodePioEnv = ""
     public private(set) var firmwareUpdate: NodeFirmwareUpdater.State = .idle
+    /// An image is kept for a node waiting in its updater (MESHSAT-1684).
+    public private(set) var firmwareHasPending = false
+    /// The node's Meshtastic link is up: a node in its updater has none (MESHSAT-1684).
+    public private(set) var nodeLinkUp = false
     /// The node's whole STATUS, for its flags: bit 4 says it carries a 9704 (MESHSAT-1507).
     public private(set) var pipeStatus: IridiumPipeContract.Status?
     /// The node's RockBLOCK 9704 (MESHSAT-1624): its state, what it reported, its signal.
@@ -114,7 +118,15 @@ public final class SettingsModel {
         let update = NodeFirmwareUpdater.shared.state.subscribe()
         tasks.append(
             Task { [weak self] in
-                for await s in update { self?.firmwareUpdate = s }
+                for await s in update {
+                    self?.firmwareUpdate = s
+                    self?.firmwareHasPending = NodeFirmwareUpdater.shared.hasPending
+                }
+            })
+        let linkStates = central.state.subscribe()
+        tasks.append(
+            Task { [weak self] in
+                for await s in linkStates { self?.nodeLinkUp = s == .connected }
             })
         tasks.append(
             Task { [weak self] in
@@ -233,6 +245,12 @@ public final class SettingsModel {
 
     public func startFirmwareUpdate(_ image: NodeFirmwareImage) { NodeFirmwareUpdater.shared.start(central: gateway.central, image: image) }
     public func retryFirmwareUpdate() { NodeFirmwareUpdater.shared.retry(central: gateway.central) }
+    /// The same file to a node waiting in its updater with no Meshtastic link (MESHSAT-1684).
+    public func sendFirmwareToUpdater(_ image: NodeFirmwareImage) {
+        NodeFirmwareUpdater.shared.sendToUpdater(central: gateway.central, image: image)
+    }
+    /// A MeshSat node is saved on this phone, connected or not.
+    public var hasSavedNode: Bool { !gateway.settings.meshtasticBleAddress.isEmpty }
     public func resetFirmwareUpdate() { NodeFirmwareUpdater.shared.reset() }
 
     /// Switch the node's status LED or screen (MESHSAT-1671); the switch shows what the node then

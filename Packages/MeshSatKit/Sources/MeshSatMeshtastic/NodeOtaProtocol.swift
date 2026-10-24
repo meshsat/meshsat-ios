@@ -15,6 +15,15 @@
 //    does not fit), the last one "OK" after the loader checked the SHA-256 and set app0 to boot.
 //    It restarts into the new firmware about 2 s later.
 // 3. Any "ERR ..." ends the update. There is no PIN on the loader and one connection at a time.
+//
+// What a failure leaves on the node (esp32-unified-ota v1.0.1, ota_processor.cpp handleOtaStart):
+// the loader checks the command (format, hash, the hash the node was handed, the partition) and
+// answers "ERR ..." without touching app0; then it sets itself as the boot partition, sends
+// "ERASING" and erases app0 in esp_ota_begin before its "OK". So from the moment the command is
+// written the old firmware may be gone, and an answer that never comes says nothing either way
+// (`Stage`). A dropped link resets the loader, which advertises again and waits; the node boots
+// only its loader until an update with the same hash completes, so a retry is always the way out
+// (MESHSAT-1684).
 import Foundation
 import MeshSatNet
 
@@ -64,11 +73,27 @@ public enum NodeOtaProtocol {
         case verifying
     }
 
+    /// How far an update got before it failed, which says what the node is left with (MESHSAT-1684).
+    public enum Stage: Sendable, Equatable {
+        /// Nothing was written to the updater: it was not reached, or not ready for the command.
+        case notCommanded
+        /// The updater refused the command before erasing ("ERR ..." before "ERASING"): its firmware is still there.
+        case refused
+        /// The command was written and nothing settled it, or "ERASING" came and then no "OK": the firmware may be erased.
+        case eraseUncertain
+        /// The updater erased the firmware ("OK" after "ERASING") and the transfer stopped: the node has no firmware.
+        case erased
+    }
+
     public enum Outcome: Sendable, Equatable {
         case done
-        /// `loaderHasImage` true once the loader accepted the OTA command: app0 is erased, retry
-        /// with the same file.
-        case failed(String, loaderHasImage: Bool)
+        case failed(String, stage: Stage)
+
+        /// True from the moment the update command was written, unless the updater refused it before erasing.
+        public var mayBeErased: Bool {
+            if case .failed(_, let stage) = self { return stage == .eraseUncertain || stage == .erased }
+            return false
+        }
     }
 
     /// Steps 1 and 2 above over a connected, subscribed loader: the command, the erase, every
@@ -78,21 +103,13 @@ public enum NodeOtaProtocol {
         onStep: @Sendable (Step) -> Void
     ) async -> Outcome {
         lines.drain()
+        // From here the loader may erase the firmware: the write can arrive even if it reports a failure.
+        var stage = Stage.eraseUncertain
         guard await link.writeCommand(Array(otaCommand(size: image.size, sha256Hex: image.sha256Hex).utf8)) else {
-            return .failed("The node's updater did not take the update command.", loaderHasImage: false)
+            return .failed("The node's updater did not take the update command.", stage: stage)
         }
-        // ERASING, then OK once app0 is erased (several seconds for 3.3 MB).
-        erase: while true {
-            guard let line = await lines.next(timeoutMs: eraseTimeoutMs, clock: clock) else {
-                return .failed("The node's updater did not finish erasing.", loaderHasImage: false)
-            }
-            switch parseReply(line) {
-            case .erasing: onStep(.erasing)
-            case .ok: break erase
-            case .error(let text): return .failed("The node refused the update: \(text)", loaderHasImage: false)
-            case .ack, .other: continue
-            }
-        }
+        if let failed = await awaitReady(lines, clock: clock, onStep: onStep) { return failed }
+        stage = .erased
         let chunk = chunkSize(maxWrite: link.maxWriteWithoutResponse())
         var sent = 0
         let total = image.size
@@ -100,22 +117,23 @@ public enum NodeOtaProtocol {
         while sent < total {
             let end = min(sent + chunk, total)
             guard await link.writeChunk(Array(image.bytes[sent..<end])) else {
-                return .failed("A piece of the firmware could not be sent at byte \(sent).", loaderHasImage: true)
+                return .failed("A piece of the firmware could not be sent at byte \(sent).", stage: stage)
             }
             let last = end == total
             if last { onStep(.verifying) }
             guard let line = await lines.next(timeoutMs: last ? verifyTimeoutMs : ackTimeoutMs, clock: clock) else {
-                return .failed("The node's updater stopped answering at byte \(end).", loaderHasImage: true)
+                if lines.isClosed { return .failed("The link to the node's updater dropped at byte \(end).", stage: stage) }
+                return .failed("The node's updater stopped answering at byte \(end).", stage: stage)
             }
             switch parseReply(line) {
             case .ack:
-                if last { return .failed("The node's updater wanted more than the whole image.", loaderHasImage: true) }
+                if last { return .failed("The node's updater wanted more than the whole image.", stage: stage) }
             case .ok:
-                if !last { return .failed("The node's updater ended the transfer early at byte \(end).", loaderHasImage: true) }
+                if !last { return .failed("The node's updater ended the transfer early at byte \(end).", stage: stage) }
             case .error(let text):
-                return .failed("The node's updater refused the firmware: \(text)", loaderHasImage: true)
+                return .failed("The node's updater refused the firmware: \(text)", stage: stage)
             case .erasing, .other:
-                return .failed("The node's updater answered '\(line)' at byte \(end).", loaderHasImage: true)
+                return .failed("The node's updater answered '\(line)' at byte \(end).", stage: stage)
             }
             sent = end
             let percent = Int(Int64(sent) * 100 / Int64(total))
@@ -125,6 +143,71 @@ public enum NodeOtaProtocol {
             }
         }
         return .done
+    }
+
+    /// ERASING, then OK once app0 is erased (several seconds for 3.3 MB): nil once the loader is
+    /// ready for the image, else the failure and what it leaves (MESHSAT-1684).
+    private static func awaitReady(
+        _ lines: NodeOtaLines, clock: any DriverClock, onStep: @Sendable (Step) -> Void
+    ) async -> Outcome? {
+        var erasing = false
+        while true {
+            guard let line = await lines.next(timeoutMs: eraseTimeoutMs, clock: clock) else {
+                if lines.isClosed {
+                    return .failed("The link to the node's updater dropped while it was getting ready.", stage: .eraseUncertain)
+                }
+                return .failed(
+                    erasing ? "The node's updater did not finish erasing." : "The node's updater did not answer the update command.",
+                    stage: .eraseUncertain)
+            }
+            switch parseReply(line) {
+            case .erasing:
+                erasing = true
+                onStep(.erasing)
+            case .ok: return nil
+            case .error(let text):
+                // The loader checks the command before it erases; an error after ERASING is a failed erase.
+                return .failed("The node refused the update: \(text)", stage: erasing ? .eraseUncertain : .refused)
+            case .ack, .other: continue
+            }
+        }
+    }
+
+    /// What the node did with the update request (MESHSAT-1684).
+    public enum Handover: Sendable, Equatable {
+        /// "Rebooting to BLE OTA": it goes to its loader.
+        case accepted
+        /// It answered why not; it keeps running its firmware.
+        case refused
+        /// No answer and the link is still up: it keeps running its firmware.
+        case noAnswer
+        /// No answer, but the link dropped: it most likely went to its loader.
+        case linkDropped
+    }
+
+    public static func handover(said: String?, linkUp: Bool) -> Handover {
+        if let said { return isRebootingToBle(said) ? .accepted : .refused }
+        return linkUp ? .noAnswer : .linkDropped
+    }
+
+    /// True when the node may now be in its loader, so the image and its address must be kept for a retry.
+    public static func keepsImage(_ h: Handover) -> Bool { h == .accepted || h == .linkDropped }
+
+    /// What the screen says after a failed transfer (MESHSAT-1684). The node went to its loader
+    /// before the transfer started, so every failure leaves it there and offers a retry with the
+    /// kept image; the words say whether its old firmware may be gone.
+    public static func failedInUpdater(_ reason: String, _ stage: Stage) -> String {
+        switch stage {
+        case .notCommanded:
+            reason + " The node waits in its updater with its firmware still on it and starts it only after an update: "
+                + "retry with the same file."
+        case .refused:
+            reason + " The node waits in its updater with its firmware still on it: retry with the file this update started with."
+        case .eraseUncertain:
+            reason + " The node may have erased its firmware and waits in its updater: retry with the same file."
+        case .erased:
+            reason + " The node erased its firmware and waits in its updater: retry with the same file."
+        }
     }
 
     /// The node's answers to ota_request (AdminModule.cpp, firmware 2.8.0).
@@ -160,6 +243,13 @@ public final class NodeOtaLines: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         queue.append(contentsOf: Self.splitLines(&partial, bytes))
+    }
+
+    /// True once the link went down.
+    public var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
     }
 
     /// The link went down: every wait ends now.

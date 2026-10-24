@@ -6,8 +6,12 @@
 // 3. send the image to the loader (MeshSatBLE's NodeOtaTransport, found by scanning for its
 //    service), which checks the SHA-256, installs it and restarts into it;
 // 4. connect to the node again.
-// After a failure once the loader has erased the old firmware, the node stays in its loader until
-// the same image is sent again: the image is kept and `retry` sends it without step 1.
+// Once the node has gone to its loader (step 1 answered, or the link dropped after the request) it
+// boots only the loader until an update with this image's SHA-256 completes, and from the update
+// command on its old firmware may be erased (MESHSAT-1684). So the image and the node's address are
+// kept from then on, and every failure of steps 2 to 4 offers `retry` with the same image, without
+// step 1. A node left in its loader when the kept image is gone (the app restarted) gets the same
+// file again through `sendToUpdater`: the scan finds the loader by its service.
 import Foundation
 import Logging
 import MeshSatBLE
@@ -28,7 +32,8 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
         case askingNode
         case working(String, fraction: Double?)
         case done(version: String)
-        case failed(String, canRetry: Bool)
+        /// `inUpdater`: the node waits in its loader and needs this update finished.
+        case failed(String, canRetry: Bool, inUpdater: Bool = false)
     }
 
     public let state = StateBroadcast<State>(.idle)
@@ -70,33 +75,47 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
                 await clock.sleep(ms: 50)
             }
             reader.cancel()
-            if let said = answer.value {
-                guard NodeOtaProtocol.isRebootingToBle(said) else {
-                    state.send(.failed("The node will not update: \(said)", canRetry: false))
-                    return
-                }
-                Self.log.info("Node: \(said)")
-            } else if central.state.value == .connected {
+            let said = answer.value
+            switch NodeOtaProtocol.handover(said: said, linkUp: central.state.value == .connected) {
+            case .accepted: Self.log.info("Node: \(said ?? "")")
+            case .refused:
+                state.send(.failed("The node will not update: \(said ?? "")", canRetry: false))
+                return
+            case .noAnswer:
                 state.send(
                     .failed("The node did not answer the update request. Its firmware may be too old to update this way.", canRetry: false))
                 return
-            } else {
-                Self.log.warning("No handover answer, but the node dropped the link: going on")
+            case .linkDropped: Self.log.warning("No handover answer, but the node dropped the link: going on")
             }
+            // The node is going to its loader: from here only a finished update brings it back.
+            keep(image, address)
             await transfer(central: central, address: address, image: image)
         }
+    }
+
+    /// Send `image` to a node already waiting in its loader (an update that did not finish and whose
+    /// image this app no longer holds): no handover, straight to the scan. The loader takes only the
+    /// image whose SHA-256 the node was handed, so it must be the same file.
+    public func sendToUpdater(central: MeshtasticCentral, image: NodeFirmwareImage) {
+        guard !running else { return }
+        let address = central.lastAddress ?? ""
+        keep(image, address)
+        run { [self] in await transfer(central: central, address: address, image: image) }
     }
 
     /// Send the kept image to a node that stayed in its loader after a failed transfer.
     public func retry(central: MeshtasticCentral) {
         guard !running else { return }
         let kept: (NodeFirmwareImage, String)? = locked {
-            guard let image = pending, let address = pendingAddress ?? central.lastAddress else { return nil }
-            return (image, address)
+            guard let image = pending else { return nil }
+            return (image, pendingAddress ?? central.lastAddress ?? "")
         }
         guard let (image, address) = kept else { return }
         run { [self] in await transfer(central: central, address: address, image: image) }
     }
+
+    /// True while an image is kept for a node in its loader.
+    public var hasPending: Bool { locked { pending != nil } }
 
     public func reset() {
         if !running { state.send(.idle) }
@@ -115,14 +134,16 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
         central.heldForFirmwareUpdate = true
         defer {
             central.heldForFirmwareUpdate = false
-            central.connect(address: address)
+            if !address.isEmpty { central.connect(address: address) }
         }
         central.disconnect()
         state.send(.working("The node is restarting into its updater...", fraction: nil))
         await clock.sleep(ms: Self.restartIntoLoaderMs)
         guard central.bluetoothOn.value else {
-            keep(image, address)
-            state.send(.failed("Bluetooth is off.", canRetry: true))
+            state.send(
+                .failed(
+                    "Bluetooth is off. The node waits in its updater: switch Bluetooth on and retry with the same file.", canRetry: true,
+                    inUpdater: true))
             return
         }
         let outcome = await NodeOtaTransport(clock: clock).update(image) { [self] step in
@@ -143,11 +164,9 @@ public final class NodeFirmwareUpdater: @unchecked Sendable {
             state.send(.working("Installed. The node is restarting...", fraction: 1))
             await clock.sleep(ms: Self.restartIntoFirmwareMs)
             state.send(.done(version: image.version.isEmpty ? "the new firmware" : image.version))
-        case .failed(let reason, let loaderHasImage):
-            if loaderHasImage { keep(image, address) }
-            state.send(
-                .failed(
-                    reason + (loaderHasImage ? " The node waits in its updater: retry with the same file." : ""), canRetry: loaderHasImage))
+        case .failed(let reason, let stage):
+            // The node went to its loader before the transfer started: every failure leaves it there.
+            state.send(.failed(NodeOtaProtocol.failedInUpdater(reason, stage), canRetry: true, inUpdater: true))
         }
     }
 

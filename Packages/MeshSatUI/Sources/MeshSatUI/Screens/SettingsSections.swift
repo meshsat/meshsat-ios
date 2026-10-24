@@ -100,9 +100,13 @@ public struct SettingsSatelliteSection: View {
                         }
                 }
                 // The owner's switches for the node's light and screen (MESHSAT-1671).
-                if settings.pipePresent {
-                    NodeLightAndScreenCard()
-                    // The node's firmware, updated over Bluetooth (MESHSAT-1672).
+                if settings.pipePresent { NodeLightAndScreenCard() }
+                // The node's firmware, updated over Bluetooth (MESHSAT-1672). Shown also while no node
+                // is connected but one is saved, or an update is under way or kept: a node left in its
+                // updater runs no Meshtastic and must still be reachable here (MESHSAT-1684).
+                if settings.pipePresent || settings.firmwareUpdate != .idle || settings.firmwareHasPending
+                    || (!settings.nodeLinkUp && settings.hasSavedNode)
+                {
                     NodeFirmwareCard()
                 }
                 Text(

@@ -153,15 +153,78 @@ final class NodeFirmwareUpdateTests: XCTestCase {
         let lines = NodeOtaLines()
         let rejecting = ScriptedLoader(lines: lines, maxWrite: 512, onCommand: ["ERR Hash Rejected"])
         let first = await NodeOtaProtocol.run(image: image, link: rejecting, lines: lines, clock: FastClock()) { _ in }
-        XCTAssertEqual(first, .failed("The node refused the update: Hash Rejected", loaderHasImage: false))
+        XCTAssertEqual(first, .failed("The node refused the update: Hash Rejected", stage: .refused))
         let lines2 = NodeOtaLines()
         let midway = ScriptedLoader(lines: lines2, maxWrite: 512, failAtChunk: 10)
         let second = await NodeOtaProtocol.run(image: image, link: midway, lines: lines2, clock: FastClock()) { _ in }
-        XCTAssertEqual(second, .failed("The node's updater refused the firmware: Write Failed", loaderHasImage: true))
+        XCTAssertEqual(second, .failed("The node's updater refused the firmware: Write Failed", stage: .erased))
         let lines3 = NodeOtaLines()
         let silent = ScriptedLoader(lines: lines3, maxWrite: 512, silentAtChunk: 3)
         let third = await NodeOtaProtocol.run(image: image, link: silent, lines: lines3, clock: FastClock()) { _ in }
-        XCTAssertEqual(third, .failed("The node's updater stopped answering at byte 1536.", loaderHasImage: true))
+        XCTAssertEqual(third, .failed("The node's updater stopped answering at byte 1536.", stage: .erased))
+    }
+
+    // MARK: Interruptions (MESHSAT-1684): what each one leaves on the node, and that a retry is offered
+
+    private func interrupted(_ loader: (NodeOtaLines) -> ScriptedLoader) async throws -> NodeOtaProtocol.Outcome {
+        let image = try XCTUnwrap(ok(NodeFirmwareImage.check(appImage(size: 100_000), nodeEnv: env)))
+        let lines = NodeOtaLines()
+        return await NodeOtaProtocol.run(image: image, link: loader(lines), lines: lines, clock: FastClock()) { _ in }
+    }
+
+    func testAtTheHandoverOnlyAnAcceptOrADroppedLinkKeepsTheImage() {
+        XCTAssertEqual(NodeOtaProtocol.handover(said: "Rebooting to BLE OTA", linkUp: false), .accepted)
+        XCTAssertEqual(NodeOtaProtocol.handover(said: "Cannot start OTA: Invalid `ota_hash` provided.", linkUp: true), .refused)
+        XCTAssertEqual(NodeOtaProtocol.handover(said: nil, linkUp: true), .noAnswer)
+        XCTAssertEqual(NodeOtaProtocol.handover(said: nil, linkUp: false), .linkDropped)
+        XCTAssertTrue(NodeOtaProtocol.keepsImage(.accepted))
+        XCTAssertTrue(NodeOtaProtocol.keepsImage(.linkDropped))
+        XCTAssertFalse(NodeOtaProtocol.keepsImage(.refused))
+        XCTAssertFalse(NodeOtaProtocol.keepsImage(.noAnswer))
+    }
+
+    func testFromTheCommandOnEveryFailureDuringTheEraseMayHaveErasedTheFirmware() async throws {
+        let silent = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, onCommand: []) }
+        XCTAssertEqual(silent, .failed("The node's updater did not answer the update command.", stage: .eraseUncertain))
+        XCTAssertTrue(silent.mayBeErased)
+        let stuck = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, onCommand: ["ERASING"]) }
+        XCTAssertEqual(stuck, .failed("The node's updater did not finish erasing.", stage: .eraseUncertain))
+        let failedErase = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, onCommand: ["ERASING", "ERR Erase Failed"]) }
+        XCTAssertEqual(failedErase, .failed("The node refused the update: Erase Failed", stage: .eraseUncertain))
+        let lost = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, onCommand: ["ERASING"], dropAfterCommand: true) }
+        XCTAssertEqual(lost, .failed("The link to the node's updater dropped while it was getting ready.", stage: .eraseUncertain))
+        let unwritten = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, commandWriteFails: true) }
+        XCTAssertEqual(unwritten, .failed("The node's updater did not take the update command.", stage: .eraseUncertain))
+    }
+
+    func testARefusalBeforeTheEraseLeavesTheFirmwareAndAFailureAfterTheReadyAckLeavesNone() async throws {
+        let refused = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, onCommand: ["ERR Hash Rejected"]) }
+        XCTAssertEqual(refused, .failed("The node refused the update: Hash Rejected", stage: .refused))
+        XCTAssertFalse(refused.mayBeErased)
+        let afterReady = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, silentAtChunk: 1) }
+        XCTAssertEqual(afterReady, .failed("The node's updater stopped answering at byte 512.", stage: .erased))
+        XCTAssertTrue(afterReady.mayBeErased)
+        let lostAfter = try await interrupted { ScriptedLoader(lines: $0, maxWrite: 512, dropAtChunk: 2) }
+        XCTAssertEqual(lostAfter, .failed("The link to the node's updater dropped at byte 1024.", stage: .erased))
+    }
+
+    func testTheScreenSaysWhatEachStageLeavesAndAlwaysOffersTheSameFile() {
+        let r = "The node's updater did not answer the update command."
+        XCTAssertEqual(
+            NodeOtaProtocol.failedInUpdater(r, .eraseUncertain),
+            r + " The node may have erased its firmware and waits in its updater: retry with the same file.")
+        XCTAssertEqual(
+            NodeOtaProtocol.failedInUpdater(r, .erased),
+            r + " The node erased its firmware and waits in its updater: retry with the same file.")
+        XCTAssertTrue(NodeOtaProtocol.failedInUpdater(r, .refused).hasSuffix("retry with the file this update started with."))
+        XCTAssertTrue(NodeOtaProtocol.failedInUpdater(r, .notCommanded).contains("with its firmware still on it"))
+    }
+
+    func testAWaitingUpdaterTakesAnAppImageWithoutTheEnvCheckButNeverAFactoryImage() {
+        XCTAssertNotNil(ok(NodeFirmwareImage.checkForWaitingUpdater(appImage(envName: "something-else"))))
+        var factory = appImage()
+        factory.replaceSubrange(32..<36, with: [0, 0, 0, 0])
+        XCTAssertTrue(refused(NodeFirmwareImage.checkForWaitingUpdater(factory)))
     }
 
     // MARK: The release manifest
@@ -324,17 +387,26 @@ private final class ScriptedLoader: NodeOtaLink, @unchecked Sendable {
     private let onCommand: [String]
     private let failAtChunk: Int?
     private let silentAtChunk: Int?
+    private let dropAtChunk: Int?
+    private let dropAfterCommand: Bool
+    private let commandWriteFails: Bool
     private var expected = 0
     private(set) var command = ""
     private(set) var received: [UInt8] = []
     private(set) var chunkSizes: [Int] = []
 
-    init(lines: NodeOtaLines, maxWrite: Int, onCommand: [String] = ["ERASING", "OK"], failAtChunk: Int? = nil, silentAtChunk: Int? = nil) {
+    init(
+        lines: NodeOtaLines, maxWrite: Int, onCommand: [String] = ["ERASING", "OK"], failAtChunk: Int? = nil, silentAtChunk: Int? = nil,
+        dropAtChunk: Int? = nil, dropAfterCommand: Bool = false, commandWriteFails: Bool = false
+    ) {
         self.lines = lines
         self.maxWrite = maxWrite
         self.onCommand = onCommand
         self.failAtChunk = failAtChunk
         self.silentAtChunk = silentAtChunk
+        self.dropAtChunk = dropAtChunk
+        self.dropAfterCommand = dropAfterCommand
+        self.commandWriteFails = commandWriteFails
     }
 
     func maxWriteWithoutResponse() -> Int { maxWrite }
@@ -343,10 +415,12 @@ private final class ScriptedLoader: NodeOtaLink, @unchecked Sendable {
         let text = String(decoding: bytes, as: UTF8.self)
         let parts = text.split(separator: " ")
         noteCommand(text, size: parts.count == 3 ? Int(parts[1]) ?? 0 : 0)
+        if commandWriteFails { return false }
         // Split the answers across notifications, as a real link may.
         let joined = Array(onCommand.map { $0 + "\r\n" }.joined().utf8)
         lines.feed(Array(joined.prefix(3)))
         lines.feed(Array(joined.dropFirst(3)))
+        if dropAfterCommand { lines.close() }
         return true
     }
 
@@ -369,6 +443,10 @@ private final class ScriptedLoader: NodeOtaLink, @unchecked Sendable {
     func writeChunk(_ bytes: [UInt8]) async -> Bool {
         let (n, done) = noteChunk(bytes)
         if n == silentAtChunk { return true }
+        if n == dropAtChunk {
+            lines.close()
+            return true
+        }
         if n == failAtChunk {
             lines.feed(Array("ERR Write Failed\n".utf8))
         } else {
