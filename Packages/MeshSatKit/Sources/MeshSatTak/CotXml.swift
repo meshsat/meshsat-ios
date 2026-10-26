@@ -1,8 +1,8 @@
 // Mirrors tak/CotXml.kt: the CoT XML serializer and parser. The output matches Android's byte
 // for byte, including Kotlin's Double.toString layout for the numbers ("47.3", "0.0", "1.0E7").
 // The parser is a small one of our own: Foundation's XMLParser lives in a different module on
-// Linux, and CoT is flat enough (a root, a point, a detail with attribute-only children and two
-// text-carrying ones).
+// Linux, and CoT is flat enough (a root, a point, a detail with attribute-only children, two
+// text-carrying ones, and a GeoChat's __chat and marti one level deeper).
 import Foundation
 
 public enum CotXml {
@@ -29,6 +29,7 @@ public enum CotXml {
             if let c = d.contact {
                 s += "<contact"
                 attr(&s, "callsign", c.callsign)
+                if !c.endpoint.isEmpty { attr(&s, "endpoint", c.endpoint) }
                 s += "></contact>"
             }
             if let g = d.group {
@@ -59,10 +60,43 @@ public enum CotXml {
                 attr(&s, "type", e.type)
                 s += ">" + escape(e.text) + "</emergency>"
             }
+            if let ch = d.chat {
+                s += "<__chat"
+                attr(&s, "parent", ch.parent)
+                attr(&s, "groupOwner", ch.groupOwner)
+                if !ch.messageId.isEmpty { attr(&s, "messageId", ch.messageId) }
+                attr(&s, "chatroom", ch.chatroom)
+                attr(&s, "id", ch.id)
+                attr(&s, "senderCallsign", ch.senderCallsign)
+                s += "><chatgrp"
+                attr(&s, "uid0", ch.uid0)
+                attr(&s, "uid1", ch.uid1)
+                attr(&s, "id", ch.id)
+                s += "></chatgrp></__chat>"
+            }
+            if let l = d.link {
+                s += "<link"
+                attr(&s, "uid", l.uid)
+                attr(&s, "type", l.type)
+                attr(&s, "relation", l.relation)
+                s += "></link>"
+            }
             if let r = d.remarks {
                 s += "<remarks"
                 if !r.source.isEmpty { attr(&s, "source", r.source) }
+                if !r.to.isEmpty { attr(&s, "to", r.to) }
+                if !r.time.isEmpty { attr(&s, "time", r.time) }
                 s += ">" + escape(r.text) + "</remarks>"
+            }
+            if !d.marti.isEmpty {
+                s += "<marti>"
+                for dest in d.marti {
+                    s += "<dest"
+                    if !dest.uid.isEmpty { attr(&s, "uid", dest.uid) }
+                    if !dest.callsign.isEmpty { attr(&s, "callsign", dest.callsign) }
+                    s += "></dest>"
+                }
+                s += "</marti>"
             }
             s += "</detail>"
         }
@@ -89,7 +123,8 @@ public enum CotXml {
         var d = CotDetail()
         for child in node.children {
             switch child.name {
-            case "contact": d.contact = CotContact(callsign: child.attributes["callsign"] ?? "")
+            case "contact":
+                d.contact = CotContact(callsign: child.attributes["callsign"] ?? "", endpoint: child.attributes["endpoint"] ?? "")
             case "__group": d.group = CotGroup(name: child.attributes["name"] ?? "Cyan", role: child.attributes["role"] ?? "Team Member")
             case "precisionlocation":
                 d.precision = CotPrecision(
@@ -97,11 +132,38 @@ public enum CotXml {
             case "track": d.track = CotTrack(course: child.double("course") ?? 0, speed: child.double("speed") ?? 0)
             case "status": d.status = CotStatus(battery: child.attributes["battery"] ?? "")
             case "emergency": d.emergency = CotEmergency(type: child.attributes["type"] ?? "", text: child.text)
-            case "remarks": d.remarks = CotRemarks(source: child.attributes["source"] ?? "", text: child.text)
+            case "remarks":
+                d.remarks = CotRemarks(
+                    source: child.attributes["source"] ?? "", text: child.text, to: child.attributes["to"] ?? "",
+                    time: child.attributes["time"] ?? "")
+            case "__chat": d.chat = parseChat(child)
+            // The first link: on a GeoChat, the sender.
+            case "link" where d.link == nil:
+                d.link = CotLink(
+                    uid: child.attributes["uid"] ?? "", type: child.attributes["type"] ?? "", relation: child.attributes["relation"] ?? "")
+            case "marti": d.marti = parseMarti(child)
             default: break
             }
         }
         return d
+    }
+
+    private static func parseChat(_ node: XmlLite.Element) -> CotChat {
+        let group = node.child("chatgrp")
+        return CotChat(
+            id: node.attributes["id"] ?? "", chatroom: node.attributes["chatroom"] ?? "",
+            senderCallsign: node.attributes["senderCallsign"] ?? "", messageId: node.attributes["messageId"] ?? "",
+            parent: node.attributes["parent"] ?? "RootContactGroup", groupOwner: node.attributes["groupOwner"] ?? "false",
+            uid0: group?.attributes["uid0"] ?? "", uid1: group?.attributes["uid1"] ?? "")
+    }
+
+    /// The people a server routes to; a mission dest names nobody.
+    private static func parseMarti(_ node: XmlLite.Element) -> [CotDest] {
+        node.children.compactMap { dn in
+            guard dn.name == "dest", (dn.attributes["mission"] ?? "").isEmpty else { return nil }
+            let dest = CotDest(uid: dn.attributes["uid"] ?? "", callsign: dn.attributes["callsign"] ?? "")
+            return dest.uid.isEmpty && dest.callsign.isEmpty ? nil : dest
+        }
     }
 
     private static func attr(_ s: inout String, _ name: String, _ value: String) {

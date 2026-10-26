@@ -9,7 +9,8 @@ public final class TakIntegration: @unchecked Sendable {
 
     public let deviceId: String
     public let callsign: String
-    private let uid: String
+    /// This phone's own uid on TAK, the one a chat to it is addressed to.
+    public let uid: String
     private let publish: Publisher?
     private let log: @Sendable (String) -> Void
     private let lock = NSLock()
@@ -59,6 +60,17 @@ public final class TakIntegration: @unchecked Sendable {
     public func sendChat(_ text: String) async {
         await emit(CotBuilder.chat(uid: uid, callsign: callsign, text: text))
     }
+
+    /// Write `text` to one TAK contact, as a GeoChat it can answer (MESHSAT-1708).
+    public func sendChat(to toUid: String, callsign toCallsign: String, text: String) async {
+        await emit(CotBuilder.geoChat(fromUid: uid, fromCallsign: callsign, toUid: toUid, toCallsign: toCallsign, text: text))
+    }
+
+    /// The chat `ev` is, when a dispatcher addressed it to this phone (MESHSAT-1708).
+    public func chatFor(_ ev: CotEvent) -> TakChats.Chat? { TakChats.chatFor(ev, ownUid: uid, ownCallsign: callsign) }
+
+    /// Whether what this integration builds reaches the Hub: TAK on and the Hub export on.
+    public var canExport: Bool { publish != nil && mqttExportEnabled }
 
     public func sendTelemetry(lat: Double, lon: Double, data: String) async {
         await emit(CotBuilder.telemetry(uid: uid, callsign: callsign, lat: lat, lon: lon, data: data))

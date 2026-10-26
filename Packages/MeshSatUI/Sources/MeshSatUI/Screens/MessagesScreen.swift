@@ -185,7 +185,8 @@ enum MessageDisplay {
         return switch forwardedTo {
         case "iridium:queued": "Queued"
         case "iridium:unconfirmed": "May have been sent"
-        case "iridium:sbd", "sms:sent": "Sent"
+        case "iridium:sbd", "sms:sent", "tak:sent": "Sent"
+        case "tak:not_sent": "Not sent"
         case "iridium:delivered": "The Hub has it"
         case "sms:delivered": "Delivered"
         case "sms:sending": "Sending"

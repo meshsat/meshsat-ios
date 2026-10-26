@@ -34,9 +34,13 @@ public struct ConversationChatView: View {
         switch transport {
         case "iridium": return SatelliteLimits.fits(bytes)
         case "hub": return bytes <= HubMsgWire.maxBody
+        case "tak": return bytes <= Self.takReplyMax
         default: return true
         }
     }
+
+    /// The most a TAK answer may be: a dispatcher's own radio may be a mesh node (MESHSAT-1708).
+    static let takReplyMax = 200
 
     private var canSend: Bool { !composeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && fitsTheLink }
 
@@ -118,6 +122,7 @@ public struct ConversationChatView: View {
         switch transport {
         case "iridium": "Message by satellite"
         case "hub": "Message through the Hub"
+        case "tak": "Answer on TAK"
         case "mesh": peer == Peers.meshAll ? "Message everyone on the mesh" : "Message on the mesh"
         default: "Text message"
         }
@@ -140,6 +145,10 @@ public struct ConversationChatView: View {
                 return "Through the Hub to its MeshSat app, once this phone is back on the Hub."
             }
             return "Through the Hub to its MeshSat app. Two checks once that app has it."
+        case "tak":
+            if bytes > Self.takReplyMax { return "Too long: \(bytes) bytes, the limit is \(Self.takReplyMax)." }
+            if model.interfaces["hub_0"]?.state != .online { return "On TAK through the Hub, once this phone is back on the Hub." }
+            return "On TAK through the Hub, to \(Peers.displayName(peer))."
         case "mesh":
             if !meshConnected { return "On the mesh, when your node is connected." }
             return peer == Peers.meshAll ? "To everyone on the mesh channel." : "Directly to this node on the mesh."
@@ -157,6 +166,11 @@ public struct ConversationChatView: View {
             let gateway = model.gateway
             let to = peer
             Task { await gateway.sendHub(to: to, text: text) }
+        case "tak":
+            // An answer to a dispatcher on TAK or an operator on the Hub map (MESHSAT-1708).
+            let gateway = model.gateway
+            let to = peer
+            Task { await gateway.sendTakChat(to: to, text: text) }
         case "sms":
             // The message appears in the chat with its state, and the Messages composer opens.
             model.queueSms(text, to: peer)
@@ -191,7 +205,7 @@ struct DeliveryMark: View {
         switch s {
         case "iridium:queued", "sms:sending": (MSIcon.schedule, MSColors.textMuted)
         case "iridium:unconfirmed": (MSIcon.helpOutline, MSColors.amber)
-        case "iridium:failed", "sms:failed": (MSIcon.errorOutline, MSColors.red)
+        case "iridium:failed", "sms:failed", "tak:not_sent": (MSIcon.errorOutline, MSColors.red)
         case "iridium:delivered", "sms:delivered": (MSIcon.doneAll, MSColors.teal)
         default: (MSIcon.done, MSColors.teal)
         }

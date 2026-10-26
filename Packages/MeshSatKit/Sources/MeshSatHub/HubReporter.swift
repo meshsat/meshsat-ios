@@ -95,6 +95,7 @@ public final class HubReporter: @unchecked Sendable {
     private let startedAt: Int64
     private var onCommandHook: (@Sendable (HubCommand) -> Void)?
     private var onTakCotHook: (@Sendable (String) -> Void)?
+    private var onTakChatHook: (@Sendable (String) -> Void)?
     private var onMoAckHook: (@Sendable (_ imei: String, _ momsn: Int) -> Void)?
     private var onMsgInHook: (@Sendable (String) -> Void)?
     private var onMsgStatusHook: (@Sendable (String) -> Void)?
@@ -134,6 +135,14 @@ public final class HubReporter: @unchecked Sendable {
     public func setTakCotCallback(_ cb: (@Sendable (String) -> Void)?) {
         lock.lock()
         onTakCotHook = cb
+        lock.unlock()
+    }
+
+    /// A chat the Hub routed to this phone alone, on its own tak/cot/in (MESHSAT-1708). Set before
+    /// `start`: the topic is subscribed only when there is a callback for it.
+    public func setTakChatCallback(_ cb: (@Sendable (String) -> Void)?) {
+        lock.lock()
+        onTakChatHook = cb
         lock.unlock()
     }
 
@@ -519,9 +528,10 @@ public final class HubReporter: @unchecked Sendable {
         let msg = h.msgIn != nil || h.msgStatus != nil ? [topics.msg(config.bridgeId, "in"), topics.msg(config.bridgeId, "status")] : []
         let sos =
             (h.hubCaps != nil ? [topics.hubCaps(config.bridgeId)] : []) + (h.sosAck != nil ? [topics.sos(config.bridgeId, "ack")] : [])
+        let chat = h.takChat != nil ? [topics.takCotInFor(config.bridgeId)] : []
         do {
             try await s.subscribe(
-                [topics.bridgeCmd(config.bridgeId)] + topics.takCotInFilters + [
+                [topics.bridgeCmd(config.bridgeId)] + topics.takCotInFilters + chat + [
                     topics.bridgeMOAck(config.bridgeId)
                 ] + msg + sos,
                 qos: Self.qosAtLeastOnce)
@@ -589,6 +599,12 @@ public final class HubReporter: @unchecked Sendable {
             hooks().sosAck?(payload)
             return
         }
+        // A chat addressed to this phone: its own subtree, before the broadcast below, whose test
+        // this topic would also pass.
+        if topic == topics.takCotInFor(config.bridgeId) {
+            hooks().takChat?(payload)
+            return
+        }
         if topic.contains("/tak/cot/in") {
             // What this bridge exported itself comes back on the topic that names it as the sender.
             if topics.isOwnTakExport(topic: topic, bridgeId: config.bridgeId) { return }
@@ -639,6 +655,7 @@ public final class HubReporter: @unchecked Sendable {
     private struct Hooks {
         let command: (@Sendable (HubCommand) -> Void)?
         let tak: (@Sendable (String) -> Void)?
+        let takChat: (@Sendable (String) -> Void)?
         let msgIn: (@Sendable (String) -> Void)?
         let msgStatus: (@Sendable (String) -> Void)?
         let connected: (@Sendable () -> Void)?
@@ -650,7 +667,8 @@ public final class HubReporter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return Hooks(
-            command: onCommandHook, tak: onTakCotHook, msgIn: onMsgInHook, msgStatus: onMsgStatusHook, connected: onConnectedHook,
+            command: onCommandHook, tak: onTakCotHook, takChat: onTakChatHook, msgIn: onMsgInHook, msgStatus: onMsgStatusHook,
+            connected: onConnectedHook,
             hubCaps: onHubCapsHook, sosAck: onSosAckHook)
     }
 

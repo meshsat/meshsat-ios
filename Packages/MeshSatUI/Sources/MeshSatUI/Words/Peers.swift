@@ -4,6 +4,7 @@
 import Foundation
 import MeshSatHub
 import MeshSatMeshtastic
+import MeshSatTak
 
 public enum Peers {
     /// Everyone on the mesh channel: Meshtastic's own name for a broadcast.
@@ -26,11 +27,19 @@ public enum Peers {
     /// The principal of a bridge id, as a conversation key.
     public static func hubPeer(_ bridgeId: String) -> String { hubPrefix + bridgeId.trimmingCharacters(in: .whitespaces) }
 
+    /// A dispatcher on TAK, or an operator on the Hub's map, who wrote to this phone (MESHSAT-1708):
+    /// "tak:<uid>#<callsign>", the key TakChats.peer writes.
+    public static func isTak(_ peer: String) -> Bool { TakChats.isPeer(peer) }
+    public static func takPeer(_ uid: String, _ callsign: String) -> String { TakChats.peer(uid: uid, callsign: callsign) }
+    public static func takUid(_ peer: String) -> String { TakChats.uid(ofPeer: peer) }
+    public static func takCallsign(_ peer: String) -> String { TakChats.callsign(ofPeer: peer) }
+
     /// The node number of a mesh peer, or nil.
     public static func nodeNum(_ peer: String) -> UInt32? { isMeshNode(peer) ? UInt32(peer.dropFirst(), radix: 16) : nil }
 
     /// How a reply goes by default: the way this kind of peer is reached.
     public static func defaultTransport(_ peer: String) -> String {
+        if isTak(peer) { return "tak" }
         if isHub(peer) { return "hub" }
         if isMesh(peer) { return "mesh" }
         if isSatellite(peer) || peer == legacySelf { return "iridium" }
@@ -52,6 +61,7 @@ public enum Peers {
         if isSatellite(peer) { return "Satellite" }
         if peer == legacySelf { return "Sent from this phone" }
         if isHub(peer) { return String(peer.dropFirst(hubPrefix.count)) }
+        if isTak(peer) { return takCallsign(peer).isEmpty ? takUid(peer) : takCallsign(peer) }
         return peer
     }
 
@@ -61,6 +71,7 @@ public enum Peers {
         if isSatellite(peer) { return "By satellite, through Rock7 to the Hub" }
         if peer == meshAll { return "The mesh channel" }
         if isHub(peer) { return "Through the Hub to its MeshSat app" }
+        if isTak(peer) { return "On TAK, through the Hub" }
         return nil
     }
 }

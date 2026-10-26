@@ -54,6 +54,8 @@ extension GatewayController {
         reporter.setCommandCallback { [self] cmd in Task { await handleHubCommand(cmd) } }
         // TAK CoT from the Hub: the message list and the map (GatewayController+Tak).
         reporter.setTakCotCallback { [self] xml in Task { await onTakCotInbound(xml) } }
+        // A chat a dispatcher addressed to this phone, on its own tak/cot/in (MESHSAT-1708).
+        reporter.setTakChatCallback { [self] xml in Task { await onTakChatIn(xml) } }
         reporter.setMoAckCallback { [self] imei, momsn in Task { await onHubReceipt(imei: imei, momsn: momsn) } }
         // An SOS under its own identity (C10): the Hub's caps are kept for a send with no Hub
         // session; its acks end the SOS's repeats (MESHSAT-1584).

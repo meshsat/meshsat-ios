@@ -65,9 +65,14 @@ public struct CotDetail: Sendable, Equatable {
     public var status: CotStatus?
     public var emergency: CotEmergency?
     public var remarks: CotRemarks?
+    /// A GeoChat's routing, as ATAK writes it (MESHSAT-1708).
+    public var chat: CotChat?
+    public var link: CotLink?
+    public var marti: [CotDest] = []
     public init(
         contact: CotContact? = nil, group: CotGroup? = nil, precision: CotPrecision? = nil, track: CotTrack? = nil,
-        status: CotStatus? = nil, emergency: CotEmergency? = nil, remarks: CotRemarks? = nil
+        status: CotStatus? = nil, emergency: CotEmergency? = nil, remarks: CotRemarks? = nil, chat: CotChat? = nil, link: CotLink? = nil,
+        marti: [CotDest] = []
     ) {
         self.contact = contact
         self.group = group
@@ -76,12 +81,68 @@ public struct CotDetail: Sendable, Equatable {
         self.status = status
         self.emergency = emergency
         self.remarks = remarks
+        self.chat = chat
+        self.link = link
+        self.marti = marti
     }
 }
 
+/// `endpoint` "*:-1:stcp" says the contact is reached through the server it came from, which is
+/// what lets a TAK client offer chat with it (MESHSAT-1708).
 public struct CotContact: Sendable, Equatable {
     public var callsign: String
-    public init(callsign: String) { self.callsign = callsign }
+    public var endpoint = ""
+    public init(callsign: String, endpoint: String = "") {
+        self.callsign = callsign
+        self.endpoint = endpoint
+    }
+}
+
+/// A GeoChat's __chat: `chatroom` and `id` name the recipient, `senderCallsign` the sender.
+public struct CotChat: Sendable, Equatable {
+    public var id: String
+    public var chatroom: String
+    public var senderCallsign: String
+    public var messageId = ""
+    public var parent = "RootContactGroup"
+    public var groupOwner = "false"
+    public var uid0 = ""
+    public var uid1 = ""
+    public init(
+        id: String, chatroom: String, senderCallsign: String, messageId: String = "", parent: String = "RootContactGroup",
+        groupOwner: String = "false", uid0: String = "", uid1: String = ""
+    ) {
+        self.id = id
+        self.chatroom = chatroom
+        self.senderCallsign = senderCallsign
+        self.messageId = messageId
+        self.parent = parent
+        self.groupOwner = groupOwner
+        self.uid0 = uid0
+        self.uid1 = uid1
+    }
+}
+
+/// A link to another event; on a GeoChat, the sender.
+public struct CotLink: Sendable, Equatable {
+    public var uid: String
+    public var type = ""
+    public var relation = ""
+    public init(uid: String, type: String = "", relation: String = "") {
+        self.uid = uid
+        self.type = type
+        self.relation = relation
+    }
+}
+
+/// One recipient a server routes to: by uid (iTAK) or callsign (ATAK, WinTAK).
+public struct CotDest: Sendable, Equatable {
+    public var uid = ""
+    public var callsign = ""
+    public init(uid: String = "", callsign: String = "") {
+        self.uid = uid
+        self.callsign = callsign
+    }
 }
 
 public struct CotGroup: Sendable, Equatable {
@@ -128,9 +189,13 @@ public struct CotEmergency: Sendable, Equatable {
 public struct CotRemarks: Sendable, Equatable {
     public var source = ""
     public var text: String
-    public init(source: String = "", text: String) {
+    public var to = ""
+    public var time = ""
+    public init(source: String = "", text: String, to: String = "", time: String = "") {
         self.source = source
         self.text = text
+        self.to = to
+        self.time = time
     }
 }
 

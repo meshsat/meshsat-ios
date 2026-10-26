@@ -92,7 +92,8 @@ final class CotBuilderTests: XCTestCase {
             "<event version=\"2.0\" uid=\"uid1\" type=\"a-f-G-U-C\" how=\"m-g\" time=\"2026-09-25T10:20:30Z\" "
                 + "start=\"2026-09-25T10:20:30Z\" stale=\"2026-09-25T10:25:30Z\">"
                 + "<point lat=\"47.3\" lon=\"-122.5\" hae=\"100.0\" ce=\"10.0\" le=\"10.0\"></point>"
-                + "<detail><contact callsign=\"MESHSAT-1234\"></contact><__group name=\"Cyan\" role=\"Team Member\"></__group>"
+                + "<detail><contact callsign=\"MESHSAT-1234\" endpoint=\"*:-1:stcp\"></contact>"
+                + "<__group name=\"Cyan\" role=\"Team Member\"></__group>"
                 + "<precisionlocation altsrc=\"GPS\" geopointsrc=\"GPS\"></precisionlocation>"
                 + "<track course=\"0.0\" speed=\"0.0\"></track></detail></event>")
     }

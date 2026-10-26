@@ -470,6 +470,31 @@ final class HubReporterTests: XCTestCase {
         await reporter.stop()
     }
 
+    // A chat a dispatcher addressed to this phone (MESHSAT-1708): its own subtree, subscribed only
+    // with a callback, and never taken for the broadcast.
+    func testAChatOnThisPhonesOwnTopicGoesToTheChatHookAlone() async {
+        let session = FakeMQTTSession()
+        let reporter = HubReporter(config: config, host: FakeHubHost(), makeSession: { _ in session })
+        let chats = Changes()
+        let broadcast = Changes()
+        reporter.setTakCotCallback { xml in broadcast.add(xml) }
+        reporter.setTakChatCallback { xml in chats.add(xml) }
+        reporter.start()
+        _ = await waitUntil { reporter.state.value == .connected }
+        XCTAssertTrue(session.subscribed.contains("meshsat/bridge/ios-test/tak/cot/in"))
+
+        session.deliver("meshsat/bridge/ios-test/tak/cot/in", "<event uid=\"to-me\"/>")
+        session.deliver("meshsat/broadcast/tak/cot/in", "<event uid=\"tak-server\"/>")
+        let got = await waitUntil { chats.list.count >= 1 && broadcast.list.count >= 1 }
+        XCTAssertTrue(got)
+        XCTAssertEqual(chats.list, ["<event uid=\"to-me\"/>"])
+        XCTAssertEqual(broadcast.list, ["<event uid=\"tak-server\"/>"])
+        await reporter.stop()
+
+        XCTAssertEqual(HubTopics().takCotInFor("kit+1"), "meshsat/bridge/kit%2B1/tak/cot/in")
+        XCTAssertEqual(HubTopics(prefix: "meshsat/t-42").takCotInFor("b-1"), "meshsat/t-42/bridge/b-1/tak/cot/in")
+    }
+
     func testACustomerTenantsTopicsHangOffItsPrefix() {
         let t = HubTopics(prefix: "meshsat/acme")
         XCTAssertEqual(t.bridgeCmd("b-1"), "meshsat/acme/bridge/b-1/cmd")
