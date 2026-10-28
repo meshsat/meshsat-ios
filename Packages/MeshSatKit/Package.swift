@@ -14,6 +14,8 @@
 //   MeshSatRns        rns/: the upstream-compatible Reticulum wire primitives (msgpack,
 //                     identity, header, announce, token), the Bridge's internal/reticulum
 //                     and internal/msgpack; the node itself is the next tranche
+//   MeshSatLXMF       lxmf/: the message, mid, attachments, announce app data, stamps
+//                     (the Bridge's internal/lxmf); the router is the next tranche
 //   MeshSatSatellite  satellite/ (SGP4, TLE, passes, scheduler) + bundled TLEs
 //   MeshSatProto      generated Swift for Vendor/protos (Meshtastic, TAK)
 //   MeshSatMeshtastic ble/MeshtasticProtocol, GattOpQueue, the Iridium pipe
@@ -37,6 +39,7 @@ let package = Package(
         .library(name: "MeshSatNet", targets: ["MeshSatNet"]),
         .library(name: "MeshSatReticulum", targets: ["MeshSatReticulum"]),
         .library(name: "MeshSatRns", targets: ["MeshSatRns"]),
+        .library(name: "MeshSatLXMF", targets: ["MeshSatLXMF"]),
         .library(name: "MeshSatSatellite", targets: ["MeshSatSatellite"]),
         .library(name: "MeshSatProto", targets: ["MeshSatProto"]),
         .library(name: "MeshSatMeshtastic", targets: ["MeshSatMeshtastic"]),
@@ -85,6 +88,13 @@ let package = Package(
             name: "MeshSatRns",
             dependencies: [
                 "MeshSatWire", "MeshSatCrypto", "MeshSatReticulum",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ]
+        ),
+        .target(
+            name: "MeshSatLXMF",
+            dependencies: [
+                "MeshSatWire", "MeshSatRns", "MeshSatReticulum",
                 .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
@@ -139,7 +149,7 @@ let package = Package(
         .testTarget(
             name: "MeshSatKitTests",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatHemb", "MeshSatNet", "MeshSatReticulum", "MeshSatRns",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatHemb", "MeshSatNet", "MeshSatReticulum", "MeshSatRns", "MeshSatLXMF",
                 "MeshSatSatellite", "MeshSatProto", "MeshSatMeshtastic", "MeshSatEngine",
                 "MeshSatHub", "MeshSatMQTT", "MeshSatMsvqsc", "MeshSatAprs", "MeshSatTak",
                 .product(name: "Crypto", package: "swift-crypto"),
