@@ -415,6 +415,23 @@ platform :ios do
     UI.success("submission #{submission} resubmitted: #{body.dig('data', 'attributes', 'state')}")
   end
 
+  # A version that passed App Review with release MANUAL waits in PENDING_DEVELOPER_RELEASE until
+  # someone presses "Release This Version". This is that button: one release request for the
+  # version in that state. Apple says the store shows it within 24 hours.
+  desc "Release the approved version that waits for a manual release"
+  lane :store_release do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    version = app.get_app_store_versions(filter: { platform: "IOS" }).find { |v| v.app_store_state == "PENDING_DEVELOPER_RELEASE" }
+    UI.user_error!("no version in Pending Developer Release") if version.nil?
+    code, body = asc_rest(:post, "v1/appStoreVersionReleaseRequests", {
+      data: { type: "appStoreVersionReleaseRequests",
+              relationships: { appStoreVersion: { data: { type: "appStoreVersions", id: version.id } } } }
+    })
+    UI.user_error!("release: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 201
+    UI.success("#{version.version_string} (build #{version.build&.version || '?'}) released")
+  end
+
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
   lane :beta do
     asc_key
