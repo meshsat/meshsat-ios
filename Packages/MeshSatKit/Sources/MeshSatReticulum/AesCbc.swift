@@ -38,7 +38,9 @@ public enum AesCbc {
     }
 
     private static func check(key: [UInt8], iv: [UInt8]) throws {
-        guard key.count == 32 else { throw CipherError("key must be 32 bytes") }
+        // 32 for AES-256 (links, single packets); 16 for the AES-128 mode of an RNS Token with a
+        // 32-byte key (MeshSatRns.Token). Both ciphers are the platform's.
+        guard key.count == 32 || key.count == 16 else { throw CipherError("key must be 32 or 16 bytes") }
         guard iv.count == 16 else { throw CipherError("iv must be 16 bytes") }
     }
 

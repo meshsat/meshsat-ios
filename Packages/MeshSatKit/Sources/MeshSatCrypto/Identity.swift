@@ -30,6 +30,11 @@ public final class Identity: Sendable {
     private var encryptionPrivate: Curve25519.KeyAgreement.PrivateKey {
         (try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: encryptionSeed)) ?? Curve25519.KeyAgreement.PrivateKey()
     }
+    /// Raw 32-byte X25519 private key and Ed25519 seed (Android's encryptionPrivRaw and
+    /// signingSeedRaw): what MeshSatRns.RnsIdentity.fromRouting builds the Reticulum identity
+    /// from, so the phone's lxmf.delivery address is this identity's.
+    public var encryptionPrivateRaw: [UInt8] { encryptionSeed }
+    public var signingSeedRaw: [UInt8] { signingSeed }
     /// Raw 32-byte Ed25519 public key (for the wire).
     public let signingPubRaw: [UInt8]
     /// Raw 32-byte X25519 public key (for the wire).
