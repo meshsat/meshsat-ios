@@ -30,7 +30,7 @@ It is the iOS counterpart of [MeshSat Android](https://github.com/meshsat/meshsa
 
 ## Install
 
-There is no App Store or TestFlight build yet. Each [release](https://github.com/meshsat/meshsat-ios/releases) carries two files:
+MeshSat is [on the App Store](https://apps.apple.com/app/meshsat/id6815748748), free, in every country except mainland China. Apple reviews each version before it gets there, so a [release](https://github.com/meshsat/meshsat-ios/releases) here can be newer. Each release carries two files:
 
 - `MeshSat-<version>-unsigned.ipa`, for an iPhone. It is not signed by MeshSat. To run it you sign it yourself with a free Apple ID through [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io); a free Apple ID limits you to three sideloaded apps and a certificate that expires every seven days, so the app has to be re-signed weekly.
 - `MeshSat-<version>-simulator.zip`, for the iOS Simulator on a Mac. Drag `MeshSat.app` onto a running simulator. The simulator has no Bluetooth, so nothing about the node works there.
