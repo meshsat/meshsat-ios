@@ -83,7 +83,6 @@ public final class RnsTransportNode: @unchecked Sendable {
         }
     }
 
-
     // Accessors for the dashboard and settings widgets (MESHSAT-394/396).
     public var destHashHex: String { Hex.encode(localDestHash) }
     public func interfaceCount() -> Int { interfaces().count }
