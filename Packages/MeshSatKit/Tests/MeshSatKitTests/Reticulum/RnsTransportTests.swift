@@ -74,10 +74,10 @@ final class RnsAnnounceHandlerTests: XCTestCase {
 }
 
 final class RnsTransportNodeTests: XCTestCase {
-    /// What HeMB v1's compact-header check took for a frame: 8+ bytes, version bits 00, byte 7 the
+    /// What the removed 8-byte frame check took for a frame: 8+ bytes, version bits 00, byte 7 the
     /// CRC-8 of bytes 0 to 6.
-    static func collidesWithTheOldHembCheck(_ raw: [UInt8]) -> Bool {
-        raw.count >= 8 && (raw[0] >> 6) == 0 && LegacyHembCrc.crc8(raw, length: 7) == raw[7]
+    static func collidesWithTheOldFrameCheck(_ raw: [UInt8]) -> Bool {
+        raw.count >= 8 && (raw[0] >> 6) == 0 && LegacyFrameCrc.crc8(raw, length: 7) == raw[7]
     }
 
     private var mesh = StubInterface("mesh_rns_0", cost: 0, latency: 200)
@@ -94,14 +94,14 @@ final class RnsTransportNodeTests: XCTestCase {
         mesh = StubInterface("mesh_rns_0", cost: 0, latency: 200)
         iridium = StubInterface("iridium_rns_0", cost: 5, latency: 60000)
         tcp = StubInterface("tcp_rns_0", cost: 0, latency: 50)
-        // HeMB v1's compact header had no magic: an 8+ byte packet whose byte 7 equalled the
-        // CRC-8 of bytes 0 to 6 read as a HeMB frame and was swallowed (1 in 256; byte 7 of a
+        // The removed 8-byte frame check had no magic: an 8+ byte packet whose byte 7 equalled
+        // the CRC-8 of bytes 0 to 6 was swallowed (1 in 256; byte 7 of a
         // data packet is byte 5 of our destination hash). This loop used to pick an identity
-        // that did NOT collide; with HeMB v1 gone (MESHSAT-1763) it picks one that DOES, so
+        // that did NOT collide; with the check gone (MESHSAT-1763) it picks one that DOES, so
         // testDataForUsIsDeliveredLocallyAndOnceOnly guards the fix on every run.
         repeat {
             me = Identity.generate()
-        } while !Self.collidesWithTheOldHembCheck(
+        } while !Self.collidesWithTheOldFrameCheck(
             RnsPacket.data(
                 destHash: RnsDestination.computeDestHash(encryptionPub: me.encryptionPubRaw, signingPub: me.signingPubRaw),
                 payload: Array("hi".utf8)
@@ -235,9 +235,9 @@ final class RnsTransportNodeTests: XCTestCase {
     }
 }
 
-/// The CRC-8 (poly 0x07, init 0) of HeMB v1's compact header, kept only to build the packets
+/// The CRC-8 (poly 0x07, init 0) of the removed frame check, kept only to build the packets
 /// the old check swallowed. [MESHSAT-1763]
-enum LegacyHembCrc {
+enum LegacyFrameCrc {
     static func crc8(_ data: [UInt8], length: Int) -> UInt8 {
         var crc: UInt8 = 0
         for i in 0..<length {

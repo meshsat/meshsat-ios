@@ -1,5 +1,4 @@
 // Mirrors fec/GaloisField256.kt: the Reed-Solomon field, polynomial 0x11D with generator 0x02.
-// (HeMB v1 used a different field, 0x11B; it is gone since MESHSAT-1763.)
 
 public enum GaloisField256 {
     public static let polynomial: UInt16 = 0x11D

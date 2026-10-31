@@ -8,7 +8,7 @@
 //                     crypto/KeyBundleImporter, crypto/MsvqscWire, pair/ContactQR,
 //                     hub/HubProtocol, hub/BirthSigner (canonical JSON), channel/
 //   MeshSatCrypto     routing/Identity, reticulum/RnsHkdf, SPKI pinning, PEM parsing
-//   MeshSatFec        rlnc/, fec/ (HeMB v1, hemb/, is gone since MESHSAT-1763)
+//   MeshSatFec        rlnc/, fec/
 //   MeshSatNet        the ByteStream / WebSocketTransport / HttpGetter protocols
 //   MeshSatReticulum  reticulum/ and the used parts of routing/
 //   MeshSatRns        rns/: the upstream-compatible Reticulum wire primitives (msgpack,

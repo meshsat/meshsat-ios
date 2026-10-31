@@ -255,8 +255,8 @@ extension GatewayController {
         }
     }
 
-    /// key_rotate: a key in the Keychain and a row in the store. (hemb_bond_create and
-    /// hemb_bond_delete left with HeMB v1, MESHSAT-1763; they answer "unsupported command".)
+    /// key_rotate: a key in the Keychain and a row in the store. (The two bond-group
+    /// commands are gone since MESHSAT-1763; they answer "unsupported command".)
     func handleStoreCommand(_ cmd: String, _ payload: JSONBody) async {
         let channelType = payload.string("channel_type") ?? ""
         let address = payload.string("address") ?? ""

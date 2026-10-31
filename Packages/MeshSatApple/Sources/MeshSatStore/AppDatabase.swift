@@ -71,9 +71,9 @@ public final class AppDatabase: Sendable {
         m.registerMigration("v2: hub_msg") { db in
             for statement in schemaV2HubMsg { try db.execute(sql: statement) }
         }
-        // HeMB v1 left the app, and its bond groups with it (Android Room 25, MESHSAT-1763).
+        // The bonding layer left the app, and its bond groups with it (Android Room 25, MESHSAT-1763).
         // schemaV1 keeps the CREATE (migrations are append-only).
-        m.registerMigration("v3: drop hemb_bond_groups") { db in
+        m.registerMigration("v3: drop bond groups") { db in
             try db.execute(sql: "DROP TABLE IF EXISTS hemb_bond_groups")
         }
         return m
