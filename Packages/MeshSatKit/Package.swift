@@ -8,7 +8,7 @@
 //                     crypto/KeyBundleImporter, crypto/MsvqscWire, pair/ContactQR,
 //                     hub/HubProtocol, hub/BirthSigner (canonical JSON), channel/
 //   MeshSatCrypto     routing/Identity, reticulum/RnsHkdf, SPKI pinning, PEM parsing
-//   MeshSatHemb       hemb/, rlnc/, fec/
+//   MeshSatFec        rlnc/, fec/ (HeMB v1, hemb/, is gone since MESHSAT-1763)
 //   MeshSatNet        the ByteStream / WebSocketTransport / HttpGetter protocols
 //   MeshSatReticulum  reticulum/ and the used parts of routing/
 //   MeshSatRns        rns/: the upstream-compatible Reticulum wire primitives (msgpack,
@@ -35,7 +35,7 @@ let package = Package(
     products: [
         .library(name: "MeshSatWire", targets: ["MeshSatWire"]),
         .library(name: "MeshSatCrypto", targets: ["MeshSatCrypto"]),
-        .library(name: "MeshSatHemb", targets: ["MeshSatHemb"]),
+        .library(name: "MeshSatFec", targets: ["MeshSatFec"]),
         .library(name: "MeshSatNet", targets: ["MeshSatNet"]),
         .library(name: "MeshSatReticulum", targets: ["MeshSatReticulum"]),
         .library(name: "MeshSatRns", targets: ["MeshSatRns"]),
@@ -73,12 +73,12 @@ let package = Package(
                 .product(name: "X509", package: "swift-certificates"),
             ]
         ),
-        .target(name: "MeshSatHemb"),
+        .target(name: "MeshSatFec"),
         .target(name: "MeshSatNet"),
         .target(
             name: "MeshSatReticulum",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatHemb", "MeshSatProto", "MeshSatMeshtastic",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatProto", "MeshSatMeshtastic",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "_CryptoExtras", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
@@ -119,7 +119,7 @@ let package = Package(
         .target(
             name: "MeshSatEngine",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatHemb", "MeshSatSatellite", "MeshSatNet", "MeshSatMsvqsc",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatSatellite", "MeshSatNet", "MeshSatMsvqsc",
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Yams", package: "Yams"),
@@ -149,7 +149,7 @@ let package = Package(
         .testTarget(
             name: "MeshSatKitTests",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatHemb", "MeshSatNet", "MeshSatReticulum", "MeshSatRns", "MeshSatLXMF",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatFec", "MeshSatNet", "MeshSatReticulum", "MeshSatRns", "MeshSatLXMF",
                 "MeshSatSatellite", "MeshSatProto", "MeshSatMeshtastic", "MeshSatEngine",
                 "MeshSatHub", "MeshSatMQTT", "MeshSatMsvqsc", "MeshSatAprs", "MeshSatTak",
                 .product(name: "Crypto", package: "swift-crypto"),

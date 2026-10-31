@@ -10,7 +10,7 @@ reference for the bytes. The contract between the three and the Hub is the Retic
 Everything here lives in `Packages/MeshSatKit`, builds and tests on Linux, and has no Apple dependency.
 The older `MeshSatReticulum` module is NOT this format (its packet omits the context byte unless the
 context flag is set, its announce reads a 10-byte ratchet id, it has its own link handshake); it stays
-for the MeshSat-private traffic (`meshsat.node`, HeMB, time sync, the Hub relay), exactly as Android keeps
+for the MeshSat-private traffic (`meshsat.node`, time sync, the Hub relay), exactly as Android keeps
 `reticulum/` beside `rns/`.
 
 ## Tranche 1 (this one): the wire, pure Swift, no transport, no UI

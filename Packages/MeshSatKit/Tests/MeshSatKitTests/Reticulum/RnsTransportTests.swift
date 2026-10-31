@@ -1,6 +1,5 @@
 // The announce handler and the transport node with stub interfaces, and the interfaces that
 // need no hardware: Meshtastic fragmentation, TCP over a loopback stream, MQTT over a fake link.
-import MeshSatHemb
 import MeshSatNet
 import XCTest
 
@@ -75,6 +74,12 @@ final class RnsAnnounceHandlerTests: XCTestCase {
 }
 
 final class RnsTransportNodeTests: XCTestCase {
+    /// What HeMB v1's compact-header check took for a frame: 8+ bytes, version bits 00, byte 7 the
+    /// CRC-8 of bytes 0 to 6.
+    static func collidesWithTheOldHembCheck(_ raw: [UInt8]) -> Bool {
+        raw.count >= 8 && (raw[0] >> 6) == 0 && LegacyHembCrc.crc8(raw, length: 7) == raw[7]
+    }
+
     private var mesh = StubInterface("mesh_rns_0", cost: 0, latency: 200)
     private var iridium = StubInterface("iridium_rns_0", cost: 5, latency: 60000)
     private var tcp = StubInterface("tcp_rns_0", cost: 0, latency: 50)
@@ -89,13 +94,14 @@ final class RnsTransportNodeTests: XCTestCase {
         mesh = StubInterface("mesh_rns_0", cost: 0, latency: 200)
         iridium = StubInterface("iridium_rns_0", cost: 5, latency: 60000)
         tcp = StubInterface("tcp_rns_0", cost: 0, latency: 50)
-        // The HeMB compact header has no magic: any 8+ byte packet whose byte 7 happens to equal
-        // the CRC-8 of bytes 0 to 6 reads as a HeMB frame (1 in 256; Android has the same
-        // check). Byte 7 of a data packet is byte 5 of our destination hash, so pick an
-        // identity whose hash does not collide, or the local-delivery test flakes (seen in CI).
+        // HeMB v1's compact header had no magic: an 8+ byte packet whose byte 7 equalled the
+        // CRC-8 of bytes 0 to 6 read as a HeMB frame and was swallowed (1 in 256; byte 7 of a
+        // data packet is byte 5 of our destination hash). This loop used to pick an identity
+        // that did NOT collide; with HeMB v1 gone (MESHSAT-1763) it picks one that DOES, so
+        // testDataForUsIsDeliveredLocallyAndOnceOnly guards the fix on every run.
         repeat {
             me = Identity.generate()
-        } while HembFrame.isHembFrame(
+        } while !Self.collidesWithTheOldHembCheck(
             RnsPacket.data(
                 destHash: RnsDestination.computeDestHash(encryptionPub: me.encryptionPubRaw, signingPub: me.signingPubRaw),
                 payload: Array("hi".utf8)
@@ -206,19 +212,6 @@ final class RnsTransportNodeTests: XCTestCase {
         XCTAssertEqual(links.activeLinks().count, 1)
     }
 
-    func testHembFramesGoToTheHembCallback() async {
-        let frames = RelayReceived()
-        node.hembCallback = { iface, frame in frames.add(iface, frame) }
-        var frame = [UInt8](repeating: 0, count: 20)
-        frame[0] = 0x48
-        frame[1] = 0x4D
-        frame[15] = MeshSatHembCrc.crc8(frame, length: 15)
-        mesh.inject(frame)
-        await waitUntil { !frames.items.isEmpty }
-        XCTAssertEqual(frames.items.first?.1, frame)
-        XCTAssertEqual(tcp.sentCount, 0)
-    }
-
     func testSendDataUsesTheBestPathAndBroadcastAnnounceSkipsPaid() async throws {
         let (other, _) = foreign()
         tcp.inject(other.createAnnounce())
@@ -242,8 +235,9 @@ final class RnsTransportNodeTests: XCTestCase {
     }
 }
 
-/// HembFrame.crc8 through the module the node uses, kept here so the test file needs no HeMB import.
-enum MeshSatHembCrc {
+/// The CRC-8 (poly 0x07, init 0) of HeMB v1's compact header, kept only to build the packets
+/// the old check swallowed. [MESHSAT-1763]
+enum LegacyHembCrc {
     static func crc8(_ data: [UInt8], length: Int) -> UInt8 {
         var crc: UInt8 = 0
         for i in 0..<length {

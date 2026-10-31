@@ -57,7 +57,6 @@ public final class AppDatabase: Sendable {
     public var providerCredentials: ProviderCredentialDao { ProviderCredentialDao(db: writer) }
     public var rnsTcpPeers: RnsTcpPeerDao { RnsTcpPeerDao(db: writer) }
     public var iridiumCredits: IridiumCreditDao { IridiumCreditDao(db: writer) }
-    public var hembBondGroups: HembBondGroupDao { HembBondGroupDao(db: writer) }
     public var bridgeTrust: BridgeTrustDao { BridgeTrustDao(db: writer) }
     public var telemetry: TelemetryDao { TelemetryDao(db: writer) }
 
@@ -71,6 +70,11 @@ public final class AppDatabase: Sendable {
         // The Hub app route hub_msg, Android Room v21's tables (MESHSAT-1584).
         m.registerMigration("v2: hub_msg") { db in
             for statement in schemaV2HubMsg { try db.execute(sql: statement) }
+        }
+        // HeMB v1 left the app, and its bond groups with it (Android Room 25, MESHSAT-1763).
+        // schemaV1 keeps the CREATE (migrations are append-only).
+        m.registerMigration("v3: drop hemb_bond_groups") { db in
+            try db.execute(sql: "DROP TABLE IF EXISTS hemb_bond_groups")
         }
         return m
     }

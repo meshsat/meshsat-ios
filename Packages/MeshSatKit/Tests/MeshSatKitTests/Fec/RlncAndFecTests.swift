@@ -1,7 +1,7 @@
 // Mirrors RlncDecoderTest.kt, GaloisField256Test.kt and ReedSolomonTest.kt.
 import XCTest
 
-@testable import MeshSatHemb
+@testable import MeshSatFec
 
 final class RlncDecoderTests: XCTestCase {
     /// Fresh coefficients until the first K packets are mutually innovative (MESHSAT-1269).

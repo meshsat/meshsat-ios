@@ -19,7 +19,7 @@ scripts/linux-packages.sh          # swift build and swift test for Packages/Mes
 ```
 
 `Packages/MeshSatKit` holds every module that has no Apple dependency (wire
-formats, crypto, HeMB, Reticulum, SGP4, the 9603 driver, the Hub protocol,
+formats, crypto, FEC, Reticulum, SGP4, the 9603 driver, the Hub protocol,
 APRS, TAK, MSVQ-SC decoding, the engine). `Packages/MeshSatApple` (CoreBluetooth,
 GRDB store, background coordination) and `Packages/MeshSatUI` (SwiftUI) build
 only on Apple platforms.

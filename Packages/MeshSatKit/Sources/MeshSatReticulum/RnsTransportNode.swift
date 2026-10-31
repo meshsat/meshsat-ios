@@ -4,7 +4,6 @@
 // requests, and enforces hop limits and deduplication. Protocol overhead never goes to a paid
 // interface. Time and waits are injected for the tests.
 import Foundation
-import MeshSatHemb
 import MeshSatWire
 
 public final class RnsTransportNode: @unchecked Sendable {
@@ -24,7 +23,6 @@ public final class RnsTransportNode: @unchecked Sendable {
     public static func isPaidInterface(_ id: String) -> Bool { paidPrefixes.contains { id.hasPrefix($0) } }
 
     public typealias LocalDeliveryCallback = @Sendable (_ packet: RnsPacket, _ sourceInterface: String) -> Void
-    public typealias HembFrameCallback = @Sendable (_ sourceInterface: String, _ frame: [UInt8]) -> Void
 
     private let localDestHash: [UInt8]
     private let announceHandler: RnsAnnounceHandler
@@ -41,7 +39,6 @@ public final class RnsTransportNode: @unchecked Sendable {
     private let log: @Sendable (String) -> Void
     private let lock = NSLock()
     private var localDeliveryCallbackValue: LocalDeliveryCallback?
-    private var hembCallbackValue: HembFrameCallback?
     private var seenPackets: [String: Int64] = [:]
     private var running = false
     private var tasks: [Task<Void, Never>] = []
@@ -86,19 +83,6 @@ public final class RnsTransportNode: @unchecked Sendable {
         }
     }
 
-    /// HeMB frames found inside Reticulum data packets go here.
-    public var hembCallback: HembFrameCallback? {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return hembCallbackValue
-        }
-        set {
-            lock.lock()
-            hembCallbackValue = newValue
-            lock.unlock()
-        }
-    }
 
     // Accessors for the dashboard and settings widgets (MESHSAT-394/396).
     public var destHashHex: String { Hex.encode(localDestHash) }
@@ -150,11 +134,6 @@ public final class RnsTransportNode: @unchecked Sendable {
     /// delivery or forwarding.
     public func onPacketReceived(sourceInterface: String, _ raw: [UInt8]) {
         guard isRunning() else { return }
-        // HeMB frame detection, before the Reticulum unmarshal.
-        if !raw.isEmpty, HembFrame.isHembFrame(raw) {
-            hembCallback?(sourceInterface, raw)
-            return
-        }
         guard let packet = try? RnsPacket.unmarshal(raw) else { return }
         let hash = Hex.encode(RnsDestination.truncatedHash(raw))
         let t = now()
@@ -212,10 +191,6 @@ public final class RnsTransportNode: @unchecked Sendable {
     // MARK: Data: local delivery or forwarding
 
     private func handleData(_ packet: RnsPacket, raw: [UInt8], sourceInterface: String) {
-        if !packet.data.isEmpty, HembFrame.isHembFrame(packet.data) {
-            hembCallback?(sourceInterface, packet.data)
-            return
-        }
         if isLocalDest(packet.destHash) {
             localDeliveryCallback?(packet, sourceInterface)
             return

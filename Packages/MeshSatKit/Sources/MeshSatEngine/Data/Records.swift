@@ -527,23 +527,6 @@ public struct IridiumCreditEntry: Codable, Sendable, Equatable {
     }
 }
 
-/// data/HembBondGroupEntity.kt, table `hemb_bond_groups` (MESHSAT-431).
-public struct HembBondGroup: Codable, Sendable, Equatable {
-    public var id: String
-    public var label: String
-    /// JSON array of interface ids.
-    public var members: String
-    public var costBudget: Double
-    public var createdAt: Int64
-    public init(id: String, label: String = "", members: String = "[]", costBudget: Double = 0, createdAt: Int64) {
-        self.id = id
-        self.label = label
-        self.members = members
-        self.costBudget = costBudget
-        self.createdAt = createdAt
-    }
-}
-
 /// data/BridgeTrustEntity.kt, table `bridge_trust`: TOFU pinning of bridge signing keys (MESHSAT-495).
 public struct BridgeTrust: Codable, Sendable, Equatable {
     /// Hex of the 16-byte bridge identifier from the bundle header.

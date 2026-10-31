@@ -1,22 +1,17 @@
-// Mirrors hemb/HembGf256.kt: GF(256) with the reducing polynomial 0x11B and generator 0x03,
-// wire-compatible with the Bridge's internal/hemb/gf256.go. This is deliberately a different
-// field from GaloisField256 (fec/, polynomial 0x11D, generator 0x02): mixing the two tables
-// breaks decoding between the Bridge and the phone.
+// Mirrors fec/GaloisField256.kt: the Reed-Solomon field, polynomial 0x11D with generator 0x02.
+// (HeMB v1 used a different field, 0x11B; it is gone since MESHSAT-1763.)
 
-public enum HembGf256 {
-    public static let polynomial: UInt16 = 0x11B
-    public static let generator: UInt8 = 0x03
+public enum GaloisField256 {
+    public static let polynomial: UInt16 = 0x11D
+    public static let generator: UInt8 = 0x02
 
-    /// exp table with 512 entries so that mul never needs a modulo.
     public static let exp: [UInt8] = {
         var table = [UInt8](repeating: 0, count: 512)
         var x: UInt16 = 1
         for i in 0..<255 {
             table[i] = UInt8(x)
-            // multiply by the generator 0x03: x * 3 = (x << 1) ^ x, reduced by 0x11B
-            var doubled = x << 1
-            if doubled & 0x100 != 0 { doubled ^= polynomial }
-            x = doubled ^ x
+            x <<= 1
+            if x & 0x100 != 0 { x ^= polynomial }
         }
         for i in 255..<512 { table[i] = table[i - 255] }
         return table
@@ -37,8 +32,6 @@ public enum HembGf256 {
         return exp[Int(log[Int(a)]) + Int(log[Int(b)])]
     }
 
-    /// Multiplicative inverse. Kotlin throws on zero; here it is 0, and every caller checks for
-    /// a zero pivot first, so the two never diverge on a real matrix.
     @inline(__always)
     public static func inv(_ a: UInt8) -> UInt8 {
         if a == 0 { return 0 }
@@ -50,5 +43,12 @@ public enum HembGf256 {
         precondition(b != 0, "division by zero in GF(256)")
         if a == 0 { return 0 }
         return exp[Int(log[Int(a)]) + 255 - Int(log[Int(b)])]
+    }
+
+    /// a to the power n, n >= 0.
+    public static func pow(_ a: UInt8, _ n: Int) -> UInt8 {
+        if n == 0 { return 1 }
+        if a == 0 { return 0 }
+        return exp[(Int(log[Int(a)]) * n) % 255]
     }
 }

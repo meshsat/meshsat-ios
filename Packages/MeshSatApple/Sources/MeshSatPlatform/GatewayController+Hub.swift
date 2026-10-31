@@ -202,7 +202,7 @@ extension GatewayController {
             // iOS cannot restart the app; the gateway restarts its transports instead.
             Self.log.info("Hub reboot command received: restarting the node link")
             central.forceReconnect()
-        case "hemb_bond_create", "hemb_bond_delete", "key_rotate":
+        case "key_rotate":
             await handleStoreCommand(cmd.cmd, payload)
         default:
             error = "unsupported command: \(cmd.cmd)"
@@ -255,39 +255,16 @@ extension GatewayController {
         }
     }
 
-    /// hemb_bond_create, hemb_bond_delete and key_rotate: rows in the store, a key in the Keychain.
+    /// key_rotate: a key in the Keychain and a row in the store. (hemb_bond_create and
+    /// hemb_bond_delete left with HeMB v1, MESHSAT-1763; they answer "unsupported command".)
     func handleStoreCommand(_ cmd: String, _ payload: JSONBody) async {
-        switch cmd {
-        case "hemb_bond_create":
-            var members: [String] = []
-            if case .array(let a)? = payload["members"] {
-                members = a.compactMap {
-                    if case .string(let s) = $0 { return s }
-                    return nil
-                }
-            }
-            let membersJson = (try? JSONSerialization.data(withJSONObject: members)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-            var budget = 0.0
-            if case .double(let d)? = payload["cost_budget"] {
-                budget = d
-            } else if let i = payload.int("cost_budget") {
-                budget = Double(i)
-            }
-            try? await db.hembBondGroups.insert(
-                HembBondGroup(
-                    id: payload.string("bond_id") ?? "", label: payload.string("label") ?? "", members: membersJson, costBudget: budget,
-                    createdAt: clock.nowMs()))
-        case "hemb_bond_delete":
-            try? await db.hembBondGroups.delete(payload.string("bond_id") ?? "")
-        default:
-            let channelType = payload.string("channel_type") ?? ""
-            let address = payload.string("address") ?? ""
-            let keyHex = payload.string("key_hex") ?? ""
-            let version = payload.int("version") ?? 1
-            settings.secure.set("hub_key:\(channelType):\(address)", keyHex)
-            if !address.isEmpty {
-                try? await db.conversationKeys.upsert(ConversationKey(sender: address, hexKey: keyHex, label: "hub-rotated-v\(version)"))
-            }
+        let channelType = payload.string("channel_type") ?? ""
+        let address = payload.string("address") ?? ""
+        let keyHex = payload.string("key_hex") ?? ""
+        let version = payload.int("version") ?? 1
+        settings.secure.set("hub_key:\(channelType):\(address)", keyHex)
+        if !address.isEmpty {
+            try? await db.conversationKeys.upsert(ConversationKey(sender: address, hexKey: keyHex, label: "hub-rotated-v\(version)"))
         }
     }
 

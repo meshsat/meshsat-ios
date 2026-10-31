@@ -87,7 +87,7 @@ lint:swift-format:
     - swift format lint --strict --recursive --configuration .swift-format App Packages/MeshSatKit/Sources Packages/MeshSatKit/Tests Packages/MeshSatApple Packages/MeshSatUI
 
 # =============================================================================
-# Linux build and tests of MeshSatKit: wire formats, crypto, HeMB, Reticulum,
+# Linux build and tests of MeshSatKit: wire formats, crypto, FEC, Reticulum,
 # SGP4, the 9603 driver, the Hub protocol, APRS, TAK, MSVQ-SC decoding, engine.
 # =============================================================================
 test:linux:

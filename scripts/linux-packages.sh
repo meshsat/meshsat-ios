@@ -3,7 +3,7 @@
 #
 # On a machine with a Swift toolchain:   scripts/linux-packages.sh
 # Through Docker (no toolchain needed):  scripts/linux-packages.sh --docker
-# One module only:                        scripts/linux-packages.sh --target MeshSatHemb
+# One module only:                        scripts/linux-packages.sh --target MeshSatFec
 #
 # CI runs the same thing in the swift:6.2-noble image (.gitlab-ci.yml, test:linux).
 set -euo pipefail

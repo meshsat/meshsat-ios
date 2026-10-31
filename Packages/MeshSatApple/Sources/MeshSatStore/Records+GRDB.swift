@@ -76,10 +76,6 @@ extension IridiumCreditEntry: FetchableRecord, MutablePersistableRecord {
     public mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 }
 
-extension HembBondGroup: FetchableRecord, PersistableRecord {
-    public static let databaseTableName = "hemb_bond_groups"
-}
-
 extension BridgeTrust: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "bridge_trust"
 }

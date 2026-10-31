@@ -1,7 +1,7 @@
 // Mirrors the smaller DAOs of data/: contacts, forwarding rules, signal history, node
 // positions, conversation keys, access rules, object groups, failover groups, the audit log,
-// the TLE cache, provider credentials, Reticulum TCP peers, the Iridium credit log, HeMB bond
-// groups, bridge trust and telemetry. Same SQL as the Kotlin.
+// the TLE cache, provider credentials, Reticulum TCP peers, the Iridium credit log, bridge
+// trust and telemetry. Same SQL as the Kotlin.
 import Foundation
 import GRDB
 import MeshSatEngine
@@ -483,26 +483,6 @@ public struct IridiumCreditDao: Sendable {
         ValueObservation.tracking { db in
             try IridiumCreditEntry.fetchAll(db, sql: "SELECT * FROM iridium_credit_log ORDER BY timestamp DESC LIMIT ?", arguments: [limit])
         }.values(in: db)
-    }
-}
-
-public struct HembBondGroupDao: Sendable {
-    let db: any DatabaseWriter
-
-    public func getAll() async throws -> [HembBondGroup] {
-        try await db.read { db in try HembBondGroup.fetchAll(db, sql: "SELECT * FROM hemb_bond_groups ORDER BY createdAt ASC") }
-    }
-
-    public func getById(_ id: String) async throws -> HembBondGroup? {
-        try await db.read { db in try HembBondGroup.fetchOne(db, sql: "SELECT * FROM hemb_bond_groups WHERE id = ?", arguments: [id]) }
-    }
-
-    public func insert(_ group: HembBondGroup) async throws {
-        try await db.write { db in try group.upsert(db) }
-    }
-
-    public func delete(_ id: String) async throws {
-        try await db.write { db in try db.execute(sql: "DELETE FROM hemb_bond_groups WHERE id = ?", arguments: [id]) }
     }
 }
 

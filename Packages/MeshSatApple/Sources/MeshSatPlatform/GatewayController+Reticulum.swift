@@ -2,12 +2,11 @@
 // identity from the Keychain, the announce handler, the link manager, the path and forwarding
 // tables, the interface map built from what is up (the node's mesh link, the 9603 driver, the
 // TCP peer, the Hub relay), and the transport node over them. Locally addressed packets become
-// messages of transport "reticulum"; HeMB frames are logged until the HeMB port lands.
+// messages of transport "reticulum".
 import Foundation
 import MeshSatBLE
 import MeshSatCrypto
 import MeshSatEngine
-import MeshSatHemb
 import MeshSatHub
 import MeshSatNet
 import MeshSatReticulum
@@ -129,13 +128,6 @@ extension GatewayController {
                 interfaceManager.recordActivity(sourceInterface)
             }
         }
-        // HeMB inbound: one reassembly buffer across every bearer (GatewayService's hembReassembly).
-        let hembReassembly = HembReassemblyBuffer(
-            deliverFn: { payload in Self.log.info("hemb: DECODED payload \(payload.count)B") }, now: { [clock] in clock.nowMs() })
-        node.hembCallback = { sourceInterface, frame in
-            Self.log.info("hemb: received HeMB frame via \(sourceInterface) (\(frame.count)B)")
-            hembReassembly.addFrame(frame)
-        }
         keep(
             Task {
                 await mesh.start()
@@ -144,7 +136,6 @@ extension GatewayController {
         node.start()
         updateRnsParts {
             $0.node = node
-            $0.hemb = hembReassembly
         }
         Self.log.info("Reticulum Transport Node started: \(identity.destHashHex) (\(rnsInterfaces().count) interfaces)")
     }

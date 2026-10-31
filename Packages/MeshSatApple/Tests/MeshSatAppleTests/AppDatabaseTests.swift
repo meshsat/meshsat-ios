@@ -24,7 +24,7 @@ final class AppDatabaseTests: XCTestCase {
             tables,
             [
                 "access_rules", "audit_log", "bridge_trust", "contacts", "conversation_keys", "failover_groups", "failover_members",
-                "forwarding_rules", "hemb_bond_groups", "hub_inbox", "hub_op_events", "hub_op_missing", "hub_ops", "iridium_credit_log",
+                "forwarding_rules", "hub_inbox", "hub_op_events", "hub_op_missing", "hub_ops", "iridium_credit_log",
                 "message_deliveries", "messages", "node_positions",
                 "object_groups", "provider_credentials", "rns_tcp_peers", "signal_history", "telemetry", "tle_cache",
             ])
