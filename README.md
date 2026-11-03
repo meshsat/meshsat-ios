@@ -139,6 +139,10 @@ Releases are not signed by MeshSat yet. When they are, this section will carry t
 
 Issues and pull requests are welcome. Run `scripts/linux-packages.sh` and, on a Mac, `xcodebuild test` before you open a pull request, and open an issue first for anything large. Report security problems privately to security@meshsat.net rather than in a public issue; see [meshsat.net/security](https://meshsat.net/security/).
 
+## Mission and use policy
+
+MeshSat does not work with any organisation that develops, produces, integrates or operates weapon systems, and provides nothing for use in one. The licence below is unchanged: the policy covers whom we work with, not what you may do with the code. Read the [MeshSat Mission and Use Policy](https://meshsat.net/policy/).
+
 ## License
 
 Copyright 2026 Elli and Kyriakos. [GNU General Public License v3.0](LICENSE).
