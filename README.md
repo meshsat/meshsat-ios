@@ -85,6 +85,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | The gateway kept alive in the background | **Not built yet** |
 | RockBLOCK 9704 over HC-05 | **Not possible on iOS** |
 | Reading incoming text messages | **Not possible on iOS** |
+| Night mode over every screen | Verified 7 November 2026 on an iPhone 11 Pro Max: Home, Messages, the map and its tiles, People, Setup and a sub-screen all red, colours back when switched off, the setting kept across a restart. Until 0.3.1 every screen went black (MESHSAT-1827) |
 | Nothing online before it is asked for | Verified 7 November 2026 on an iPhone 11 Pro Max: in the first 90 s after the app started, its only connections went to the Hub and the Reticulum server set up on the phone; no map tiles, orbit data or firmware check |
 | A field kit on the LAN, checked from Setup | Verified 7 November 2026: tesseract at its LAN address answered Reachable, after iOS asked once about the local network |
 | Feedback to the Support desk with a debug.zip | The zip verified 7 November 2026: Android's seven files in Android's formats, nothing left to blank; the test phone has no Mail account, so the share sheet offered it. **Not yet sent to the desk from an iPhone** |
