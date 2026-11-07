@@ -59,7 +59,13 @@ The list below is what the app is being built to do, following MeshSat Android. 
 - **TAK.** Positions from the Hub's TAK feed appear on the map, and the phone reports its own position, and an SOS, to the Hub as Cursor on Target events. There is no ATAK on iOS, so nothing is handed to another app.
 - **Reticulum.** The phone runs as a Reticulum transport node and relays between the mesh, the Iridium modem, MQTT and TCP peers.
 - **Safety.** Hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent. A check-in timer that sends SOS when the phone sees no activity for too long, and zones drawn on the map that record when a node enters or leaves an area.
+- **Public warnings.** A public warning a MeshSat kit relays over the mesh sounds an alarm, fills the screen while the app is open and stays under Setup > Safety > Warnings until the kit's cancel or a newer one; a test warning says so and uses the normal sound. It is never shown as a chat and never forwarded.
+- **The node's satellite beacon.** With a node that has one, an icon left of night mode on Home lights red while the beacon is on, amber while it sends its last message and grey when it is off, and the node's health card says when the next position goes out.
+- **Field kits on your network.** A kit on the same WiFi is reached at its address with the API token it may ask for, kept in the Keychain; through the Hub no token is needed.
+- **Support.** Setup > Help > Support sends feedback to the MeshSat Support desk through your own mail, with an optional debug.zip of the app's logs in which phone numbers, email addresses, IMEIs and keys are blanked.
 - **Offline map** down to country level, and **night mode**, which turns the whole app red.
+
+Nothing goes online before you ask for it: the map loads tiles once you open it, orbit data is downloaded once your node's satellite modem has been seen, and otherwise only what you set up (the Hub, APRS-IS, Reticulum, a field kit) or tap (Update on the passes screen, Check for update) connects.
 
 Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. iOS keeps the app alive for Bluetooth events from the node; in the background the phone's position is refreshed only on significant movement, so position reports, zones and an SOS from the background use that coarser fix. The Gateway card in Setup says which mode you are in.
 
@@ -79,6 +85,14 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | The gateway kept alive in the background | **Not built yet** |
 | RockBLOCK 9704 over HC-05 | **Not possible on iOS** |
 | Reading incoming text messages | **Not possible on iOS** |
+| Nothing online before it is asked for | Verified 7 November 2026 on an iPhone 11 Pro Max: in the first 90 s after the app started, its only connections went to the Hub and the Reticulum server set up on the phone; no map tiles, orbit data or firmware check |
+| A field kit on the LAN, checked from Setup | Verified 7 November 2026: tesseract at its LAN address answered Reachable, after iOS asked once about the local network |
+| Feedback to the Support desk with a debug.zip | The zip verified 7 November 2026: Android's seven files in Android's formats, nothing left to blank; the test phone has no Mail account, so the share sheet offered it. **Not yet sent to the desk from an iPhone** |
+| The node's satellite beacon on Home and on the Node health card | Verified 7 November 2026 on an iPhone 11 Pro Max with an MSC-2 node (T-Beam S3, RockBLOCK 9704): the beacon icon beside night mode in grey and "Satellite beacon: Off" with the node's switch off. **The beacon switched on is not yet seen on an iPhone** |
+| A RockBLOCK 9704 behind the node | Verified 7 November 2026 with the same node: the phone took its modem through the node's pipe and the 9704 answered (firmware v1.6.0); orbit data was refreshed only once the modem was seen. **No message sent through it from an iPhone yet** |
+| Relayed public warnings: the alarm, the full screen, the list | The list verified 7 November 2026; the reading and the state are tested with Android's cases. **Not yet heard from a kit on an iPhone** |
+| A warning that sounds through Do Not Disturb | **Not on iOS**: that needs Apple's critical-alert entitlement, which the app does not have |
+| Picking the mail app that sends feedback | **Not possible on iOS**: Mail's composer when Mail has an account, the share sheet otherwise |
 | Deployment to a real end user | **Never** |
 | Use in an actual emergency | **Never** |
 
