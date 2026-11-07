@@ -444,4 +444,43 @@ final class ProvingTests: XCTestCase {
         XCTAssertTrue(shown, "Mail's composer or the share sheet")
         Thread.sleep(forTimeInterval: 8)  // the screenshots; the composer stays open for the owner
     }
+
+    /// Setup > Your MeshSat node: scan, connect to the node named MESHSAT_NODE_NAME and answer iOS's
+    /// pairing prompt with MESHSAT_PIN (the node logs its passkey at boot). Nothing is sent anywhere.
+    @MainActor
+    func testPairNode() throws {
+        try gate("pair")
+        let name = env["MESHSAT_NODE_NAME"] ?? "0001"
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Your MeshSat node")
+        if app.buttons["Disconnect"].firstMatch.exists {
+            app.buttons["Disconnect"].firstMatch.tap()
+            Thread.sleep(forTimeInterval: 2)
+        }
+        let cont = app.buttons["Continue"].firstMatch
+        if cont.exists, cont.isHittable { cont.tap() }
+        tap(app, "Scan for Meshtastic devices")
+        let found = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", name)).firstMatch
+        XCTAssertTrue(found.waitForExistence(timeout: 30), "\(name) in the scan")
+        Thread.sleep(forTimeInterval: 2)
+        found.tap()
+        if let pin = env["MESHSAT_PIN"], !pin.isEmpty {
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let field =
+                springboard.textFields.firstMatch.exists ? springboard.textFields.firstMatch : springboard.secureTextFields.firstMatch
+            if field.waitForExistence(timeout: 30) {
+                Thread.sleep(forTimeInterval: 2)
+                field.tap()
+                field.typeText(pin)
+                let pair = springboard.buttons["Pair"].firstMatch
+                if pair.waitForExistence(timeout: 5) { pair.tap() }
+                NSLog("MeshSatProve: pairing code entered")
+            } else {
+                NSLog("MeshSatProve: no pairing prompt (bonded already)")
+            }
+        }
+        XCTAssertTrue(app.buttons["Disconnect"].firstMatch.waitForExistence(timeout: 90), "connected to the node")
+        Thread.sleep(forTimeInterval: 20)  // the node's Service Changed reconnect after a fresh bond
+    }
 }
