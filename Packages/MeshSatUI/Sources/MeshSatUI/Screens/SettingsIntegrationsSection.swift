@@ -1,6 +1,6 @@
 // Mirrors the "Ham radio (APRS)", "TAK" and "Reticulum" cards of ui/screens/SettingsScreen.kt
-// (SetupSection.Integrations). The APRS transport is GatewayController+Aprs (MESHSAT-1327); TAK
-// is not ported yet: its settings are kept as Android keeps them. The Reticulum card is Android's
+// (SetupSection.Integrations). The APRS transport is GatewayController+Aprs (MESHSAT-1327); TAK is
+// GatewayController+Tak (MESHSAT-1463, 1708, 1831), its Save applies at once. The Reticulum card is Android's
 // of MESHSAT-1553 (the LXMF address, name and announce, the propagation node, the satellite
 // allow-list, peers on this WiFi, the TCP client); the AutoInterface switch waits for Apple's
 // multicast entitlement (MESHSAT-1828) and is a line of text until then, never a dead switch.
@@ -41,6 +41,7 @@ public struct SettingsIntegrationsSection: View {
                 aprsCard(aprsMode)
                 takCard
                 reticulumCard
+                SettingsRnodeCard()
             }
             .padding(MSSpace.screen)
         }
@@ -177,6 +178,8 @@ public struct SettingsIntegrationsSection: View {
             SettingRow("MQTT Export to Hub") { MSSwitch(isOn: settings.binding(SettingsKey.takMqttExport), label: "MQTT Export to Hub") }
             MSFilledButton("Save", container: MSColors.teal, fullWidth: false) {
                 settings.set(SettingsKey.takCallsignPrefix, takPrefix)
+                // The switch, the prefix and the Hub export apply now (MESHSAT-1831), not at the next start.
+                model.gateway.applyTakSettings()
                 model.showToast("TAK settings saved")
             }
             Text(

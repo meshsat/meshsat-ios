@@ -55,6 +55,10 @@ MIT License
   jpsim/Yams
   microsoft/onnxruntime (onnxruntime-objc)
 
+BSD 3-Clause License
+  webmproject/libwebp, as packaged by SDWebImage/libwebp-Xcode (the WebP
+  encoder of a photo sent by Reticulum; Copyright (c) 2010, Google Inc.)
+
 ================================================================================
 BUNDLED DATA
 ================================================================================

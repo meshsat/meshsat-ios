@@ -145,13 +145,64 @@ ways with reuse, stamps at 6, resources both ways, propagated to Python through 
 a node) and `LxmfOracleTests` (two). **All fifteen interop cases green against Python RNS 1.5.5 + LXMF 1.2.0 on 7 Nov
 2026 21:01 CET**, first run of the router.
 
+## Tranche 5 (7 Nov 2026): the app
+
+The node and the router run inside the gateway (`MeshSatPlatform/GatewayController+Lxmf.swift`, Android's
+`GatewayService.initRnsStack` and its neighbours): `RnsStack` over the same `RnsInterface` objects the legacy
+`RnsTransportNode` uses, which hands every packet to the node first (`upstreamInbound`) and keeps what the node
+declines; ratchets in the Keychain (`KeychainIdentityStore: RnsStackStore`); the display name from
+`lxmf_display_name`, else the Hub bridge id; an inbound message is filed once per (sender, mid) through
+`lxmf_mids` (GRDB v5, `insertLxmfOnce` in one transaction, 30-day prune; `data/LxmfMidEntity.kt`) under the
+sender's delivery hash as the conversation, with a notification; an outbound one is a `message_deliveries` row on
+the virtual channel `lxmf_0` whose `forwardedTo` follows the router (`lxmf:queued/sent/delivered/propagated/
+failed/unverified`). Two interfaces are new: `RnsIridium9704Interface` (`reticulum/RnsIridium9704Interface.kt`:
+the 9704's IMT topic 244 with RNSI framing, an ordered queue of 64 with 5/15/30/60/120 s retries and a 15 min
+drop, a paid link by its `iridium` prefix; the MT sink of `GatewayController+Imt` hands framed payloads to it,
+`ImtDedup` in `RnsImtFraming.swift`) and `RnsTcpServerInterface` on `NWByteStreamListener` (Network.framework,
+plain TCP, foreground only) so a Sideband on the same WiFi connects to the phone. Settings: the thirteen keys
+of Android's Reticulum and RNode cards (`Settings.swift`). Screens, each from its Kotlin twin: the Reticulum
+tab in Messages, LXMF peers and the 32-hex address field in New message, the Direct / Auto / Opportunistic /
+Propagated chips and the delivery marks in the conversation (two teal checks delivered, "At the propagation
+node", "Sender not verified yet"), and the Reticulum card in Setup > Ham radio, TAK and Reticulum (address,
+name, Announce now, propagation node and Sync now, the satellite allow-list and extra hops, the TCP listener,
+the TCP client). Tests: `Reticulum/RnsIridium9704InterfaceTests` (three, on a clock), `AppDatabaseTests` with
+the new table; the Apple packages and the simulator app build on the Mac; `ProvingTests.testLxmf`
+(`MESHSAT_PROVE=lxmf`) drives the phone against a stock Python node for the proof below. Not in this tranche:
+the AutoInterface switch (Apple's multicast entitlement, MESHSAT-1828), the RNode card, voice notes and photos
+(tranches 6 to 8, 0.5.0).
+
+## Tranches 6 to 8 (7 Nov 2026 night): voice notes, photos, the RNode, the AutoInterface core
+
+- **Kit, Linux-tested:** `MeshSatLXMF/OggOpus.swift` (`audio/OggOpus.kt`: RFC 3533 pages and CRC, RFC 7845 headers,
+  sample counts from the TOC byte, pre-skip, 50 packets a page, vendor "MeshSat"; Android's six tests plus Apple's
+  TOC 0x48), `AttachmentPolicy.swift` (`lxmf/AttachmentPolicy.kt`: only Reticulum carries the bytes, the line under the
+  message box, 30 s and 64 KiB; Android's four tests), `MeshSatRns/Rnode/Kiss.swift`, `RnodeProtocol.swift`,
+  `RnodeDriver.swift` (`rnode/*`: detect, configure, verify, READY flow control, errors and resets; Kotlin's six tests
+  against a software RNode, with the driver's waits on the clock), `MeshSatRns/AutoInterfaceCore.swift`
+  (`rns/AutoInterface.kt` without sockets: the group address and token against Python RNS 1.5.5's values, the address
+  text rules, the peer table with its 22 s timeout and reverse peering, the 750 ms dedup).
+- **Apple:** `MeshSatStore/MessageAttachmentStore+GRDB.swift` (GRDB v6 `message_attachments`, Android's table, the
+  16 MiB trim that never takes the rows just written), `MeshSatPlatform/Media/VoiceRecorder.swift` (AVAudioEngine ->
+  48 kHz mono -> `kAudioFormatOpus` 960-frame packets at 16 kbit/s -> OggOpus, the spike's settings),
+  `VoiceNotePlayer.swift` (OggOpus -> AVAudioConverter -> AVAudioPlayerNode, the pre-skip dropped, Sideband's 60 ms
+  packets too), `SpeechTranscriber.swift` (Speech, on the phone when it can), `PhotoShrinker.swift` (ImageIO
+  thumbnail, then libwebp at 70/50/35/20 and a halving edge from 640 px; libwebp-Xcode 1.6.0, BSD-3-Clause, because
+  ImageIO cannot write WebP), `MeshSatBLE/RnodeBleLink.swift` (the Nordic UART on its own CBCentralManager, "ble:<uuid>",
+  and the scanner), `MeshSatPlatform/RnsRnodeInterface.swift` + `GatewayController+Rnode.swift` (the supervisor that
+  reopens the radio, Apply without a gateway restart); `GatewayController+Lxmf.swift` sends and files FIELD_AUDIO /
+  FIELD_IMAGE.
+- **UI:** `Components/VoiceNote.swift` (hold to record, VoiceOver's double tap, pending chips with the policy line,
+  "Heard: ..." Use as text / Discard, the note and photo cards), the microphone and photo picker on a Reticulum chat,
+  `Screens/SettingsRnodeCard.swift` (Bluetooth LE only; CrossTalk's four presets, custom parameters, airtime limits).
+  project.yml: `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`.
+- **Not yet:** the AutoInterface's sockets and its switch wait for Apple's multicast entitlement (MESHSAT-1828); until
+  then the card says so and shows no switch.
+
 ## What comes next
 
-1. **Transport binding**: a TCP interface to `rns.meshsat.net:4242` (and a tenant's Private network with
-   its IFAC), the RNSI framing on the Iridium pipe (`rns/ImtFraming.kt` is the same as the existing
-   `RnsImtFraming.swift`), and the phones' port 256 framing over Meshtastic (MESHSAT-1721) when the Bridge
-   adopts it. The node sees every packet first; what it declines falls through to `MeshSatReticulum`.
-2. **Store and screens**: `lxmf_messages` in GRDB, the Reticulum settings (display name, stamp cost, the
-   paid-link allow-list of Settings > Reticulum by satellite), a conversation keyed by delivery hash, the
-   voice note and photo attachments in chat (recording and encoding are the app's, playback through the
-   fields above), and the README's proven table.
+1. **Proofs on the phone**: LXMF text Direct and Propagated both ways against the runner's Python peers; a voice note
+   and a photo each way (Python decodes FIELD_AUDIO/FIELD_IMAGE; Android 2.26.x and Sideband when at hand); the RNode
+   over BLE only with a radio at hand (the software RNode is the proof otherwise, as on Android).
+2. **Releases**: 0.4.0 and 0.5.0 as one App Store version if 0.3.1 is still in review when the code is done (the store
+   takes one version in review at a time).
+3. The phones' port 256 framing over Meshtastic (MESHSAT-1721) when the Bridge adopts it.

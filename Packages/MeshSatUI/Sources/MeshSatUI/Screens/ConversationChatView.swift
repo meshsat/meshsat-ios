@@ -4,7 +4,11 @@
 // number by SMS, the satellite conversation by satellite), and the per-conversation key.
 import MeshSatEngine
 import MeshSatHub
+import MeshSatLXMF
+import MeshSatPlatform
+import MeshSatStore
 import MeshSatWire
+import PhotosUI
 import SwiftUI
 
 public struct ConversationChatView: View {
@@ -22,6 +26,12 @@ public struct ConversationChatView: View {
     // opportunistic off the satellite), Opportunistic (one packet, no link), or Propagated (parked at a
     // propagation node until the peer syncs). Direct is the safe default (MESHSAT-1553).
     @State private var lxmfMethod = "direct"
+    // A voice note and a photo waiting for Send, and what the recogniser heard (MESHSAT-1735).
+    @State private var pendingNote: PendingNote?
+    @State private var pendingPhoto: [UInt8]?
+    @State private var transcript: String?
+    @State private var photoItem: PhotosPickerItem?
+    @State private var attachments: [Int64: [MessageAttachmentRecord]] = [:]
 
     public init(peer: String) { self.peer = peer }
 
@@ -46,7 +56,12 @@ public struct ConversationChatView: View {
     /// The most a TAK answer may be: a dispatcher's own radio may be a mesh node (MESHSAT-1708).
     static let takReplyMax = 200
 
-    private var canSend: Bool { !composeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && fitsTheLink }
+    private var hasAttachments: Bool { pendingNote != nil || pendingPhoto != nil }
+
+    private var canSend: Bool {
+        AttachmentPolicy.canSend(transport, text: composeText, hasAttachments: hasAttachments) && fitsTheLink
+            && AttachmentPolicy.fits(audioBytes: pendingNote?.ogg.count ?? 0, imageBytes: pendingPhoto?.count ?? 0)
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -82,13 +97,17 @@ public struct ConversationChatView: View {
                     LazyVStack(spacing: 4) {
                         // Newest at the bottom, as a chat: the store gives newest first.
                         ForEach(messages.reversed(), id: \.id) { msg in
-                            ChatBubble(msg: msg, activeKey: activeKey).id(msg.id)
+                            ChatBubble(msg: msg, activeKey: activeKey, attachments: msg.id.flatMap { attachments[$0] } ?? []).id(msg.id)
                         }
                     }
                     .padding(.vertical, 4)
                 }
                 .onChange(of: messages.first?.id) { _, newest in
                     if let newest { proxy.scrollTo(newest, anchor: .bottom) }
+                }
+                .task(id: messages.first?.forwardedTo ?? "") {
+                    // Notes and photos of this conversation, again whenever the newest row changes.
+                    if transport == "lxmf" || Peers.isLxmf(peer) { attachments = await model.gateway.attachmentsByMessage(peer: peer) }
                 }
             }
             composeBar
@@ -130,7 +149,19 @@ public struct ConversationChatView: View {
                 }
                 .padding(.bottom, 4)
             }
+            PendingAttachments(
+                note: pendingNote, photo: pendingPhoto, transport: transport, onDropNote: { pendingNote = nil },
+                onDropPhoto: { pendingPhoto = nil })
+            if let transcript {
+                TranscriptProposal(
+                    text: transcript,
+                    onUse: {
+                        composeText = composeText.isEmpty ? transcript : composeText + " " + transcript
+                        self.transcript = nil
+                    }, onDiscard: { self.transcript = nil })
+            }
             HStack(spacing: 8) {
+                if transport == "lxmf" { attachmentButtons }
                 MSOutlinedTextField(
                     text: $composeText, placeholder: placeholder, focusedBorder: MSColors.textSecondary, lineLimit: 4, submitLabel: .send,
                     onSubmit: send)
@@ -140,6 +171,28 @@ public struct ConversationChatView: View {
         }
         .padding(8)
         .msCard()
+    }
+
+    /// The microphone and the photo picker, on a Reticulum conversation (AttachmentPolicy: the only bearer that carries them).
+    private var attachmentButtons: some View {
+        HStack(spacing: 0) {
+            RecordNoteButton(onNote: { pendingNote = $0 }, onTranscript: { transcript = $0 })
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Image(systemName: "photo").resizable().scaledToFit().frame(width: 20, height: 20).foregroundStyle(MSColors.teal)
+                    .frame(width: 40, height: 40)
+            }
+            .accessibilityLabel("Add a photo")
+            .onChange(of: photoItem) { _, item in
+                guard let item else { return }
+                let budget = LxFields.maxAttachmentBytes - (pendingNote?.ogg.count ?? 0) - 1024
+                Task {
+                    let data = try? await item.loadTransferable(type: Data.self)
+                    let shrunk: [UInt8]? = await Task.detached { data.flatMap { PhotoShrinker.shrink($0, budgetBytes: budget) } }.value
+                    if let shrunk { pendingPhoto = shrunk } else { model.showToast("This photo could not be made small enough to send") }
+                    photoItem = nil
+                }
+            }
+        }
     }
 
     private var placeholder: String {
@@ -202,8 +255,14 @@ public struct ConversationChatView: View {
             let to = peer
             Task { await gateway.sendTakChat(to: to, text: text) }
         case "lxmf":
-            // A Reticulum message to an LXMF address; the row shows queued, sent, delivered or failed (MESHSAT-1553).
-            model.sendLxmf(text, to: peer, method: lxmfMethod)
+            // A Reticulum message to an LXMF address; the row shows queued, sent, delivered or failed (MESHSAT-1553),
+            // with the voice note and the photo in the same message (MESHSAT-1735).
+            var atts: [LxAttachment] = []
+            if let n = pendingNote { atts.append(.audio(mode: LxFields.audioModeOpusFirst, data: n.ogg)) }
+            if let ph = pendingPhoto { atts.append(.image(format: LxFields.imageWebP, data: ph)) }
+            model.sendLxmf(text, to: peer, method: lxmfMethod, attachments: atts)
+            pendingNote = nil
+            pendingPhoto = nil
         case "sms":
             // The message appears in the chat with its state, and the Messages composer opens.
             model.queueSms(text, to: peer)
@@ -264,6 +323,7 @@ struct DeliveryMark: View {
 struct ChatBubble: View {
     let msg: MessageRecord
     let activeKey: String?
+    var attachments: [MessageAttachmentRecord] = []
     @Environment(GatewayModel.self) private var model
 
     var body: some View {
@@ -294,8 +354,17 @@ struct ChatBubble: View {
                         }
                     }
                 }
-                Text(display.text).msText(.bodyMedium, color: display.ciphertext ? MSColors.textMuted : MSColors.textPrimary)
-                    .textSelection(.enabled).padding(.top, 4)
+                ForEach(attachments) { a in
+                    if a.kind == "audio" {
+                        VoiceNoteCard(attachment: a).padding(.top, 4)
+                    } else {
+                        PhotoCard(attachment: a).padding(.top, 4)
+                    }
+                }
+                if !display.text.isEmpty || attachments.isEmpty {
+                    Text(display.text).msText(.bodyMedium, color: display.ciphertext ? MSColors.textMuted : MSColors.textPrimary)
+                        .textSelection(.enabled).padding(.top, 4)
+                }
             }
             .padding(10)
             .background(isSelf ? MSColors.teal.opacity(0.15) : MSColors.surface, in: shape)

@@ -73,6 +73,7 @@ extension GatewayController {
         if let relay = hubRelay { map[relay.interfaceId] = relay }
         // The upstream node's own interfaces (MESHSAT-1735): the 9704 as a paid Reticulum link, the TCP listener.
         if let imt9704 = lxmf.imt9704 { map[imt9704.interfaceId] = imt9704 }
+        if let rnode = lxmf.rnode { map[rnode.interfaceId] = rnode }
         if let server = lxmf.tcpServer { map[server.interfaceId] = server }
         return map
     }
@@ -117,6 +118,7 @@ extension GatewayController {
         // Before the node exists, so its start wires their receive callbacks like the others'.
         initRns9704()
         initRnsTcpListener()
+        initRnode()
         let pathTable = RnsPathTable(interfaces: { [weak self] in Array((self?.rnsInterfaces() ?? [:]).values) })
         let forwardingTable = RnsForwardingTable()
         let node = RnsTransportNode(

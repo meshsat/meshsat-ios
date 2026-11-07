@@ -84,6 +84,10 @@ public final class AppDatabase: Sendable {
         m.registerMigration("v5: lxmf_mids") { db in
             for statement in schemaV5LxmfMids { try db.execute(sql: statement) }
         }
+        // Voice notes and photos kept with their messages (Android Room's message_attachments, MESHSAT-1735).
+        m.registerMigration("v6: message_attachments") { db in
+            for statement in schemaV6MessageAttachments { try db.execute(sql: statement) }
+        }
         return m
     }
 

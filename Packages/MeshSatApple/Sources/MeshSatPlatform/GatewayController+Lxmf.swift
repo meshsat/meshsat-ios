@@ -30,6 +30,7 @@ final class LxmfParts: @unchecked Sendable {
     private var stackValue: RnsStack?
     private var imtValue: RnsIridium9704Interface?
     private var tcpServerValue: RnsTcpServerInterface?
+    private var rnodeValue: RnsRnodeInterface?
     private var rows: [String: Int64] = [:]
     private var ledger: [String: Int64] = [:]
 
@@ -68,6 +69,20 @@ final class LxmfParts: @unchecked Sendable {
         set {
             lock.lock()
             tcpServerValue = newValue
+            lock.unlock()
+        }
+    }
+
+    /// The RNode over Bluetooth LE (MESHSAT-1735), when the settings name one.
+    var rnode: RnsRnodeInterface? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return rnodeValue
+        }
+        set {
+            lock.lock()
+            rnodeValue = newValue
             lock.unlock()
         }
     }
@@ -151,13 +166,16 @@ extension GatewayController {
         let stack = lxmf.stack
         let imt9704 = lxmf.imt9704
         let server = lxmf.tcpServer
+        let rnode = lxmf.rnode
         lxmf.stack = nil
         lxmf.imt9704 = nil
         lxmf.tcpServer = nil
+        lxmf.rnode = nil
         stack?.stop()
         Task {
             await imt9704?.stop()
             await server?.stop()
+            await rnode?.stop()
         }
     }
 
@@ -203,9 +221,19 @@ extension GatewayController {
                 Self.log.info("LXMF: a repeat of a message already taken from \(m.sourceHex.prefix(8)), dropped")
                 return
             }
-            // A voice note or a photo in the fields follows in tranche 6 (MESHSAT-1735).
+            // A voice note or a photo in the fields is kept with the message (MESHSAT-1735), within the
+            // 64 KiB one message may carry; the store trims itself to 16 MiB, oldest first.
+            let atts = LxFields.attachmentsOf(m.fields)
+            if let id, !atts.isEmpty {
+                if LxFields.attachmentBytes(atts) <= LxFields.maxAttachmentBytes {
+                    _ = try? await db.attachments.insertAttachments(messageId: id, atts, now: clock.nowMs())
+                } else {
+                    Self.log.info("LXMF: attachments of \(LxFields.attachmentBytes(atts)) bytes from \(m.sourceHex.prefix(8)) not kept")
+                }
+            }
             let from = lxmf.stack?.lxmf.peerInfo(m.source)?.displayName ?? String(m.sourceHex.prefix(8))
-            messageNotifications.send((title: "Reticulum: \(from)", text: m.contentString))
+            let words = atts.map { $0.kind == .audio ? "Voice note" : "Photo" }.joined(separator: " and ")
+            messageNotifications.send((title: "Reticulum: \(from)", text: m.contentString.isEmpty ? words : m.contentString))
             interfaceManager.recordActivity(m.iface)
         }
     }
@@ -283,11 +311,18 @@ extension GatewayController {
     /// auto (direct across the satellite). Returns the message hash. Each message this phone writes carries
     /// its own mid (UUIDv7); the router's retries resend the same message, so the same mid (MESHSAT-1641).
     @discardableResult
-    public func sendLxmf(destHex: String, text: String, method: LxMethod? = nil) throws -> String {
+    public func sendLxmf(destHex: String, text: String, method: LxMethod? = nil, attachments: [LxAttachment] = []) throws -> String {
         guard let stack = lxmf.stack else { throw LxmfError("Reticulum node not running") }
         guard let dest = Hex.decode(destHex), dest.count == 16 else { throw LxmfError("not a Reticulum address") }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw LxmfError("nothing to send") }
-        let o = try stack.send(dest, content: text, method: method, fields: LxMid.fields(LxMid.newMid(nowMs: clock.nowMs())))
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
+            throw LxmfError("nothing to send")
+        }
+        guard LxFields.attachmentBytes(attachments) <= LxFields.maxAttachmentBytes else {
+            throw LxmfError("the note and photo are too big")
+        }
+        // A voice note or a photo rides in the same message as FIELD_AUDIO / FIELD_IMAGE (MESHSAT-1735).
+        let fields = try LxFields.withAttachments(LxMid.fields(LxMid.newMid(nowMs: clock.nowMs())), attachments)
+        let o = try stack.send(dest, content: text, method: method, fields: fields)
         let hash = o.hashHex
         Task { [self] in
             let now = clock.nowMs()
@@ -300,6 +335,7 @@ extension GatewayController {
                 MessageDelivery(
                     msgRef: "lxmf:\(hash)", channel: LxmfParts.channel, status: Self.lxmfLedgerStatus(o.state), payload: Data(text.utf8),
                     textPreview: String(text.prefix(80)), maxRetries: 0, createdAt: now, updatedAt: now, recipient: destHex))
+            if let id, !attachments.isEmpty { _ = try? await db.attachments.insertAttachments(messageId: id, attachments, now: now) }
             lxmf.remember(hash: hash, row: id, ledger: ledgerId)
             if o.state.terminal {
                 if let id { try? await db.messages.setForwardedTo(id: id, o.state == .delivered ? LxmfParts.delivered : LxmfParts.failed) }
@@ -308,6 +344,12 @@ extension GatewayController {
             }
         }
         return hash
+    }
+
+    /// The voice notes and photos of one conversation, by message id, for the chat view.
+    public func attachmentsByMessage(peer: String) async -> [Int64: [MessageAttachmentRecord]] {
+        let all = (try? await db.attachments.forConversation(peer)) ?? []
+        return Dictionary(grouping: all, by: \.messageId)
     }
 
     /// A send the router refused (no node, a bad address): the conversation shows it failed, as Android does.

@@ -25,6 +25,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         // The sentence encoder of MSVQ-SC (MESHSAT-1329); a binary xcframework, iOS only.
         .package(url: "https://github.com/microsoft/onnxruntime-swift-package-manager", from: "1.19.2"),
+        // The WebP encoder of a photo sent by Reticulum (MESHSAT-1735): ImageIO decodes WebP but cannot write it,
+        // and every LXMF client sends "webp". Google's libwebp (BSD-3-Clause) as SDWebImage packages it.
+        .package(url: "https://github.com/SDWebImage/libwebp-Xcode.git", from: "1.5.0"),
     ],
     targets: [
         .target(
@@ -42,6 +45,7 @@ let package = Package(
                 .product(name: "MeshSatHub", package: "MeshSatKit"),
                 .product(name: "MeshSatNet", package: "MeshSatKit"),
                 .product(name: "MeshSatSatellite", package: "MeshSatKit"),
+                .product(name: "MeshSatLXMF", package: "MeshSatKit"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Logging", package: "swift-log"),
             ]
@@ -66,6 +70,7 @@ let package = Package(
                 .product(name: "MeshSatWire", package: "MeshSatKit"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "onnxruntime", package: "onnxruntime-swift-package-manager"),
+                .product(name: "libwebp", package: "libwebp-Xcode"),
             ]
         ),
         .testTarget(

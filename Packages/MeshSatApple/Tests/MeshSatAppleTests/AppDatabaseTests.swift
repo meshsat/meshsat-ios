@@ -27,6 +27,8 @@ final class AppDatabaseTests: XCTestCase {
                 "forwarding_rules", "hub_inbox", "hub_op_events", "hub_op_missing", "hub_ops", "iridium_credit_log",
                 // The LXMF message ids taken in, per sender (Android Room's lxmf_mids, MESHSAT-1641; iOS MESHSAT-1735).
                 "lxmf_mids",
+                // Voice notes and photos (Android Room's message_attachments, MESHSAT-1735).
+                "message_attachments",
                 "message_deliveries", "messages", "node_positions",
                 "object_groups", "provider_credentials", "rns_tcp_peers", "signal_history", "telemetry", "tle_cache",
                 // Android Room 24's relayed public warnings (MESHSAT-1734, iOS MESHSAT-1819).

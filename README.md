@@ -126,7 +126,7 @@ scripts/linux-packages.sh          # with a Swift 6.2 toolchain
 scripts/linux-packages.sh --docker # with Docker only
 ```
 
-It is Swift 6 and SwiftUI, with GRDB for storage, swift-protobuf for the Meshtastic protobufs, swift-crypto for Ed25519, X25519 and AES-GCM, mqtt-nio for the Hub, and ONNX Runtime for the compression model. Library versions are in the `Package.swift` files.
+It is Swift 6 and SwiftUI, with GRDB for storage, swift-protobuf for the Meshtastic protobufs, swift-crypto for Ed25519, X25519 and AES-GCM, mqtt-nio for the Hub, ONNX Runtime for the compression model, and libwebp for the photos sent by Reticulum. Library versions are in the `Package.swift` files.
 
 ## Release signing
 
