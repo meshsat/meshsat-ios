@@ -21,9 +21,12 @@ public enum SupportInstall {
     /// Where this build came from, as iOS lets an app tell: the App Store, TestFlight (a sandbox
     /// receipt), or a developer build (no receipt at all).
     public static var source: String {
-        guard let receipt = Bundle.main.appStoreReceiptURL else { return "developer build" }
-        if receipt.lastPathComponent == "sandboxReceipt" { return "TestFlight" }
-        return FileManager.default.fileExists(atPath: receipt.path) ? "App Store" : "developer build"
+        // Every build that is not from the App Store gets a sandboxReceipt path; only a TestFlight
+        // install has the file (a developer build has none, seen on the bench 7 Nov 2026).
+        guard let receipt = Bundle.main.appStoreReceiptURL, FileManager.default.fileExists(atPath: receipt.path) else {
+            return "developer build"
+        }
+        return receipt.lastPathComponent == "sandboxReceipt" ? "TestFlight" : "App Store"
     }
 
     /// "App Store edition", "TestFlight build", "developer build": the mail's `--` block.
@@ -88,9 +91,12 @@ extension GatewayController {
         return parts
     }
 
-    /// The zip, written to the caches folder (any older one removed first), and its file.
+    /// The zip, written to Documents/support (any older one removed first), and its file. Documents is
+    /// the app's folder in the Files app (On My iPhone > MeshSat, UIFileSharingEnabled), beside
+    /// meshsat.log, so the last report can also be attached from any other app later.
     public func writeSupportZip() async throws -> URL {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("support", isDirectory: true)
+        let docs = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let dir = docs.appendingPathComponent("support", isDirectory: true)
         try? FileManager.default.removeItem(at: dir)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let now = clock.nowMs()
