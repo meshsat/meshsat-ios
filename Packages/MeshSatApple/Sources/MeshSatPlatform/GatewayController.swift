@@ -157,6 +157,8 @@ public final class GatewayController: @unchecked Sendable {
     let transformPipeline = TransformPipeline()
     // The device's own MQTT connection, mqtt_0 (MESHSAT-1326): GatewayController+Mqtt.
     let mqtt = MqttParts()
+    // The upstream-compatible Reticulum node and LXMF (MESHSAT-1735): GatewayController+Lxmf.
+    let lxmf = LxmfParts()
     // SOS (MESHSAT-1249): the controller and its environment, kept alive together.
     /// The controller, once the dispatcher exists; the screens subscribe here.
     public let sosControllers = StateBroadcast<SosController?>(nil)

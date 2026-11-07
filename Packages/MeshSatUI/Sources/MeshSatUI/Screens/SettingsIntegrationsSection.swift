@@ -1,8 +1,13 @@
 // Mirrors the "Ham radio (APRS)", "TAK" and "Reticulum" cards of ui/screens/SettingsScreen.kt
 // (SetupSection.Integrations). The APRS transport is GatewayController+Aprs (MESHSAT-1327); TAK
-// is not ported yet: its settings are kept as Android keeps them.
+// is not ported yet: its settings are kept as Android keeps them. The Reticulum card is Android's
+// of MESHSAT-1553 (the LXMF address, name and announce, the propagation node, the satellite
+// allow-list, peers on this WiFi, the TCP client); the AutoInterface switch waits for Apple's
+// multicast entitlement (MESHSAT-1828) and is a line of text until then, never a dead switch.
 import MeshSatAprs
 import MeshSatEngine
+import MeshSatLXMF
+import MeshSatPlatform
 import SwiftUI
 
 public struct SettingsIntegrationsSection: View {
@@ -20,6 +25,12 @@ public struct SettingsIntegrationsSection: View {
     @State private var takPrefix = ""
     @State private var rnsHost = ""
     @State private var rnsPort = ""
+    @State private var lxmfName = ""
+    @State private var syncMin = ""
+    @State private var paidDests = ""
+    @State private var paidHops = ""
+    /// The propagation node and listener lines re-read every two seconds while the card is shown (Android's pnTick).
+    @State private var tick = 0
 
     public init() {}
 
@@ -35,6 +46,12 @@ public struct SettingsIntegrationsSection: View {
         }
         .background(MSColors.bg)
         .onAppear(perform: load)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                tick += 1
+            }
+        }
     }
 
     private func load() {
@@ -50,6 +67,10 @@ public struct SettingsIntegrationsSection: View {
         takPrefix = settings.string(SettingsKey.takCallsignPrefix)
         rnsHost = settings.string(SettingsKey.rnsTcpHost)
         rnsPort = settings.string(SettingsKey.rnsTcpPort)
+        lxmfName = settings.string(SettingsKey.lxmfDisplayName)
+        syncMin = settings.string(SettingsKey.lxmfSyncIntervalMin)
+        paidDests = settings.string(SettingsKey.rnsPaidDests)
+        paidHops = settings.string(SettingsKey.rnsPaidExtraHops)
     }
 
     private func linkStatus(_ id: String) -> (Bool, String) {
@@ -167,8 +188,219 @@ public struct SettingsIntegrationsSection: View {
         }
     }
 
+    // MARK: Reticulum (SettingsScreen.kt's "Reticulum" card, MESHSAT-1553)
+
     private var reticulumCard: some View {
         SectionCard("Reticulum") {
+            lxmfAddressBlock
+            MSDivider().padding(.vertical, 4)
+            propagationBlock
+            MSDivider().padding(.vertical, 4)
+            satelliteBlock
+            MSDivider().padding(.vertical, 4)
+            wifiBlock
+            MSDivider().padding(.vertical, 4)
+            tcpClientBlock
+        }
+    }
+
+    private var lxmfAddressBlock: some View {
+        let address = model.gateway.lxmfAddress
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Your LXMF address").msText(.bodyMedium)
+            HStack(spacing: 8) {
+                Text(address.isEmpty ? "Starts with the gateway" : address)
+                    .msText(.bodySmall, color: address.isEmpty ? MSColors.textMuted : MSColors.teal)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !address.isEmpty {
+                    MSIconButton(MSIcon.contentCopy, label: "Copy the address", tint: MSColors.teal) {
+                        UIPasteboard.general.string = address
+                        model.showToast("Address copied")
+                    }
+                }
+            }
+            Text(
+                "Sideband, CrossTalk, NomadNet and MeshChat reach this phone at this address. "
+                    + "The name below is what they show for it; it takes effect when the gateway restarts."
+            )
+            .msText(.bodySmall, color: MSColors.textMuted)
+            HStack(spacing: 8) {
+                MSOutlinedTextField(text: $lxmfName, label: "Display name", focusedBorder: MSColors.teal)
+                    .onChange(of: lxmfName) { _, v in if v.count > 40 { lxmfName = String(v.prefix(40)) } }
+                MSFilledButton("Save", container: MSColors.teal, fullWidth: false) {
+                    settings.set(SettingsKey.lxmfDisplayName, lxmfName.trimmingCharacters(in: .whitespaces))
+                    model.showToast("Name saved")
+                }
+            }
+            MSFilledButton("Announce now", container: MSColors.teal, fullWidth: false) {
+                model.showToast(model.gateway.announceLxmf() ? "Announced" : "Nothing to announce on: no Reticulum link is up")
+            }
+            .disabled(!model.gateway.lxmfRunning)
+            .opacity(model.gateway.lxmfRunning ? 1 : 0.4)
+        }
+    }
+
+    private var propagationBlock: some View {
+        let choice = settings.string(SettingsKey.lxmfPropagationNode)
+        let router = model.gateway.lxmfRouter
+        let nodes = router?.propagationNodes() ?? []
+        let current = router?.propagationNodeInfo()
+        _ = tick
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Propagation node").msText(.bodyMedium)
+            Text(
+                "A message sent as Propagated waits at an LXMF propagation node until the other side syncs, "
+                    + "and Sync fetches what a node holds for this phone. Automatic takes the nearest node heard announcing."
+            )
+            .msText(.bodySmall, color: MSColors.textMuted)
+            Text(propagationLine(choice: choice, running: router != nil, current: current))
+                .msText(.bodySmall, color: current != nil && choice != "none" ? MSColors.teal : MSColors.textMuted)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    MSFilterChip("Automatic", selected: choice.isEmpty, selectedContainer: MSColors.teal.opacity(0.2)) {
+                        pickPropagation("")
+                    }
+                    MSFilterChip("Off", selected: choice == "none", selectedContainer: MSColors.teal.opacity(0.2)) {
+                        pickPropagation("none")
+                    }
+                    ForEach(nodes, id: \.destHex) { n in
+                        MSFilterChip(
+                            n.name ?? String(n.destHex.prefix(8)), selected: choice == n.destHex,
+                            selectedContainer: MSColors.teal.opacity(0.2)
+                        ) {
+                            pickPropagation(n.destHex)
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                MSOutlinedTextField(
+                    text: $syncMin, label: "Sync every (min, 0 = by hand)", focusedBorder: MSColors.teal, keyboard: .numberPad
+                )
+                .onChange(of: syncMin) { _, v in
+                    let digits = String(v.filter(\.isNumber).prefix(4))
+                    if digits != v {
+                        syncMin = digits
+                        return
+                    }
+                    settings.set(SettingsKey.lxmfSyncIntervalMin, digits.isEmpty ? "0" : digits)
+                    model.gateway.applyReticulumSettings()
+                }
+                MSFilledButton("Sync now", container: MSColors.teal, fullWidth: false) {
+                    _ = router?.sync()
+                    tick += 1
+                    model.showToast("Syncing from the propagation node")
+                }
+                .disabled(current == nil || choice == "none" || router?.syncState.busy == true)
+                .opacity(current == nil || choice == "none" || router?.syncState.busy == true ? 0.4 : 1)
+            }
+            if let router { Text(syncLine(router)).msText(.bodySmall, color: MSColors.textMuted) }
+        }
+    }
+
+    private func propagationLine(choice: String, running: Bool, current: PropagationNodeInfo?) -> String {
+        if choice == "none" { return "Off" }
+        if !running { return "Starts with the gateway" }
+        guard let current else { return "No propagation node heard yet" }
+        let name = current.name ?? String(current.destHex.prefix(8))
+        return "Using \(name), \(Words.count(current.hops, "hop")) away, stamp cost \(current.stampCost)"
+            + (choice.isEmpty ? " (automatic)" : "")
+    }
+
+    private func syncLine(_ router: LxmfRouter) -> String {
+        if router.syncState.busy { return "Syncing: \(Self.words(router.syncState))" }
+        guard let last = router.lastSync else { return "Not synced yet" }
+        if last.state == .complete {
+            return "Last sync: \(Words.count(last.received, "new message"))"
+                + (last.duplicates > 0 ? ", \(last.duplicates) already here" : "")
+        }
+        return "Last sync failed: \(last.error)"
+    }
+
+    /// "linkEstablishing" -> "link establishing", as Android shows SyncState names.
+    private static func words(_ state: SyncState) -> String {
+        var out = ""
+        for c in String(describing: state) {
+            if c.isUppercase { out += " " }
+            out.append(c.lowercased())
+        }
+        return out
+    }
+
+    private func pickPropagation(_ choice: String) {
+        settings.set(SettingsKey.lxmfPropagationNode, choice)
+        model.gateway.applyReticulumSettings()
+        tick += 1
+    }
+
+    private var satelliteBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reticulum by satellite").msText(.bodyMedium)
+            Text(
+                "The satellite carries announces and path requests only for the addresses listed here (yours is always included), "
+                    + "and every packet arriving over it counts as this many extra hops, so the far end waits for the satellite "
+                    + "round trip: 20 covers a minute each way."
+            )
+            .msText(.bodySmall, color: MSColors.textMuted)
+            MSOutlinedTextField(
+                text: $paidDests, label: "Addresses across the satellite, comma separated", focusedBorder: MSColors.teal,
+                lineLimit: 3, keyboard: .asciiCapable
+            )
+            .textInputAutocapitalization(.never)
+            HStack(spacing: 8) {
+                MSOutlinedTextField(text: $paidHops, label: "Extra hops", focusedBorder: MSColors.teal, keyboard: .numberPad)
+                    .onChange(of: paidHops) { _, v in
+                        let d = String(v.filter(\.isNumber).prefix(2))
+                        if d != v { paidHops = d }
+                    }
+                MSFilledButton("Save", container: MSColors.teal, fullWidth: false) {
+                    let dests = paidDests.split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" }).map { $0.lowercased() }
+                        .filter { Peers.isLxmf($0) }
+                    let hops = min(max(Int(paidHops) ?? 20, 0), 32)
+                    settings.set(SettingsKey.rnsPaidDests, dests.joined(separator: ","))
+                    settings.set(SettingsKey.rnsPaidExtraHops, String(hops))
+                    paidDests = dests.joined(separator: ",")
+                    paidHops = String(hops)
+                    model.gateway.applyReticulumSettings()
+                    model.showToast("Satellite list saved: \(Words.count(dests.count, "address", "addresses")), \(hops) extra hops")
+                }
+            }
+        }
+    }
+
+    private var wifiBlock: some View {
+        let listenOn = settings.bool(SettingsKey.rnsTcpListenEnabled)
+        let port = settings.string(SettingsKey.rnsTcpListenPort)
+        let listener = model.gateway.reticulumListener
+        _ = tick
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Peers on this WiFi").msText(.bodyMedium)
+            Text(
+                "Finding Reticulum apps by themselves (AutoInterface) needs Apple's multicast networking entitlement, which is "
+                    + "requested; until it is granted, give Sideband this phone's address by hand."
+            )
+            .msText(.bodySmall, color: MSColors.textMuted)
+            SettingRow("Listen on TCP port \(port)") {
+                MSSwitch(isOn: settings.binding(SettingsKey.rnsTcpListenEnabled), label: "Listen on TCP port \(port)")
+            }
+            Text(wifiLine(listenOn: listenOn, listener: listener)).msText(.bodySmall, color: MSColors.textMuted)
+        }
+    }
+
+    private func wifiLine(listenOn: Bool, listener: (port: Int, peers: Int)?) -> String {
+        if !listenOn { return "Off. Takes effect when the gateway restarts." }
+        guard let listener else {
+            return model.gateway.lxmfRunning ? "Not listening (the port may be taken)." : "Starts with the gateway."
+        }
+        let ip = LocalNetwork.wifiAddress() ?? "this phone's WiFi address"
+        let peers = Words.count(listener.peers, "peer")
+        return "Listening; \(peers) connected. In Sideband, add a TCP client interface to \(ip) port \(listener.port)."
+    }
+
+    private var tcpClientBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Reticulum over TCP").msText(.bodyMedium)
             SettingRow("Enable RNS TCP") { MSSwitch(isOn: settings.binding(SettingsKey.rnsTcpEnabled), label: "Enable RNS TCP") }
             let (online, status) = linkStatus("tcp_rns_0")
             ConnectionStatusRow(label: "RNS TCP", connected: online, statusText: status, color: MSColors.teal)

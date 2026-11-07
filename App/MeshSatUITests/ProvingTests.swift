@@ -508,4 +508,147 @@ final class ProvingTests: XCTestCase {
         }
         NSLog("MeshSatProve: night mode walked")
     }
+
+    /// Reticulum/LXMF against a stock Python RNS node on the LAN (MESHSAT-1735, the twin of Android's 13 Oct
+    /// proof). Unless MESHSAT_RNS_SETUP=0, the RNS TCP client is pointed at MESHSAT_RNS_HOST:MESHSAT_RNS_PORT
+    /// and the app restarted (the gateway reads it at start). Then: the phone's LXMF address in the log,
+    /// Announce now, a text to MESHSAT_LXMF_DEST by MESHSAT_LXMF_METHOD (Direct) that must reach the mark
+    /// MESHSAT_LXMF_MARK (Delivered; "At the propagation node" for Propagated), and, with MESHSAT_LXMF_EXPECT
+    /// set, up to three minutes for that text from the far end; MESHSAT_LXMF_SYNC=1 presses Sync now first.
+    @MainActor
+    func testLxmf() throws {
+        try gate("lxmf")
+        let dest = try XCTUnwrap(env["MESHSAT_LXMF_DEST"], "MESHSAT_LXMF_DEST").lowercased()
+        let method = env["MESHSAT_LXMF_METHOD"] ?? "Direct"
+        let mark = env["MESHSAT_LXMF_MARK"] ?? (method == "Propagated" ? "At the propagation node" : "Delivered")
+        let text = env["MESHSAT_TEXT"] ?? "iPhone to \(dest.prefix(8)) by Reticulum, \(method)"
+        var app = attach()
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists && cancel.isHittable { cancel.tap() }
+        if env["MESHSAT_RNS_SETUP"] != "0" {
+            openTab(app, "Setup")
+            tap(app, "Ham radio, TAK and Reticulum")
+            let hostField = try fieldNear(app, label: "Host")
+            replaceText(app, hostField, with: env["MESHSAT_RNS_HOST"] ?? "192.168.181.111")
+            let portField = try fieldNear(app, label: "Port", below: hostField)
+            replaceText(app, portField, with: env["MESHSAT_RNS_PORT"] ?? "4242")
+            app.swipeDown()  // the keyboard away
+            let enable = try scrollToToggle(app, "Enable RNS TCP")
+            if !isOn(enable) { enable.tap() }
+            // The card has several Save buttons: the one right under the TLS switch.
+            let tls = try scrollToToggle(app, "TLS")
+            let save = try XCTUnwrap(
+                app.buttons.matching(NSPredicate(format: "label == %@", "Save")).allElementsBoundByIndex
+                    .filter { $0.exists && $0.frame.minY > tls.frame.minY }.min { $0.frame.minY < $1.frame.minY }, "the TCP Save")
+            save.tap()
+            NSLog("MeshSatProve: lxmf tcp client saved, restarting the app")
+            Thread.sleep(forTimeInterval: 2)
+            app.terminate()
+            Thread.sleep(forTimeInterval: 3)
+            app = attach()
+            Thread.sleep(forTimeInterval: 12)  // the TCP connect and the first announces
+        }
+        openTab(app, "Setup")
+        tap(app, "Ham radio, TAK and Reticulum")
+        let hexes = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "^[0-9a-f]+$")).allElementsBoundByIndex
+        let address = hexes.first { $0.exists && $0.label.count == 32 }?.label ?? "?"
+        NSLog("MeshSatProve: lxmf address %@", address)
+        tap(app, "Announce now")
+        Thread.sleep(forTimeInterval: 3)
+        if let chip = env["MESHSAT_LXMF_PN"], !chip.isEmpty {
+            tap(app, chip)
+            Thread.sleep(forTimeInterval: 2)
+        }
+        if env["MESHSAT_LXMF_SYNC"] == "1" {
+            tap(app, "Sync now")
+            Thread.sleep(forTimeInterval: 10)
+        }
+        openTab(app, "Messages")
+        tap(app, "Reticulum")
+        tap(app, "New message")
+        let field = try fieldNear(app, label: "Or a Reticulum (LXMF) address, 32 hex")
+        field.tap()
+        field.typeText(dest)
+        tap(app, "Message this address")
+        Thread.sleep(forTimeInterval: 1)
+        tap(app, method)
+        let composer = app.textViews.firstMatch.exists ? app.textViews.firstMatch : app.textFields.firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 10), "composer")
+        composer.tap()
+        composer.typeText(text)
+        try sendButton(app).tap()
+        XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 15), "the bubble")
+        let marked = app.images[mark].firstMatch.waitForExistence(timeout: 120)
+        NSLog("MeshSatProve: lxmf %@ to %@ mark '%@'=%@", method, dest, mark, marked ? "yes" : "no")
+        XCTAssertTrue(marked, mark)
+        if let expect = env["MESHSAT_LXMF_EXPECT"], !expect.isEmpty {
+            let got = app.staticTexts[expect].waitForExistence(timeout: 180)
+            NSLog("MeshSatProve: lxmf inbound '%@' shown=%@", expect, got ? "yes" : "no")
+            XCTAssertTrue(got, "the far end's text")
+        }
+        Thread.sleep(forTimeInterval: 5)
+    }
+
+    /// The text field nearest a label drawn over it (the MSOutlinedTextField pattern), scrolled on screen.
+    @MainActor
+    private func fieldNear(_ app: XCUIApplication, label: String, below: XCUIElement? = nil) throws -> XCUIElement {
+        let text = app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+        var tries = 0
+        var anchor: XCUIElement?
+        while anchor == nil, tries < 8 {
+            anchor = text.first { $0.exists && $0.isHittable && (below == nil || $0.frame.minY >= below!.frame.minY - 1) }
+            if anchor == nil {
+                app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.8)
+                tries += 1
+            }
+        }
+        let a = try XCTUnwrap(anchor, "the label '\(label)'")
+        let fields = app.textFields.allElementsBoundByIndex.filter { $0.exists }
+        return try XCTUnwrap(fields.min { abs($0.frame.midY - a.frame.midY) < abs($1.frame.midY - a.frame.midY) }, "the field '\(label)'")
+    }
+
+    /// Types over whatever a field holds.
+    @MainActor
+    private func replaceText(_ app: XCUIApplication, _ field: XCUIElement, with value: String) {
+        field.tap()
+        if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
+            field.press(forDuration: 1.2)
+            let all = app.menuItems["Select All"]
+            if all.waitForExistence(timeout: 3) { all.tap() }
+        }
+        field.typeText(value)
+    }
+
+    /// A switch by its label, scrolled on screen (a toggle-trait control; older runners saw a button).
+    @MainActor
+    private func scrollToToggle(_ app: XCUIApplication, _ name: String) throws -> XCUIElement {
+        func toggle() -> XCUIElement { app.switches[name].exists ? app.switches[name].firstMatch : app.buttons[name].firstMatch }
+        var tries = 0
+        while !(toggle().exists && toggle().isHittable), tries < 8 {
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 0.8)
+            tries += 1
+        }
+        XCTAssertTrue(toggle().waitForExistence(timeout: 5), "the switch '\(name)'")
+        return toggle()
+    }
+
+    private func isOn(_ toggle: XCUIElement) -> Bool { ["On", "1"].contains(toggle.value as? String ?? "") }
+
+    /// The app's enabled Send button, never the keyboard's key of the same name.
+    @MainActor
+    private func sendButton(_ app: XCUIApplication) throws -> XCUIElement {
+        let deadline = Date().addingTimeInterval(10)
+        var found: XCUIElement?
+        while Date() < deadline, found == nil {
+            let keyboard = app.keyboards.firstMatch
+            let keys = keyboard.exists ? keyboard.frame : .null
+            found = app.buttons.matching(NSPredicate(format: "label == %@", "Send")).allElementsBoundByIndex.first {
+                $0.exists && $0.isHittable && $0.isEnabled && !keys.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY))
+            }
+            if found == nil { Thread.sleep(forTimeInterval: 0.5) }
+        }
+        return try XCTUnwrap(found, "an enabled Send button")
+    }
 }

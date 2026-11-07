@@ -18,6 +18,10 @@ public struct ConversationChatView: View {
     @State private var showKeySection = false
     @State private var showKey = false
     @State private var keyInput = ""
+    // An LXMF message goes Direct (a link, waits for the satellite round trip), lets the router choose (Auto:
+    // opportunistic off the satellite), Opportunistic (one packet, no link), or Propagated (parked at a
+    // propagation node until the peer syncs). Direct is the safe default (MESHSAT-1553).
+    @State private var lxmfMethod = "direct"
 
     public init(peer: String) { self.peer = peer }
 
@@ -104,8 +108,28 @@ public struct ConversationChatView: View {
         .onChange(of: convKey?.hexKey) { _, new in keyInput = new ?? "" }
     }
 
+    private static let lxmfMethods = [
+        ("direct", "Direct"), ("auto", "Auto"), ("opportunistic", "Opportunistic"), ("propagated", "Propagated"),
+    ]
+
     private var composeBar: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if transport == "lxmf" {
+                let propagationKnown = model.gateway.lxmfRouter?.propagationNode() != nil
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.lxmfMethods, id: \.0) { key, label in
+                            let off = key == "propagated" && !propagationKnown
+                            MSFilterChip(label, selected: lxmfMethod == key, selectedContainer: MSColors.teal.opacity(0.2)) {
+                                lxmfMethod = key
+                            }
+                            .disabled(off)
+                            .opacity(off ? 0.4 : 1)
+                        }
+                    }
+                }
+                .padding(.bottom, 4)
+            }
             HStack(spacing: 8) {
                 MSOutlinedTextField(
                     text: $composeText, placeholder: placeholder, focusedBorder: MSColors.textSecondary, lineLimit: 4, submitLabel: .send,
@@ -121,6 +145,7 @@ public struct ConversationChatView: View {
     private var placeholder: String {
         switch transport {
         case "iridium": "Message by satellite"
+        case "lxmf": "Message by Reticulum"
         case "hub": "Message through the Hub"
         case "tak": "Answer on TAK"
         case "mesh": peer == Peers.meshAll ? "Message everyone on the mesh" : "Message on the mesh"
@@ -138,6 +163,11 @@ public struct ConversationChatView: View {
             if !SatelliteLimits.fits(bytes) { return SatelliteLimits.tooLong(bytes) }
             let size = bytes == 0 ? "" : " \(bytes) bytes, \(Words.count((bytes + 49) / 50, "credit"))."
             return (iridiumConnected ? "By satellite." : "By satellite, when the modem is back.") + size
+        case "lxmf":
+            let known = model.gateway.lxmfPathKnown(peer)
+            if let name = Peers.lxmfName(peer), known { return "By Reticulum to \(name). Direct waits for the far end, even by satellite." }
+            return known
+                ? "By Reticulum. Direct waits for the far end, even by satellite." : "By Reticulum, once a path to this address is found."
         case "hub":
             if model.gateway.hubMsgRoute == nil { return "Messages through the Hub are off. Turn them on in Settings, Hub." }
             if bytes > HubMsgWire.maxBody { return "Too long for the Hub: \(bytes) bytes, the limit is \(HubMsgWire.maxBody)." }
@@ -171,6 +201,9 @@ public struct ConversationChatView: View {
             let gateway = model.gateway
             let to = peer
             Task { await gateway.sendTakChat(to: to, text: text) }
+        case "lxmf":
+            // A Reticulum message to an LXMF address; the row shows queued, sent, delivered or failed (MESHSAT-1553).
+            model.sendLxmf(text, to: peer, method: lxmfMethod)
         case "sms":
             // The message appears in the chat with its state, and the Messages composer opens.
             model.queueSms(text, to: peer)
@@ -203,10 +236,13 @@ struct DeliveryMark: View {
 
     static func mark(_ s: String) -> (Image, Color) {
         switch s {
-        case "iridium:queued", "sms:sending": (MSIcon.schedule, MSColors.textMuted)
+        case "iridium:queued", "sms:sending", "lxmf:queued": (MSIcon.schedule, MSColors.textMuted)
         case "iridium:unconfirmed": (MSIcon.helpOutline, MSColors.amber)
-        case "iridium:failed", "sms:failed", "tak:not_sent": (MSIcon.errorOutline, MSColors.red)
-        case "iridium:delivered", "sms:delivered": (MSIcon.doneAll, MSColors.teal)
+        case "iridium:failed", "sms:failed", "tak:not_sent", "lxmf:failed": (MSIcon.errorOutline, MSColors.red)
+        // Two checks only on the peer's proof, as LXMF clients show it.
+        case "iridium:delivered", "sms:delivered", "lxmf:delivered": (MSIcon.doneAll, MSColors.teal)
+        // One grey check: the propagation node holds it for the peer's next sync.
+        case "lxmf:propagated": (MSIcon.done, MSColors.textMuted)
         default: (MSIcon.done, MSColors.teal)
         }
     }

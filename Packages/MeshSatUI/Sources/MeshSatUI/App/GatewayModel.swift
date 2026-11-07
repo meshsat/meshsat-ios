@@ -6,12 +6,14 @@ import Foundation
 import MeshSatBLE
 import MeshSatEngine
 import MeshSatHub
+import MeshSatLXMF
 import MeshSatMeshtastic
 import MeshSatNet
 import MeshSatPlatform
 import MeshSatProto
 import MeshSatSatellite
 import MeshSatStore
+import MeshSatWire
 import Observation
 
 @Observable
@@ -108,6 +110,12 @@ public final class GatewayModel {
 
     public init(gateway: GatewayController) {
         self.gateway = gateway
+        // Peers.lxmfName asks the running node for an LXMF peer's announced name (Android reads
+        // GatewayService.rnsStack directly).
+        Peers.lxmfNameResolver = { [weak gateway] hex in
+            guard let gateway, let dest = Hex.decode(hex) else { return nil }
+            return gateway.lxmfRouter?.peerInfo(dest)?.displayName
+        }
         observe()
     }
 
@@ -382,6 +390,24 @@ public final class GatewayModel {
     }
 
     public func queueIridium(_ text: String, recipient: String) { gateway.queueIridiumMessage(text, recipient: recipient) }
+
+    /// A message to an LXMF address (GatewayService.ACTION_SEND_LXMF): the row shows queued, sent, delivered or
+    /// failed; `method` is the chip ("direct", "auto", "opportunistic", "propagated").
+    public func sendLxmf(_ text: String, to peer: String, method: String) {
+        let m: LxMethod? =
+            switch method {
+            case "direct": .direct
+            case "opportunistic": .opportunistic
+            case "propagated": .propagated
+            default: nil
+            }
+        do {
+            _ = try gateway.sendLxmf(destHex: peer, text: text, method: m)
+        } catch {
+            gateway.recordLxmfRefused(destHex: peer, text: text)
+            showToast("Not sent by Reticulum: \(error)")
+        }
+    }
     public func queueSms(_ text: String, to phone: String) { gateway.queueSmsMessage(text, recipient: phone) }
 
     public func startScan() {

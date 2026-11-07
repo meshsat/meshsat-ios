@@ -6,6 +6,7 @@
 import MeshSatEngine
 import MeshSatHub
 import MeshSatMeshtastic
+import MeshSatPlatform
 import MeshSatWire
 import SwiftUI
 
@@ -30,7 +31,8 @@ public struct MessagesScreen: View {
     /// The Hub tab shows once the Hub route is on or a Hub message is stored (MESHSAT-1584).
     private var tabs: [(String, String)] {
         let hubShown = model.gateway.hubMsgRoute != nil || messages.conversations.contains { $0.transport == "hub" }
-        return [("all", "All"), ("mesh", "Mesh"), ("iridium", "Satellite")] + (hubShown ? [("hub", "Hub")] : []) + [("sms", "SMS")]
+        return [("all", "All"), ("mesh", "Mesh"), ("iridium", "Satellite"), ("lxmf", "Reticulum")] + (hubShown ? [("hub", "Hub")] : [])
+            + [("sms", "SMS")]
     }
 
     private func chipColors(_ key: String) -> (Color, Color) {
@@ -39,6 +41,7 @@ public struct MessagesScreen: View {
         case "iridium": (MSColors.iridium.opacity(0.2), MSColors.iridium)
         case "sms": (MSColors.cellular.opacity(0.2), MSColors.cellular)
         case "hub": (MSColors.hub.opacity(0.2), MSColors.hub)
+        case "lxmf": (MSColors.teal.opacity(0.2), MSColors.teal)
         default: (MSColors.surfaceLight, MSColors.offWhite)
         }
     }
@@ -183,7 +186,12 @@ enum MessageDisplay {
     static func deliveryLabel(_ forwardedTo: String) -> String {
         if forwardedTo.hasPrefix("hub:") { return hubLabel(forwardedTo) }
         return switch forwardedTo {
-        case "iridium:queued": "Queued"
+        case "iridium:queued", "lxmf:queued": "Queued"
+        case "lxmf:sent": "Sent"
+        case "lxmf:delivered": "Delivered"
+        case "lxmf:propagated": "At the propagation node"
+        case "lxmf:failed": "Failed"
+        case "lxmf:unverified": "Sender not verified yet"
         case "iridium:unconfirmed": "May have been sent"
         case "iridium:sbd", "sms:sent", "tak:sent": "Sent"
         case "tak:not_sent": "Not sent"
@@ -285,6 +293,9 @@ struct NewMessageDialog: View {
     // Another MeshSat app through the Hub: a card that carries its bridge id, or the id typed in (MESHSAT-1584).
     @State private var hubId = ""
     @State private var cards: [Contact] = []
+    // A Reticulum peer heard announcing, or an LXMF address typed in (MESHSAT-1553).
+    @State private var lxmfAddress = ""
+    @State private var lxmfPeers: [GatewayController.LxmfPeerRow] = []
 
     private var hubOn: Bool { model.gateway.hubMsgRoute != nil }
     private var hubPeer: String { Peers.hubPeer(String(hubId.trimmingCharacters(in: .whitespaces).trimmingPrefix(Peers.hubPrefix))) }
@@ -294,6 +305,9 @@ struct NewMessageDialog: View {
         let n = number.trimmingCharacters(in: .whitespaces)
         return n.count >= 6 && n.allSatisfy { $0.isNumber || $0 == "+" || $0 == " " }
     }
+
+    private var lxmfPeer: String { lxmfAddress.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    private var lxmfOk: Bool { Peers.isLxmf(lxmfPeer) }
 
     var body: some View {
         let myNum = model.myInfo?.myNodeNum ?? 0
@@ -331,11 +345,24 @@ struct NewMessageDialog: View {
                             .textInputAutocapitalization(.never)
                             .padding(.top, 8)
                     }
+                    // Reticulum peers the node has heard, Sideband and the like (MESHSAT-1553).
+                    ForEach(lxmfPeers, id: \.destHash) { p in
+                        NewMessageRow(
+                            title: p.displayName ?? "Reticulum \(p.destHash.prefix(8))",
+                            detail: "By Reticulum, \(p.destHash.prefix(16))... \(Words.count(p.hops, "hop")) away", color: MSColors.teal
+                        ) {
+                            onPick(p.destHash)
+                        }
+                    }
+                    MSOutlinedTextField(text: $lxmfAddress, label: "Or a Reticulum (LXMF) address, 32 hex", keyboard: .asciiCapable)
+                        .textInputAutocapitalization(.never)
+                        .padding(.top, 8)
                     MSOutlinedTextField(text: $number, label: "Or a phone number, e.g. +31612345678", keyboard: .phonePad).padding(.top, 8)
                 }
             }
             .frame(maxHeight: 360)
             .task {
+                lxmfPeers = model.gateway.lxmfPeers()
                 do {
                     for try await list in model.gateway.db.contacts.observeAll() { cards = list }
                 } catch {}
@@ -343,6 +370,7 @@ struct NewMessageDialog: View {
         } buttons: {
             MSTextButton("Cancel", color: MSColors.textSecondary, action: onDismiss)
             if hubOk { MSTextButton("Message through the Hub") { onPick(hubPeer) } }
+            if lxmfOk { MSTextButton("Message this address") { onPick(lxmfPeer) } }
             MSTextButton("Text this number") { onPick(number.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "")) }
                 .disabled(!numberOk).opacity(numberOk ? 1 : 0.4)
         }

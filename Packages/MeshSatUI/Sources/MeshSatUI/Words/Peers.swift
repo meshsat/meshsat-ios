@@ -1,6 +1,7 @@
 // Mirrors ui/Peers.kt: who a conversation is with (MESHSAT-1249). A conversation is keyed by the
-// other party: a mesh node id ("!a1b2c3d4"), everyone on the mesh, a phone number, or the
-// satellite link (the modem's IMEI, which is what an incoming satellite message is filed under).
+// other party: a mesh node id ("!a1b2c3d4"), everyone on the mesh, a phone number, the
+// satellite link (the modem's IMEI, which is what an incoming satellite message is filed under),
+// a MeshSat app through the Hub, a TAK dispatcher, or an LXMF delivery address (MESHSAT-1553).
 import Foundation
 import MeshSatHub
 import MeshSatMeshtastic
@@ -20,6 +21,20 @@ public enum Peers {
 
     public static func isSatellite(_ peer: String) -> Bool { peer == satellite || (peer.count == 15 && peer.allSatisfy { $0.isNumber }) }
     public static func isMesh(_ peer: String) -> Bool { peer == meshAll || isMeshNode(peer) }
+
+    /// An LXMF delivery address: 32 hex characters, what Sideband and CrossTalk show (MESHSAT-1553).
+    public static func isLxmf(_ peer: String) -> Bool { peer.count == 32 && peer.allSatisfy { $0.isHexDigit } }
+
+    /// The display name an LXMF peer announced, when the node has heard it (Android reads GatewayService.rnsStack;
+    /// here the GatewayModel installs the lookup once the gateway exists).
+    nonisolated(unsafe) public static var lxmfNameResolver: (@Sendable (String) -> String?)?
+
+    public static func lxmfName(_ peer: String) -> String? {
+        guard isLxmf(peer), let name = lxmfNameResolver?(peer.lowercased())?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            return nil
+        }
+        return name
+    }
 
     /// Another MeshSat app or kit through the Hub: "bridge:<id>", the Hub's principal (MESHSAT-1584).
     public static let hubPrefix = "bridge:"
@@ -41,6 +56,7 @@ public enum Peers {
     public static func defaultTransport(_ peer: String) -> String {
         if isTak(peer) { return "tak" }
         if isHub(peer) { return "hub" }
+        if isLxmf(peer) { return "lxmf" }
         if isMesh(peer) { return "mesh" }
         if isSatellite(peer) || peer == legacySelf { return "iridium" }
         return "sms"
@@ -60,6 +76,7 @@ public enum Peers {
         }
         if isSatellite(peer) { return "Satellite" }
         if peer == legacySelf { return "Sent from this phone" }
+        if isLxmf(peer) { return lxmfName(peer) ?? "Reticulum \(peer.prefix(8))" }
         if isHub(peer) { return String(peer.dropFirst(hubPrefix.count)) }
         if isTak(peer) { return takCallsign(peer).isEmpty ? takUid(peer) : takCallsign(peer) }
         return peer
@@ -68,6 +85,7 @@ public enum Peers {
     /// A second line under the name: the id people may need, never the modem's IMEI.
     public static func detail(_ peer: String) -> String? {
         if isMeshNode(peer) { return peer }
+        if isLxmf(peer) { return "By Reticulum (LXMF), \(peer)" }
         if isSatellite(peer) { return "By satellite, through Rock7 to the Hub" }
         if peer == meshAll { return "The mesh channel" }
         if isHub(peer) { return "Through the Hub to its MeshSat app" }

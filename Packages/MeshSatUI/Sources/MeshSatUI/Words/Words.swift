@@ -16,7 +16,8 @@ public enum Words {
         if id.hasPrefix("hub") { return "Hub" }
         if id.hasPrefix("mqtt") { return "MQTT broker" }
         if id.hasPrefix("aprs") { return "Ham radio" }
-        if id.hasPrefix("tcp_rns") || id.hasPrefix("rns") { return "Reticulum" }
+        if id.hasPrefix("tcp_server") { return "Reticulum listener" }
+        if id.hasPrefix("tcp_rns") || id.hasPrefix("rns") || id.hasPrefix("lxmf") { return "Reticulum" }
         if id.trimmingCharacters(in: .whitespaces).isEmpty { return "Unknown" }
         return id
     }
@@ -29,7 +30,7 @@ public enum Words {
         case "sms", "cellular": return "SMS"
         case "mqtt", "hub": return "Hub"
         case "aprs": return "Ham radio"
-        case "reticulum", "rns": return "Reticulum"
+        case "reticulum", "rns", "lxmf": return "Reticulum"
         case "tak": return "TAK"
         default: return t.prefix(1).uppercased() + t.dropFirst()
         }
@@ -43,6 +44,7 @@ public enum Words {
         case "SMS": return MSColors.cellular
         case "Hub", "Hub relay": return MSColors.hub
         case "Ham radio": return MSColors.radio
+        case "Reticulum": return MSColors.teal
         default: return MSColors.textSecondary
         }
     }

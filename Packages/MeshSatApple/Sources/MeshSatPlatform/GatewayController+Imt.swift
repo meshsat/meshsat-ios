@@ -145,16 +145,18 @@ extension GatewayController {
     }
 
     /// A message the 9704 brought in (GatewayService's receivedMessages collector). A framed
-    /// Reticulum packet is the node's, not a text: iOS has no Reticulum interface on the 9704 yet,
-    /// so it is logged and dropped, never stored, shown or forwarded (Android's
-    /// ImtFraming.isFramed, r34 review R34-R1). A kit's encrypted chain opens with the
-    /// "iridium:shared" key, asked for only when byte 0 is the version byte, on the chain this
-    /// phone is set to first and then the other (r33 review R33-R2); one that does not open is kept
-    /// as it came, marked encrypted, and never forwarded.
+    /// Reticulum packet is the node's, not a text: it goes to the Reticulum interface on the 9704
+    /// (RnsIridium9704Interface, MESHSAT-1735) and is never stored, shown or forwarded as a text
+    /// (Android's ImtFraming.isFramed, r34 review R34-R1); before that interface existed it was
+    /// logged and dropped. A kit's encrypted chain opens with the "iridium:shared" key, asked for
+    /// only when byte 0 is the version byte, on the chain this phone is set to first and then the
+    /// other (r33 review R33-R2); one that does not open is kept as it came, marked encrypted, and
+    /// never forwarded.
     @discardableResult
     func storeIridium9704Mt(_ payload: [UInt8]) async -> ImtMtOutcome {
         if RnsImtFraming.isFramed(payload) {
-            Self.log.info("Iridium 9704: a Reticulum packet (\(payload.count) bytes) came in; no Reticulum interface on the 9704, dropped")
+            if let iface = lxmf.imt9704, iface.deliverMt(payload) { return .reticulumFrame }
+            Self.log.info("Iridium 9704: a Reticulum packet (\(payload.count) bytes) came in before the node's interface was up, dropped")
             return .reticulumFrame
         }
         var imei = await imt.driver.modemInfo.imei

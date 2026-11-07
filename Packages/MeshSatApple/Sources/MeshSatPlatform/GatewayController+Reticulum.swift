@@ -71,6 +71,9 @@ extension GatewayController {
         if let ble = parts.blePeripheral { map[ble.interfaceId] = ble }
         if let mqtt = parts.mqtt { map[mqtt.interfaceId] = mqtt }
         if let relay = hubRelay { map[relay.interfaceId] = relay }
+        // The upstream node's own interfaces (MESHSAT-1735): the 9704 as a paid Reticulum link, the TCP listener.
+        if let imt9704 = lxmf.imt9704 { map[imt9704.interfaceId] = imt9704 }
+        if let server = lxmf.tcpServer { map[server.interfaceId] = server }
         return map
     }
 
@@ -111,6 +114,9 @@ extension GatewayController {
             $0.mesh = mesh
             $0.iridium = iridium
         }
+        // Before the node exists, so its start wires their receive callbacks like the others'.
+        initRns9704()
+        initRnsTcpListener()
         let pathTable = RnsPathTable(interfaces: { [weak self] in Array((self?.rnsInterfaces() ?? [:]).values) })
         let forwardingTable = RnsForwardingTable()
         let node = RnsTransportNode(
@@ -133,15 +139,20 @@ extension GatewayController {
                 await mesh.start()
                 await iridium.start()
             })
+        // The upstream-compatible node and the LXMF endpoint see every packet first (MESHSAT-1553, MESHSAT-1735).
+        let stack = initRnsStack(identity: identity)
+        node.upstreamInbound = { [weak stack] ifaceId, raw in stack?.inbound(ifaceId, raw) == true }
         node.start()
         updateRnsParts {
             $0.node = node
         }
+        stack.start(announceIntervalMs: Int64(announceMin) * 60_000)
         Self.log.info("Reticulum Transport Node started: \(identity.destHashHex) (\(rnsInterfaces().count) interfaces)")
     }
 
     func stopReticulum() {
         stopReticulumBlePeripheral()
+        stopLxmf()
         let parts = rnsParts
         updateRnsParts { $0 = GatewayController.RnsParts(identity: $0.identity) }
         parts.node?.stop()

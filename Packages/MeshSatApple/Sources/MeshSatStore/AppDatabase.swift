@@ -80,6 +80,10 @@ public final class AppDatabase: Sendable {
         m.registerMigration("v4: warnings") { db in
             for statement in schemaV4Warnings { try db.execute(sql: statement) }
         }
+        // The LXMF message ids taken in, per sender (Android Room's lxmf_mids, MESHSAT-1641; iOS MESHSAT-1735).
+        m.registerMigration("v5: lxmf_mids") { db in
+            for statement in schemaV5LxmfMids { try db.execute(sql: statement) }
+        }
         return m
     }
 
