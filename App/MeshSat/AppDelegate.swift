@@ -43,6 +43,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Once, at the first start, as Android's welcome asks for POST_NOTIFICATIONS: without it the
+        // SOS and warning notifications never show (MESHSAT-1823). iOS never asks twice.
+        let gateway = self.gateway
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            gateway.notificationsAnswered(granted)
+        }
         // Before launching finishes, as BGTaskScheduler requires.
         background.registerTasks()
         gateway.start()
@@ -71,4 +77,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         completionHandler()
     }
 
+    /// While the app is open the notification still shows and sounds, as Android posts it whatever
+    /// is on screen; a warning also fills the screen (WarningOverlay).
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound])
+    }
 }
