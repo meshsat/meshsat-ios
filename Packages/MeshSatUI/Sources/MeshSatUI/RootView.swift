@@ -3,6 +3,7 @@
 // the stacks and shown by opacity once it was first opened (MESHSAT-1752), and the custom bottom bar. The screens themselves land
 // one by one under MESHSAT-1321; until a screen is ported its placeholder names the Kotlin
 // file it mirrors.
+import MeshSatEngine
 import MeshSatPlatform
 import SwiftUI
 import UIKit
@@ -12,7 +13,8 @@ public struct RootView: View {
     @State private var model: GatewayModel
     @State private var messages: MessagesModel
     @State private var settings: SettingsModel
-    @State private var nightMode = false
+    /// Kept in settings as Android's `night_mode` (SettingsRepository.nightMode), so it survives a restart.
+    @State private var nightMode: Bool
     @State private var mapFocus = MapFocus()
     /// The map is built the first time its tab is opened, then kept (MESHSAT-1752, as MeshSatUI.kt's
     /// mapOpened): its tile overlay asks tile.openstreetmap.org the moment the view exists, and nothing
@@ -23,6 +25,7 @@ public struct RootView: View {
         _model = State(initialValue: GatewayModel(gateway: gateway))
         _messages = State(initialValue: MessagesModel(gateway: gateway))
         _settings = State(initialValue: SettingsModel(gateway: gateway))
+        _nightMode = State(initialValue: gateway.settings.get(SettingsKey.nightMode))
     }
 
     /// What the strip shows, from the gateway: the mesh and satellite states and counts.
@@ -44,15 +47,16 @@ public struct RootView: View {
     }
 
     public var body: some View {
-        // Night mode is a colour effect, and SwiftUI cannot apply one through the UIKit-backed
-        // page TabView and NavigationStacks (it silently draws nothing red, seen on the phone
-        // 24 Sep 2026). So the effect goes on every leaf that is SwiftUI: the strip, the banner,
-        // each screen and destination, the map, the bottom bar and the overlays. Sheets from
-        // UIKit (the Messages composer, the contact picker) stay as they are.
+        // Night mode is one colour filter on the root, as Android filters its window
+        // (MESHSAT-1827): Core Animation filters reach the UIKit-backed scroll views and
+        // navigation stacks under it. (A Metal colour-effect shader did not: the strip and the
+        // bar came out red and every screen black, 24 Sep to 7 Nov 2026.) Sheets presented by
+        // UIKit (the Messages and Mail composers, the share sheet, the camera) are their own
+        // windows and stay as they are, as on Android.
         VStack(spacing: 0) {
-            StatusStrip(model: strip).nightMode(nightMode)
-            SosBanner { router.navigate(.sos) }.nightMode(nightMode)
-            NodeLinkBanner { router.selectTab(.setup) }.nightMode(nightMode)
+            StatusStrip(model: strip)
+            SosBanner { router.navigate(.sos) }
+            NodeLinkBanner { router.selectTab(.setup) }
             ZStack {
                 // One NavigationStack per tab, all alive, the selected one visible: Android's
                 // saveState/restoreState per tab without a UIKit page controller. The page-style
@@ -62,12 +66,11 @@ public struct RootView: View {
                     let shown = router.selectedTab == tab
                     NavigationStack(path: pathBinding(tab)) {
                         root(for: tab)
-                            .nightMode(nightMode)
                             .toolbar(.hidden, for: .navigationBar)
                             .navigationDestination(for: Route.self) { route in
                                 // On the destination itself, or iOS 26 still floats its own
                                 // round back button above the SubScreen's "<- Title" row.
-                                destination(route).nightMode(nightMode)
+                                destination(route)
                                     .toolbar(.hidden, for: .navigationBar)
                                     .navigationBarBackButtonHidden(true)
                             }
@@ -77,7 +80,7 @@ public struct RootView: View {
                     .accessibilityHidden(!shown)
                 }
                 if mapOpened || router.selectedTab == .map {
-                    MapScreen(visible: router.selectedTab == .map, nightMode: nightMode)
+                    MapScreen(visible: router.selectedTab == .map)
                         .opacity(router.selectedTab == .map ? 1 : 0)
                         .allowsHitTesting(router.selectedTab == .map)
                         .onAppear { mapOpened = true }
@@ -88,8 +91,9 @@ public struct RootView: View {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 router.selectTab(tab)
             }
-            .nightMode(nightMode)
         }
+        .nightMode(nightMode)
+        .onChange(of: nightMode) { _, on in settings.set(SettingsKey.nightMode, on) }
         .overlay {
             // MainActivity's ProvisionLinkDialog and ProvisionClaimHost: over every screen.
             ZStack {

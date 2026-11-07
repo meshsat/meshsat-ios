@@ -11,27 +11,25 @@ import SwiftUI
 
 public struct MapScreen: View {
     let visible: Bool
-    let nightMode: Bool
     @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
     @Environment(MapFocus.self) private var focus
     @State private var vm = MapModel()
 
-    public init(visible: Bool, nightMode: Bool) {
+    public init(visible: Bool) {
         self.visible = visible
-        self.nightMode = nightMode
     }
 
     public var body: some View {
         let offlineEnabled = settings.bool(SettingsKey.offlineMapEnabled)
         let offlineFile = settings.string(SettingsKey.offlineMapFile)
         VStack(alignment: .leading, spacing: 0) {
-            Text("Map").msText(.headlineMedium).padding(.bottom, 8).nightMode(nightMode)
+            Text("Map").msText(.headlineMedium).padding(.bottom, 8)
             GeometryReader { g in
                 VStack(spacing: 8) {
                     ZStack(alignment: .topTrailing) {
                         MeshMapView(
-                            detailed: vm.detailed, night: nightMode, nodes: vm.shownNodes, tracks: vm.shownTracks, names: vm.names,
+                            detailed: vm.detailed, night: false, nodes: vm.shownNodes, tracks: vm.shownTracks, names: vm.names,
                             phone: vm.showPhone ? model.phoneFix : nil, now: vm.now, ticket: vm.ticket)
                         VStack(spacing: 8) {
                             MapButton(icon: MSIcon.myLocation, description: "Centre on me") {
@@ -42,23 +40,23 @@ public struct MapScreen: View {
                             }
                         }
                         .padding(8)
-                        .nightMode(nightMode)
+
                         VStack(spacing: 8) {
                             MapButton(icon: MSIcon.add, description: "Zoom in") { vm.send(.zoomIn) }
                             MapButton(icon: MSIcon.remove, description: "Zoom out") { vm.send(.zoomOut) }
                         }
                         .padding(8)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .nightMode(nightMode)
+
                         MapStatusNote(detailed: vm.detailed, offline: vm.offline)
                             .padding(.leading, 8).padding(.bottom, 8).padding(.trailing, 64)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                            .nightMode(nightMode)
+
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: MSRadius.card, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: MSRadius.card, style: .continuous).stroke(MSColors.border, lineWidth: 1))
-                    MapPanel(vm: vm, phone: model.phoneFix, maxListHeight: g.size.height * 0.5).nightMode(nightMode)
+                    MapPanel(vm: vm, phone: model.phoneFix, maxListHeight: g.size.height * 0.5)
                 }
             }
         }
