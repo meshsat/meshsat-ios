@@ -80,6 +80,26 @@ public enum SettingsKey {
     public static let rnsTcpListenPort = Setting("rns_tcp_listen_port", default: "4242")
     public static let rnsTransportEnabled = Setting("rns_transport_enabled", default: true)
 
+    // The upstream-compatible node and LXMF (MESHSAT-1553 on Android, MESHSAT-1735 here): the keys and
+    // defaults of SettingsRepository.kt, so the two apps' Setup cards and local API agree.
+    public static let lxmfDisplayName = Setting("lxmf_display_name", default: "")
+    public static let rnsTcpListenEnabled = Setting("rns_tcp_listen_enabled", default: false)
+    /// Comma-separated 32-hex LXMF addresses the satellite is open to; our own is always included.
+    public static let rnsPaidDests = Setting("rns_paid_dests", default: "")
+    public static let rnsPaidExtraHops = Setting("rns_paid_extra_hops", default: "20")
+    public static let rnsPaidMinIntervalMin = Setting("rns_paid_min_interval_min", default: "5")
+    /// "" = the nearest heard propagation node, "none" = off, else a 32-hex address.
+    public static let lxmfPropagationNode = Setting("lxmf_propagation_node", default: "")
+    public static let lxmfSyncIntervalMin = Setting("lxmf_sync_interval_min", default: "0")
+    /// Reticulum's AutoInterface on this WiFi; needs Apple's multicast entitlement (MESHSAT-1828).
+    public static let rnsAutoEnabled = Setting("rns_auto_enabled", default: false)
+    public static let rnodeEnabled = Setting("rnode_enabled", default: false)
+    /// Android: "usb" or "ble:<address>"; on iOS only "ble:<peripheral uuid>" can ever be set.
+    public static let rnodePort = Setting("rnode_port", default: "")
+    public static let rnodePreset = Setting("rnode_preset", default: "eu-868")
+    public static let rnodeCustomParams = Setting("rnode_custom_params", default: "867200000,125000,14,8,5")
+    public static let rnodeAirtimeLimits = Setting("rnode_airtime_limits", default: "0,0")
+
     // Offline map
     public static let offlineMapEnabled = Setting("offline_map_enabled", default: true)
     public static let offlineMapFile = Setting("offline_map_file", default: "")

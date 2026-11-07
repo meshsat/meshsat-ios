@@ -69,6 +69,22 @@ public final class RnsTransportNode: @unchecked Sendable {
         self.log = log
     }
 
+    /// The upstream-compatible node (MeshSatLXMF's RnsStack) sees every packet first; true means it took it
+    /// and this stack stays out (GatewayService.kt: `node.upstreamInbound = { ifaceId, raw -> stack.inbound(...) }`).
+    public var upstreamInbound: (@Sendable (_ sourceInterface: String, _ raw: [UInt8]) -> Bool)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return upstreamInboundValue
+        }
+        set {
+            lock.lock()
+            upstreamInboundValue = newValue
+            lock.unlock()
+        }
+    }
+    private var upstreamInboundValue: (@Sendable (String, [UInt8]) -> Bool)?
+
     /// Locally addressed data packets go here.
     public var localDeliveryCallback: LocalDeliveryCallback? {
         get {
@@ -133,6 +149,7 @@ public final class RnsTransportNode: @unchecked Sendable {
     /// delivery or forwarding.
     public func onPacketReceived(sourceInterface: String, _ raw: [UInt8]) {
         guard isRunning() else { return }
+        if let upstream = upstreamInbound, upstream(sourceInterface, raw) { return }
         guard let packet = try? RnsPacket.unmarshal(raw) else { return }
         let hash = Hex.encode(RnsDestination.truncatedHash(raw))
         let t = now()
