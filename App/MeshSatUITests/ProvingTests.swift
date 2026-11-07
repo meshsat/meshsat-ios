@@ -342,4 +342,106 @@ final class ProvingTests: XCTestCase {
         XCTAssertTrue(off)
         Thread.sleep(forTimeInterval: 15)  // the Hub's ack, for the screenshot and the log
     }
+
+    // MARK: 0.3.0 (the Android catch-up of 7 Nov 2026)
+
+    /// The notification prompt of the first start (MESHSAT-1823): Allow, on the springboard's alert.
+    @MainActor
+    func testNotificationPrompt() throws {
+        try gate("notify")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let app = XCUIApplication()
+        app.activate()
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 15) {
+            Thread.sleep(forTimeInterval: 3)  // the screenshot of the prompt
+            allow.tap()
+            NSLog("MeshSatProve: notifications allowed on the prompt")
+        } else {
+            NSLog("MeshSatProve: no notification prompt (answered before)")
+        }
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 20))
+    }
+
+    /// Setup > Safety > Warnings, the list of relayed public warnings (MESHSAT-1819).
+    @MainActor
+    func testWarningsList() throws {
+        try gate("warnings")
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Safety")
+        tap(app, "Warnings")
+        Thread.sleep(forTimeInterval: 6)
+        NSLog("MeshSatProve: warnings list %@", app.staticTexts["No warning heard yet."].exists ? "empty" : "has rows")
+        openTab(app, "Setup")
+    }
+
+    /// Setup > Field kits on your network: a kit added with its LAN address (MESHSAT_KIT_URL), saved
+    /// and checked (MESHSAT-1820). The line under it is the proof: Reachable, or the token prompt.
+    @MainActor
+    func testFieldKit() throws {
+        try gate("kit")
+        let url = env["MESHSAT_KIT_URL"] ?? "192.168.181.210"
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Field kits on your network")
+        // Start clean: the cards an earlier run left go first.
+        var removed = 0
+        while removed < 10, app.buttons["Remove"].firstMatch.exists, app.buttons["Remove"].firstMatch.isHittable {
+            app.buttons["Remove"].firstMatch.tap()
+            removed += 1
+            Thread.sleep(forTimeInterval: 1)
+        }
+        tap(app, "Add a kit")
+        Thread.sleep(forTimeInterval: 1)
+        let fields = app.textFields.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+        XCTAssertGreaterThanOrEqual(fields.count, 2, "the kit card's name and address fields")
+        fields[0].tap()
+        fields[0].typeText(env["MESHSAT_KIT_NAME"] ?? "tesseract")
+        fields[1].tap()
+        fields[1].typeText(url)
+        tap(app, "Save")
+        tap(app, "Check")
+        // iOS asks once whether the app may reach devices on the local network; the first request
+        // fails while it asks.
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
+        if allow.waitForExistence(timeout: 8) {
+            Thread.sleep(forTimeInterval: 2)  // the screenshot of the prompt
+            allow.tap()
+            NSLog("MeshSatProve: local network allowed on the prompt")
+            Thread.sleep(forTimeInterval: 2)
+            tap(app, "Check")
+        }
+        let lines = NSPredicate(
+            format: "label BEGINSWITH 'Reachable' OR label BEGINSWITH 'Not reachable' OR label BEGINSWITH 'This kit asks'")
+        let line = app.staticTexts.matching(lines).firstMatch
+        XCTAssertTrue(line.waitForExistence(timeout: 20), "the kit's line after Check")
+        NSLog("MeshSatProve: kit check %@", line.label)
+        Thread.sleep(forTimeInterval: 5)
+        openTab(app, "Setup")
+    }
+
+    /// Setup > Help > Support: Send feedback with the debug.zip attached (MESHSAT-1810). It stops at
+    /// Mail's composer (or the share sheet without a Mail account) and never presses Send: a mail
+    /// from the owner's account goes only on the owner's own tap.
+    @MainActor
+    func testSupportMail() throws {
+        try gate("support")
+        let app = attach()
+        openTab(app, "Setup")
+        tap(app, "Support")
+        Thread.sleep(forTimeInterval: 3)
+        let field = app.textFields.allElementsBoundByIndex.first { $0.exists && $0.isHittable }
+        field?.tap()
+        field?.typeText(env["MESHSAT_SUPPORT_TEXT"] ?? "Test from MeshSat iOS 0.3.0 on the bench, please ignore.")
+        tap(app, "Send feedback")
+        let composer = app.navigationBars.matching(
+            NSPredicate(format: "identifier CONTAINS[c] 'mail' OR identifier CONTAINS 'MeshSat iOS'")
+        ).firstMatch
+        let shared = app.otherElements["ActivityListView"].firstMatch
+        let shown = composer.waitForExistence(timeout: 20) || shared.waitForExistence(timeout: 5)
+        NSLog("MeshSatProve: support %@", composer.exists ? "Mail composer open" : (shared.exists ? "share sheet open" : "nothing shown"))
+        XCTAssertTrue(shown, "Mail's composer or the share sheet")
+        Thread.sleep(forTimeInterval: 8)  // the screenshots; the composer stays open for the owner
+    }
 }
