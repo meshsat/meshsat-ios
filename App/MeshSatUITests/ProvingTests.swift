@@ -483,4 +483,29 @@ final class ProvingTests: XCTestCase {
         XCTAssertTrue(app.buttons["Disconnect"].firstMatch.waitForExistence(timeout: 90), "connected to the node")
         Thread.sleep(forTimeInterval: 20)  // the node's Service Changed reconnect after a fresh bond
     }
+
+    /// Night mode (MESHSAT-1827): switch it on from the Home header, walk the tabs and one sub-screen
+    /// for the screenshots, switch it off again. MESHSAT_NIGHT_KEEP=1 leaves it on.
+    @MainActor
+    func testNightMode() throws {
+        try gate("night")
+        let app = attach()
+        openTab(app, "Home")
+        let toggle = app.buttons["Night mode"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10), "the night mode button")
+        toggle.tap()
+        Thread.sleep(forTimeInterval: 4)
+        for tab in ["Home", "Messages", "Map", "People", "Setup"] {
+            openTab(app, tab)
+            Thread.sleep(forTimeInterval: 4)
+        }
+        tap(app, "Satellite")
+        Thread.sleep(forTimeInterval: 4)
+        openTab(app, "Home")
+        if env["MESHSAT_NIGHT_KEEP"] != "1" {
+            app.buttons["Night mode"].firstMatch.tap()
+            Thread.sleep(forTimeInterval: 3)
+        }
+        NSLog("MeshSatProve: night mode walked")
+    }
 }
