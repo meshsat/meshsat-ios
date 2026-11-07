@@ -103,6 +103,63 @@ final class ContractsTests: XCTestCase {
         v1[0] = 1
         XCTAssertNil(IridiumPipeContract.parseStats(v1))
         XCTAssertEqual(IridiumPipeContract.parseStats(Self.sampleStats + [9, 9])?.daySessionsCap, 12)
+        XCTAssertNil(IridiumPipeContract.parseStats(Self.sampleStats + [9, 9])?.beacon)
+    }
+
+    // Android's IridiumPipeStreamsTest "STATS bytes 52 to 63 carry the satellite beacon" (MESHSAT-1772).
+    func testStatsBytes52To63CarryTheSatelliteBeacon() throws {
+        func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)] }
+        func le32(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8(v >> 24)] }
+        var base: [UInt8] = [2, 2, 0x96, 3]
+        for v in [UInt32(12), 7] { base.append(contentsOf: le32(v)) }
+        for v in [32, 250, 2, 1] { base.append(contentsOf: le16(v)) }
+        for v in [UInt32(240), 1_000, 0, 0, 5, 4, 1] { base.append(contentsOf: le32(v)) }
+        base.append(contentsOf: [0, 0, 0, 0])
+        XCTAssertEqual(base.count, 52)
+        // A node that sends 52 bytes has no beacon fields.
+        XCTAssertNil(try XCTUnwrap(IridiumPipeContract.parseStats(base)).beacon)
+        func tail(_ state: UInt8, _ off: UInt8, _ msgs: Int, _ since: UInt32) -> [UInt8] {
+            var t: [UInt8] = [state, off]
+            t.append(contentsOf: le16(msgs))
+            t.append(contentsOf: le32(since))
+            t.append(contentsOf: le16(600))
+            t.append(contentsOf: le16(1_800))
+            return t
+        }
+        let on = base + tail(2, 1, 3, 580)
+        XCTAssertEqual(on.count, 64)
+        let s = try XCTUnwrap(IridiumPipeContract.parseStats(on))
+        XCTAssertTrue(s.flags.contains(.beaconOn))
+        let b = try XCTUnwrap(s.beacon)
+        XCTAssertEqual(
+            b,
+            IridiumPipeContract.Beacon(
+                state: .on, lastOff: .switchOff, messagesToModem: 3, onSinceUptimeS: 580, intervalS: 600, limitS: 1_800))
+        // Uptime 1000, on since 580: 420 s in, next position in 180 s, off by itself in 1380 s.
+        XCTAssertEqual(NodeStatsText.beacon(b, uptimeS: s.uptimeS), "On: next position in 3 min, off by itself in 23 min")
+        let row = NodeStatsText.rows(s)[1]
+        XCTAssertEqual(row.label, "Satellite beacon")
+        XCTAssertEqual(row.value, "On: next position in 3 min, off by itself in 23 min")
+
+        let never = base + tail(0, 0, 0, 0xFFFF_FFFF)
+        let n = try XCTUnwrap(IridiumPipeContract.parseStats(never))
+        XCTAssertEqual(n.beacon?.state, .notInUse)
+        XCTAssertNil(n.beacon?.onSinceUptimeS)
+        XCTAssertFalse(NodeStatsText.rows(n).contains { $0.label == "Satellite beacon" })
+
+        func with(_ state: IridiumPipeContract.BeaconState, _ off: IridiumPipeContract.BeaconOff, _ msgs: Int) -> IridiumPipeContract.Beacon
+        {
+            IridiumPipeContract.Beacon(
+                state: state, lastOff: off, messagesToModem: msgs, onSinceUptimeS: 580, intervalS: 600, limitS: 1_800)
+        }
+        XCTAssertEqual(NodeStatsText.beacon(with(.sending, .switchOff, 3), uptimeS: 0), "Off, sending its last message")
+        XCTAssertEqual(
+            NodeStatsText.beacon(with(.off, .limit, 3), uptimeS: 0), "Off (30 min limit), 3 messages to the modem since the node started")
+        XCTAssertEqual(NodeStatsText.beacon(with(.off, .nothingSent, 0), uptimeS: 0), "Off (switched off before anything was sent)")
+        XCTAssertEqual(NodeStatsText.beacon(with(.off, .notYet, 1), uptimeS: 0), "Off, 1 message to the modem since the node started")
+        XCTAssertEqual(NodeStatsText.inTime(59), "in under a minute")
+        XCTAssertEqual(NodeStatsText.inTime(60), "in 1 min")
+        XCTAssertEqual(NodeStatsText.inTime(61), "in 2 min")
     }
 
     func testPassListEncoding() {

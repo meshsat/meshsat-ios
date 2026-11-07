@@ -1,5 +1,5 @@
 // Mirrors ui/screens/DashboardScreen.kt and HomeLanes.kt: the HomeHeader (brand lockup at
-// 26 dp, the night-mode moon, Arrange), the headline sentence with its follow-up line, one
+// 26 dp, the node's satellite beacon, the night-mode moon, Arrange), the headline sentence with its follow-up line, one
 // card of four TransportLanes, the Getting started checklist, then the cards in the order set
 // with Arrange (HomeCards.swift).
 import MeshSatEngine
@@ -57,6 +57,11 @@ public struct DashboardScreen: View {
         if model.modemLinkBroken {
             return (.failed, (satQueueLine + "The phone cannot reach the node's modem. Getting the link back.").trimmed)
         }
+        // The node's satellite beacon (MESHSAT-1772): its panel switch is the beacon's only, the modem never
+        // goes off with it (MESHSAT-1809), so only a beacon sending its last message holds the lane.
+        if settings.nodeStats?.beacon?.state == .sending {
+            return (.trying, (satQueueLine + "The node's beacon is sending its last message; then the phone has the modem again.").trimmed)
+        }
         // A RockBLOCK 9704 on the node's pipe has its own driver (MESHSAT-1507), as HomeLanes.kt.
         if model.imtState == .ready { return (.working, (satQueueLine + (passLine ?? "Modem ready.")).trimmed) }
         if model.imtState != .disconnected { return (.trying, "Bringing the 9704 up.") }
@@ -66,10 +71,21 @@ public struct DashboardScreen: View {
             return model.modemSilent
                 ? (.failed, "The node's modem does not answer. Check its power and cable.") : (.trying, "Checking the modem.")
         case .disconnected:
+            if settings.pipeOwner == .node { return (.trying, "The node is using its modem. The phone takes it next.") }
+            if meshUp && settings.pipePresent { return (.trying, "Asking the node for its modem.") }
             if meshUp { return (.off, "This radio has no satellite modem.") }
             if reconnecting { return (.trying, (satQueueLine + "Reconnecting to your MeshSat node.").trimmed) }
             return (.off, "Connect a MeshSat node to use its satellite modem.")
         }
+    }
+
+    /// The lane's sentence, led by the beacon while it is on (MESHSAT-1772): it runs on the node whatever
+    /// this phone does.
+    private var satelliteDetail: String {
+        let detail = satellite.1
+        guard settings.pipeStatus?.flags?.contains(.beaconOn) == true else { return detail }
+        let every = settings.nodeStats?.beacon.flatMap { $0.intervalS >= 60 ? "\($0.intervalS / 60) min" : nil } ?? "10 min"
+        return "The node's satellite beacon is on: it sends its position every \(every). \(detail)".trimmed
     }
 
     private var mesh: (LaneState, String) {
@@ -146,7 +162,7 @@ public struct DashboardScreen: View {
                     TransportLane(
                         icon: MSIcon.transportSatellite, color: MSColors.iridium, name: "Satellite",
                         metric: satelliteMetric,
-                        detail: sat.1, state: sat.0, inFlight: cards.iridiumQueueDepth > 0
+                        detail: satelliteDetail, state: sat.0, inFlight: cards.iridiumQueueDepth > 0
                     ) {
                         router.navigate(model.modemState == .connected ? .passes : .setupSection(.satellite))
                     }
@@ -236,6 +252,7 @@ struct HomeHeader: View {
         HStack(spacing: 0) {
             BrandLockup().frame(height: 26)
             Spacer(minLength: 0)
+            BeaconIndicator()
             Button {
                 nightMode.toggle()
             } label: {
@@ -254,6 +271,59 @@ struct HomeHeader: View {
             .accessibilityLabel("Arrange")
         }
         .padding(.leading, 4)
+    }
+}
+
+/// The node's satellite beacon (MESHSAT-1772) in the Home header (MESHSAT-1776), as HomeLanes.kt's
+/// BeaconIndicator. Absent unless the connected node has a beacon. Grey while its switch is off, amber
+/// while it sends its last message, and while it is on it lights red, as the node's LED does, for half a
+/// second every 3 s: the rhythm of that LED and of the BCN lamp on its screen (the phone does not know the
+/// LED's phase, so the rhythm matches, not the moment). Tapping it opens Setup > Satellite, where Node
+/// health says what the beacon is doing.
+struct BeaconIndicator: View {
+    @Environment(Router.self) private var router
+    @Environment(SettingsModel.self) private var settings
+
+    /// STATUS is notified on every change, STATS only on a change of substance: the flag wins.
+    private var state: IridiumPipeContract.BeaconState? {
+        guard settings.pipePresent else { return nil }
+        if settings.pipeStatus?.flags?.contains(.beaconOn) == true { return .on }
+        let fromStats = settings.nodeStats?.beacon?.state
+        return fromStats == .off || fromStats == .sending ? fromStats : nil
+    }
+
+    var body: some View {
+        if let current = state {
+            Button {
+                router.navigate(.setupSection(.satellite))
+            } label: {
+                TimelineView(.periodic(from: Date(timeIntervalSince1970: 0), by: 0.5)) { context in
+                    // Lit for the first half second of every three.
+                    let lit = Int(context.date.timeIntervalSince1970 * 2) % 6 == 0
+                    MSIcon.sensors.resizable().scaledToFit().frame(width: 24, height: 24)
+                        .foregroundStyle(Self.tint(current, lit: lit))
+                        .frame(width: MSSpace.touch, height: MSSpace.touch)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Self.said(current))
+        }
+    }
+
+    static func tint(_ state: IridiumPipeContract.BeaconState, lit: Bool) -> Color {
+        switch state {
+        case .on: lit ? MSColors.red : MSColors.red.opacity(0.35)
+        case .sending: MSColors.amber
+        default: MSColors.textMuted
+        }
+    }
+
+    static func said(_ state: IridiumPipeContract.BeaconState) -> String {
+        switch state {
+        case .on: "Satellite beacon on"
+        case .sending: "Satellite beacon off, sending its last message"
+        default: "Satellite beacon off"
+        }
     }
 }
 

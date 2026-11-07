@@ -17,6 +17,7 @@ public enum NodeStatsText {
             case nil: "Unknown owner"
             }
         rows.append(("Modem", held + (s.flags.contains(.modemAnswers) ? ", answers" : ", not answering")))
+        if let b = s.beacon, b.state != .notInUse { rows.append(("Satellite beacon", beacon(b, uptimeS: s.uptimeS))) }
         if s.flags.contains(.sessionInFlight) { rows.append(("Session", "In flight now")) }
         let signal: String =
             if let csq = s.csq {
@@ -50,6 +51,48 @@ public enum NodeStatsText {
         if s.watchdogReboots > 0 { rows.append(("Bluetooth watchdog reboots", String(s.watchdogReboots))) }
         if s.phoneBytesDropped > 0 { rows.append(("Bytes the node could not take", String(s.phoneBytesDropped))) }
         return rows
+    }
+
+    /// The beacon row (MESHSAT-1772): "On: next position in 7 min, off by itself in 23 min",
+    /// "Off, sending its last message", "Off (switched off), 3 messages to the modem since the node started".
+    public static func beacon(_ b: IridiumPipeContract.Beacon, uptimeS: UInt32) -> String {
+        switch b.state {
+        case .on:
+            var out = "On"
+            if let since = b.onSinceUptimeS, uptimeS >= since {
+                let elapsed = Int(uptimeS - since)
+                var parts: [String] = []
+                if b.intervalS > 0 { parts.append("next position " + inTime(b.intervalS - elapsed % b.intervalS)) }
+                if b.limitS > 0, elapsed < b.limitS { parts.append("off by itself " + inTime(b.limitS - elapsed)) }
+                if !parts.isEmpty { out += ": " + parts.joined(separator: ", ") }
+            }
+            return out
+        case .sending:
+            return "Off, sending its last message"
+        case .off, .unknown, .notInUse:
+            var out = "Off"
+            switch b.lastOff {
+            case .switchOff: out += " (switched off)"
+            case .idle: out += " (15 min without satellite traffic)"
+            case .limit: out += " (30 min limit)"
+            case .cellLow: out += " (battery too low for the modem)"
+            case .nothingSent: out += " (switched off before anything was sent)"
+            case .notYet, .unknown: break
+            }
+            if b.messagesToModem > 0 {
+                out += ", \(b.messagesToModem) message" + (b.messagesToModem == 1 ? "" : "s") + " to the modem since the node started"
+            }
+            return out
+        }
+    }
+
+    /// "in under a minute", "in 7 min", "in 1 h 5 min".
+    public static func inTime(_ seconds: Int) -> String {
+        switch seconds {
+        case ..<60: "in under a minute"
+        case ..<3600: "in \((seconds + 59) / 60) min"
+        default: "in \(seconds / 3600) h \((seconds % 3600) / 60) min"
+        }
     }
 
     /// A line under the rows when something needs attention, or nil.

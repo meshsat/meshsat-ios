@@ -60,6 +60,8 @@ public enum MSIcon {
     public static var key: Image { asset("outlined_key", fallback: "key") }
     public static var monitorHeart: Image { asset("outlined_monitor_heart", fallback: "waveform.path.ecg") }
     public static var terminal: Image { asset("outlined_terminal", fallback: "terminal") }
+    /// The node's satellite beacon in the Home header (Icons.Outlined.Sensors, MESHSAT-1776).
+    public static var sensors: Image { asset("outlined_sensors", fallback: "sensor") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {

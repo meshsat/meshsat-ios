@@ -5,7 +5,7 @@
 // Version 2 (MESHSAT-1378) adds STATS (the node's satellite health, read + notify) and PASS
 // (pass windows the phone writes, so the node's own routing can time its sessions), and lets
 // STATUS carry a flags byte and the signal after the owner. A client reads only what is there:
-// STATUS of 2 or 4 bytes, STATS of 52 or more.
+// STATUS of 2 or 4 bytes, STATS of 52 or more (64 with the satellite beacon, MESHSAT-1772).
 
 public enum IridiumPipeContract {
     public static let serviceUUID = "b3d305a2-7310-4877-ad12-8e245e71951a"
@@ -16,8 +16,8 @@ public enum IridiumPipeContract {
     /// [version, owner] or, from version 2, [version, owner, flags, csq]. Read after
     /// subscribing, and notified on change.
     public static let statusUUID = "69a4064d-78b9-46e5-a30a-1862e553245a"
-    /// The node's satellite health, 52 bytes little-endian, read + notify (on change, at most
-    /// every 2 s). Independent of who owns the modem.
+    /// The node's satellite health, 52 bytes little-endian (64 from a node with the satellite
+    /// beacon), read + notify (on change, at most every 2 s). Independent of who owns the modem.
     public static let statsUUID = "9c22cf07-2256-4fc2-b6ee-ab0ceb12198d"
     /// Pass windows from the phone, write with response; a write replaces the node's list.
     /// Accepted from any client on the service, whoever owns the modem.
@@ -42,6 +42,8 @@ public enum IridiumPipeContract {
     public static let statusVersion2: UInt8 = 2
     public static let statsVersion: UInt8 = 2
     public static let statsLength = 52
+    /// STATS of a node with the satellite beacon fields, bytes 52 to 63 (MESHSAT-1772, 2 Nov 2026).
+    public static let statsBeaconLength = 64
     public static let passListVersion: UInt8 = 1
     public static let passListMax = 8
     /// "Unknown" for the signal byte and the u32 ages.
@@ -73,6 +75,8 @@ public enum IridiumPipeContract {
         public static let ledOff = Flags(rawValue: 1 << 5)
         /// The owner switched the node's screen off (MESHSAT-1671).
         public static let screenOff = Flags(rawValue: 1 << 6)
+        /// The node's satellite beacon is on (MESHSAT-1772).
+        public static let beaconOn = Flags(rawValue: 1 << 7)
     }
 
     public struct Status: Sendable, Equatable {
@@ -140,12 +144,14 @@ public enum IridiumPipeContract {
         /// The node's own sessions today, and its daily cap.
         public let daySessionsUsed: Int
         public let daySessionsCap: Int
+        /// The satellite beacon, STATS bytes 52 to 63; nil from a node that sends 52 bytes.
+        public let beacon: Beacon?
 
         public init(
             version: UInt8, owner: Owner?, flags: Flags, csq: Int?, csqAgeS: UInt32?, sessions: UInt32, lastMoStatus: Int,
             lastMomsn: Int, lastMtStatus: Int, lastMtQueued: Int, lastSessionAgeS: UInt32?, uptimeS: UInt32,
             watchdogReboots: UInt32, phoneBytesDropped: UInt32, nodeSessions: UInt32, nodeSent: UInt32, nodeReceived: UInt32,
-            daySessionsUsed: Int, daySessionsCap: Int
+            daySessionsUsed: Int, daySessionsCap: Int, beacon: Beacon? = nil
         ) {
             self.version = version
             self.owner = owner
@@ -166,10 +172,45 @@ public enum IridiumPipeContract {
             self.nodeReceived = nodeReceived
             self.daySessionsUsed = daySessionsUsed
             self.daySessionsCap = daySessionsCap
+            self.beacon = beacon
         }
     }
 
-    /// nil when shorter than 52 bytes or not version 2. Read by offset; extra bytes are ignored.
+    /// What the node's satellite beacon is doing (MESHSAT-1772): the panel switch has the satellite on.
+    public enum BeaconState: Sendable, Equatable {
+        case notInUse, off, on, sending, unknown
+    }
+
+    /// Why the beacon last went off.
+    public enum BeaconOff: Sendable, Equatable {
+        case notYet, switchOff, idle, limit, cellLow, nothingSent, unknown
+    }
+
+    public struct Beacon: Sendable, Equatable {
+        public let state: BeaconState
+        public let lastOff: BeaconOff
+        /// Beacon messages the node's modem has taken since the node started.
+        public let messagesToModem: Int
+        /// The node's uptime in seconds when the beacon last went on; nil when it has not since the node started.
+        public let onSinceUptimeS: UInt32?
+        /// Seconds between position messages.
+        public let intervalS: Int
+        /// Seconds the beacon stays on at most.
+        public let limitS: Int
+        public init(
+            state: BeaconState, lastOff: BeaconOff, messagesToModem: Int, onSinceUptimeS: UInt32?, intervalS: Int, limitS: Int
+        ) {
+            self.state = state
+            self.lastOff = lastOff
+            self.messagesToModem = messagesToModem
+            self.onSinceUptimeS = onSinceUptimeS
+            self.intervalS = intervalS
+            self.limitS = limitS
+        }
+    }
+
+    /// nil when shorter than 52 bytes or not version 2. Read by offset; the beacon from 64 bytes,
+    /// anything further is ignored.
     public static func parseStats(_ b: [UInt8]) -> Stats? {
         guard b.count >= statsLength, b[0] == statsVersion else { return nil }
         let csqAge = u32(b, 4)
@@ -179,7 +220,34 @@ public enum IridiumPipeContract {
             csqAgeS: csqAge == unknownU32 ? nil : csqAge, sessions: u32(b, 8), lastMoStatus: i16(b, 12), lastMomsn: u16(b, 14),
             lastMtStatus: i16(b, 16), lastMtQueued: u16(b, 18), lastSessionAgeS: sessionAge == unknownU32 ? nil : sessionAge,
             uptimeS: u32(b, 24), watchdogReboots: u32(b, 28), phoneBytesDropped: u32(b, 32), nodeSessions: u32(b, 36),
-            nodeSent: u32(b, 40), nodeReceived: u32(b, 44), daySessionsUsed: Int(b[48]), daySessionsCap: Int(b[49]))
+            nodeSent: u32(b, 40), nodeReceived: u32(b, 44), daySessionsUsed: Int(b[48]), daySessionsCap: Int(b[49]),
+            beacon: b.count < statsBeaconLength ? nil : parseBeacon(b))
+    }
+
+    /// STATS bytes 52 to 63 (MESHSAT-1772), as Android's parseStats reads them.
+    static func parseBeacon(_ b: [UInt8]) -> Beacon {
+        let state: BeaconState =
+            switch b[52] {
+            case 0: .notInUse
+            case 1: .off
+            case 2: .on
+            case 3: .sending
+            default: .unknown
+            }
+        let lastOff: BeaconOff =
+            switch b[53] {
+            case 0: .notYet
+            case 1: .switchOff
+            case 2: .idle
+            case 3: .limit
+            case 4: .cellLow
+            case 5: .nothingSent
+            default: .unknown
+            }
+        let onSince = u32(b, 56)
+        return Beacon(
+            state: state, lastOff: lastOff, messagesToModem: u16(b, 54), onSinceUptimeS: onSince == unknownU32 ? nil : onSince,
+            intervalS: u16(b, 60), limitS: u16(b, 62))
     }
 
     static func u16(_ b: [UInt8], _ at: Int) -> Int {
