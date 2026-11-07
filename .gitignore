@@ -36,3 +36,6 @@ fastlane/screenshots/
 
 # A crashed Linux test run leaves a core dump beside the package (MESHSAT-1627)
 core.[0-9]*
+
+# fastlane writes its lane docs on every run (the container lanes since 7 Nov 2026)
+fastlane/README.md
