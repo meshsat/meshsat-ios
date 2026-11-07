@@ -152,13 +152,19 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         return was
     }
 
+    /// Whether the build declares the location background mode; without it continuous background
+    /// updates are a fatal error, so the switch is hidden and nothing asks for them.
+    public static var backgroundModeDeclared: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") ?? false
+    }
+
     /// The app went to the background: with Always granted, the significant-change service
     /// delivers a fix on a cell change or about 500 m of movement and wakes the app for it; the
     /// Hub report, the zones and an SOS use that fix. Standard updates stop with the app.
     public func beginBackgroundActivity(keepAlive: Bool = false) {
         guard manager.authorizationStatus == .authorizedAlways else { return }
         #if os(iOS)
-        if keepAlive {
+        if keepAlive, Self.backgroundModeDeclared {
             // Continuous updates behind the blue indicator: the app keeps running (MESHSAT-1506).
             manager.allowsBackgroundLocationUpdates = true
             manager.showsBackgroundLocationIndicator = true

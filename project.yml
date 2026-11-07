@@ -81,8 +81,8 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UIBackgroundModes:
-          # location: only with "Keep the gateway running in the background" on (MESHSAT-1506).
-          - location
+          # `location` comes back with 0.5.0 and App Review's recording of the opt-in background
+          # gateway (MESHSAT-1506); without it the switch is hidden and the code never asks for it.
           - bluetooth-central
           - bluetooth-peripheral
           - processing

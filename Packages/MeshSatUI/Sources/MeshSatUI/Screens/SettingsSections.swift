@@ -882,19 +882,21 @@ public struct SettingsDiagnosticsSection: View {
                         Spacer(minLength: 8)
                         MSSwitch(isOn: settings.binding(SettingsKey.startOnBoot), label: "Reconnect after a phone restart")
                     }
-                    HStack {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("Keep the gateway running in the background").msText(.bodyMedium)
-                            Text(
-                                "With location allowed Always, MeshSat keeps reporting your position, watching zones and relaying "
-                                    + "while the app is not on screen, as Android's gateway does. iOS shows its blue location "
-                                    + "indicator meanwhile, and the battery drains faster."
-                            )
-                            .msText(.bodySmall, color: MSColors.textMuted)
+                    if LocationProvider.backgroundModeDeclared {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text("Keep the gateway running in the background").msText(.bodyMedium)
+                                Text(
+                                    "With location allowed Always, MeshSat keeps reporting your position, watching zones and relaying "
+                                        + "while the app is not on screen, as Android's gateway does. iOS shows its blue location "
+                                        + "indicator meanwhile, and the battery drains faster."
+                                )
+                                .msText(.bodySmall, color: MSColors.textMuted)
+                            }
+                            Spacer(minLength: 8)
+                            MSSwitch(
+                                isOn: settings.binding(SettingsKey.backgroundGateway), label: "Keep the gateway running in the background")
                         }
-                        Spacer(minLength: 8)
-                        MSSwitch(
-                            isOn: settings.binding(SettingsKey.backgroundGateway), label: "Keep the gateway running in the background")
                     }
                     HStack {
                         VStack(alignment: .leading, spacing: 0) {
