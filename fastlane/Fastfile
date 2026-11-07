@@ -483,7 +483,19 @@ platform :ios do
       version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
       UI.message("version #{version.version_string} created")
     end
-    UI.user_error!("the editable version is #{version.version_string}, Version.xcconfig says #{marketing_version}") unless version.version_string == marketing_version
+    if version.version_string != marketing_version
+      # A version that never reached a reviewer (withdrawn, or still being prepared) takes the new
+      # number from Version.xcconfig: 0.3.0 (build 26) became 0.3.1 (build 27) on 7 Nov 2026 so the
+      # tags and the store agree on what shipped. An approved or live version is never renamed.
+      renameable = %w[PREPARE_FOR_SUBMISSION DEVELOPER_REJECTED REJECTED METADATA_REJECTED INVALID_BINARY].include?(version.app_store_state)
+      UI.user_error!("the editable version is #{version.version_string} (#{version.app_store_state}), Version.xcconfig says #{marketing_version}") unless renameable
+      code, body = asc_rest(:patch, "v1/appStoreVersions/#{version.id}", {
+        data: { type: "appStoreVersions", id: version.id, attributes: { versionString: marketing_version } }
+      })
+      UI.user_error!("rename: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 200
+      UI.message("version #{version.version_string} renamed to #{marketing_version}")
+      version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    end
     version.select_build(build_id: build.id)
     loc = version.get_app_store_version_localizations.find { |l| l.locale == "en-US" }
     loc.update(attributes: { whatsNew: File.read(File.join(__dir__, "metadata", "en-US", "release_notes.txt")).strip })
