@@ -615,18 +615,7 @@ public final class GatewayController: @unchecked Sendable {
         // Offline first: the last download or the snapshot shipped in the app, never the network.
         let fetcher = TleFetcher(store: db.tleCache, http: UrlSessionTleHttp())
         tleFetcher = fetcher
-        keep(
-            Task { [self] in
-                var lastAttemptMs: Int64 = 0
-                while !Task.isCancelled {
-                    let now = clock.nowMs()
-                    if now - lastAttemptMs >= Self.tleRefreshEveryMs, await fetcher.isCacheStale() {
-                        lastAttemptMs = now
-                        _ = await fetcher.refreshFromNetwork()
-                    }
-                    await clock.sleep(ms: 3_600_000)
-                }
-            })
+        startTleRefreshOnceModemSetUp(fetcher)
         let scheduler = PassScheduler(
             passProvider: { [self] in passCache.current(nowMs: clock.nowMs()) },
             // Gated so the 5-second poll tick does nothing when no modem is there (MESHSAT-499).

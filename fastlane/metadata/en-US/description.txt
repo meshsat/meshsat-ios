@@ -18,6 +18,8 @@ What it does:
 
 Satellite messaging needs a RockBLOCK modem and Iridium credits from a provider; Iridium is a paid commercial network.
 
+Internet connections: the bundled world map covers country level; closer in, map tiles come from OpenStreetMap's tile servers while you look at the map online. Once the MeshSat node's satellite modem has been seen, Iridium orbit data is downloaded from celestrak.org, or tle.ivanstanojevic.me if that fails, when the stored copy is more than a day old, checked at most every 12 hours; before that only when you tap Update on the passes screen. The Hub, APRS-IS and Reticulum over TCP connect only when you set them up, and a field kit you add under Setup is reached at the address you give it, or through the Hub relay. Node firmware is downloaded from MeshSat's releases on github.com only when you tap Check for update. Feedback from Setup > Help > Support leaves through your own mail app, only when you send it. Nothing else goes online.
+
 Permissions: Bluetooth, for the node; location, for the map, passes, zones and SOS; the camera, for QR codes; notifications.
 
 Privacy: the app has no analytics and no account, and sends nothing to MeshSat. https://meshsat.net/privacy/

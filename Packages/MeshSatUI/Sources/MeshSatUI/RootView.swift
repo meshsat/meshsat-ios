@@ -1,6 +1,6 @@
 // Mirrors the MeshSatUI composable in ui/MeshSatUI.kt: the top-bar stack (StatusStrip, then
 // the SOS and node-link banners), one navigation stack per tab, the Map kept alive outside
-// the stacks and shown by opacity, and the custom bottom bar. The screens themselves land
+// the stacks and shown by opacity once it was first opened (MESHSAT-1752), and the custom bottom bar. The screens themselves land
 // one by one under MESHSAT-1321; until a screen is ported its placeholder names the Kotlin
 // file it mirrors.
 import MeshSatPlatform
@@ -14,6 +14,10 @@ public struct RootView: View {
     @State private var settings: SettingsModel
     @State private var nightMode = false
     @State private var mapFocus = MapFocus()
+    /// The map is built the first time its tab is opened, then kept (MESHSAT-1752, as MeshSatUI.kt's
+    /// mapOpened): its tile overlay asks tile.openstreetmap.org the moment the view exists, and nothing
+    /// may go online before the user asks for it.
+    @State private var mapOpened = false
 
     public init(gateway: GatewayController) {
         _model = State(initialValue: GatewayModel(gateway: gateway))
@@ -72,9 +76,12 @@ public struct RootView: View {
                     .allowsHitTesting(shown)
                     .accessibilityHidden(!shown)
                 }
-                MapScreen(visible: router.selectedTab == .map, nightMode: nightMode)
-                    .opacity(router.selectedTab == .map ? 1 : 0)
-                    .allowsHitTesting(router.selectedTab == .map)
+                if mapOpened || router.selectedTab == .map {
+                    MapScreen(visible: router.selectedTab == .map, nightMode: nightMode)
+                        .opacity(router.selectedTab == .map ? 1 : 0)
+                        .allowsHitTesting(router.selectedTab == .map)
+                        .onAppear { mapOpened = true }
+                }
             }
             MSNavigationBar(selected: router.selectedTab) { tab in
                 // Compose drops the keyboard when the destination changes; SwiftUI keeps it.

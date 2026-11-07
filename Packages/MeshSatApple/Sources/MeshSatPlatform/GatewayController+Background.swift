@@ -36,10 +36,39 @@ extension GatewayController {
             }
         }
         if let fix = location.phoneLocation.value { await publishPositionToHub(fix) }
-        if let fetcher = tleFetcher, await fetcher.isCacheStale() { _ = await fetcher.refreshFromNetwork() }
+        // Orbit data only once a satellite modem is there (MESHSAT-1752): nothing goes online unasked.
+        if central.iridiumPipe.value != nil, let fetcher = tleFetcher, await fetcher.isCacheStale() {
+            _ = await fetcher.refreshFromNetwork()
+        }
         telemetryLogger?.recordEvent(tag: "Background", message: "Hub sync window", detail: ["deliveries": .int(Int64(sent))])
         Self.log.info("Background sync: \(sent) deliveries drained")
         return true
+    }
+
+    /// Orbit data is downloaded only once a satellite modem is set up, as Android's
+    /// startTleRefreshOnceModemSetUp (MESHSAT-1752, F-Droid's device test of 29 Oct 2026): until then
+    /// the passes come from the stored or bundled copy, and only Update on the passes screen goes
+    /// online. iOS stores no 9704 address (the 9704 is reached through the node), so the node's
+    /// Iridium pipe is the one sign. Then the stored copy is checked every hour and refreshed when it
+    /// is stale, at most every 12 hours.
+    func startTleRefreshOnceModemSetUp(_ fetcher: TleFetcher) {
+        keep(
+            Task { [self] in
+                if central.iridiumPipe.value == nil {
+                    for await pipe in central.iridiumPipe.subscribe() where pipe != nil { break }
+                }
+                guard !Task.isCancelled else { return }
+                Self.log.info("Satellite modem set up: orbit data is kept fresh from now on")
+                var lastAttemptMs: Int64 = 0
+                while !Task.isCancelled {
+                    let now = clock.nowMs()
+                    if now - lastAttemptMs >= Self.tleRefreshEveryMs, await fetcher.isCacheStale() {
+                        lastAttemptMs = now
+                        _ = await fetcher.refreshFromNetwork()
+                    }
+                    await clock.sleep(ms: 3_600_000)
+                }
+            })
     }
 
     /// The refresh window (BGAppRefreshTask net.meshsat.ios.refresh): fresh pass predictions.

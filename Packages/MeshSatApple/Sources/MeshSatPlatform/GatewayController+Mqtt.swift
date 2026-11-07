@@ -132,7 +132,7 @@ extension GatewayController {
             let text = body?.string("text") ?? ""
             guard !to.isEmpty, !text.isEmpty else { return }
             queueSmsMessage(text, recipient: to)
-            Self.log.info("Hub asked for an SMS to \(to): parked for the composer (iOS has no SMS API)")
+            Self.log.info("Hub asked for an SMS: parked for the composer (iOS has no SMS API)")
         } else if topic.contains("/tak/cot/in") {
             await onTakCotInbound(payload)
         } else if topic.contains("/config/update") {
