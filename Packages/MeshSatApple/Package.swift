@@ -2,7 +2,7 @@
 // MeshSatApple: the parts of MeshSat iOS that need Apple frameworks and therefore build only on
 // Apple platforms. Mirrors, in MeshSat Android:
 //   MeshSatBLE       ble/MeshtasticBle, ble/IridiumBlePipe (CoreBluetooth central), and
-//                    reticulum/RnsBlePeripheralInterface (CoreBluetooth peripheral)
+//                    reticulum/RnsBlePeripheralInterface (CoreBluetooth peripheral), rnode/RnodeBleLink
 //   MeshSatStore     data/AppDatabase and the DAOs (GRDB), data/SettingsRepository (UserDefaults),
 //                    crypto/SecureKeyStore (Keychain)
 //   MeshSatPlatform  service/GatewayService (GatewayController + BackgroundCoordinator), location/,
@@ -35,6 +35,7 @@ let package = Package(
             dependencies: [
                 .product(name: "MeshSatMeshtastic", package: "MeshSatKit"),
                 .product(name: "MeshSatReticulum", package: "MeshSatKit"),
+                .product(name: "MeshSatRns", package: "MeshSatKit"),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
