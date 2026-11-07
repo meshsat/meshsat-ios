@@ -394,6 +394,28 @@ platform :ios do
     UI.success("#{version.version_string} is waiting for App Review (submission #{submission})")
   end
 
+  # Takes the version out of App Review before a reviewer opens it (App Store Connect's "Remove
+  # from review"): the WAITING_FOR_REVIEW submission is cancelled, the version goes back to
+  # editable, and store_new_version attaches another build before store_submit makes a new
+  # submission (a new queue position). Used once, 7 Nov 2026 (MESHSAT-1827): 0.3.0's build 26
+  # had the black night mode. Never for a submission a reviewer has already answered.
+  desc "Cancel the submission that is waiting for review, so another build can be attached"
+  lane :store_withdraw do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    _, subs = asc_rest(:get, "v1/reviewSubmissions?filter[app]=#{app.id}&filter[platform]=IOS&filter[state]=WAITING_FOR_REVIEW")
+    waiting = (subs["data"] || [])
+    UI.user_error!("no submission is waiting for review") if waiting.empty?
+    UI.user_error!("#{waiting.size} submissions wait; cancel by hand") if waiting.size > 1
+    submission = waiting.first["id"]
+    code, body = asc_rest(:patch, "v1/reviewSubmissions/#{submission}", {
+      data: { type: "reviewSubmissions", id: submission, attributes: { canceled: true } }
+    })
+    UI.user_error!("cancel: #{code} #{(body["errors"] || []).map { |e| e["detail"] }.join(" | ")}") unless code == 200
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    UI.success("submission #{submission} cancelled: #{body.dig('data', 'attributes', 'state')}; version #{version&.version_string} is #{version&.app_store_state}")
+  end
+
   # After an answered information request the page's "Resubmit to App Review" stays greyed until
   # the rejected item is marked resolved. This is what that button does: resolve every rejected
   # item of the Unresolved Issues submission, then submit the same submission again. Nothing in
