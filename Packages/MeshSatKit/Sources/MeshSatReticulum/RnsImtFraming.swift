@@ -3,6 +3,7 @@
 // Transport message that carries a Reticulum packet is "RNSI" + version 0x01 + the raw packet. A
 // message without the header, or whose remainder is not a Reticulum packet, is a text for the
 // plain satellite conversation and never a packet. [MESHSAT-1553, MESHSAT-1624]
+import Crypto
 import Foundation
 
 public enum RnsImtFraming {
@@ -39,5 +40,39 @@ public enum RnsImtFraming {
         }
         pos += hashLen + 1
         return pos < raw.count
+    }
+}
+
+/// Mirrors rns/ImtFraming.kt's ImtDedup: drops repeats of an IMT message within a window. CrossTalk
+/// keeps resending an MO every 30 s until the modem acknowledges it, and the network can deliver a
+/// late acknowledgement's copy again.
+public final class ImtDedup: @unchecked Sendable {
+    private let ttlMs: Int64
+    private let max: Int
+    private let lock = NSLock()
+    private var seen: [String: Int64] = [:]
+    private var order: [String] = []
+
+    public init(ttlMs: Int64 = 15 * 60_000, max: Int = 256) {
+        self.ttlMs = ttlMs
+        self.max = max
+    }
+
+    /// Whether `data` was delivered within the window; records it.
+    public func seen(_ data: [UInt8], nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Bool {
+        let k = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        lock.lock()
+        defer { lock.unlock() }
+        let expired = order.filter { nowMs - (seen[$0] ?? 0) > ttlMs }
+        for e in expired { seen[e] = nil }
+        order.removeAll { seen[$0] == nil }
+        if seen[k] != nil { return true }
+        if order.count >= max, let oldest = order.first {
+            seen[oldest] = nil
+            order.removeFirst()
+        }
+        seen[k] = nowMs
+        order.append(k)
+        return false
     }
 }

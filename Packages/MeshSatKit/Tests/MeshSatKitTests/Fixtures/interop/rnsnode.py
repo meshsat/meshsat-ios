@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Generic Reticulum peer for the MeshSat interop tests.
+
+Runs under the pinned venv (internal/interop/rnsenv). Reads one JSON command
+per line on stdin, writes one JSON event per line on stdout. Everything is
+upstream RNS/LXMF behaviour; nothing here knows about MeshSat. Ingress control
+is off on its interfaces: RNS 1.5 holds announces that arrive in a burst on a
+fresh interface (Interface.IC_BURST_FREQ_NEW), which a test peer behind one
+transport sees on every start.
+
+The Bridge's script plus the propagation node side (MESHSAT-1553 P3b):
+--propagation-node runs an lxmd-style node, set_propagation_node and sync
+drive a client, send_lxm takes method "propagated".
+
+Args:
+  --config-dir DIR      Reticulum config/storage directory (created)
+  --transport yes|no    enable_transport
+  --connect HOST:PORT   TCPClientInterface to a server
+  --listen PORT         TCPServerInterface on 127.0.0.1
+  --auto DEVICE         AutoInterface on one network device (a veth end in the tests)
+  --rnode PORT          RNodeInterface on a serial port (a software RNode's pty in the tests)
+  --rnode-params F,BW,TXP,SF,CR   its radio parameters (default CrossTalk's EU preset)
+  --name NAME           LXMF display name (default "rnsnode")
+  --stamp-cost N        inbound stamp cost announced (0 = none)
+  --enforce-stamps      enforce inbound stamps
+  --propagation-node    also run an LXMF propagation node (announced with "announce")
+  --propagation-cost N  the node's propagation stamp cost (13 = the minimum, default)
+
+Commands (JSON objects):
+  {"cmd":"announce"}                       announce the LXMF delivery destination
+  {"cmd":"request_path","dest":HEX}        Transport.request_path
+  {"cmd":"has_path","dest":HEX}            -> {"event":"path","dest":...,"known":bool,"hops":n,"next_hop":HEX}
+  {"cmd":"link","dest":HEX}                open an RNS.Link to dest (must be known)
+  {"cmd":"link_send","link":HEX,"data":TEXT}  send data on a link, report proof
+  {"cmd":"link_close","link":HEX}
+  {"cmd":"send_lxm","dest":HEX,"content":TEXT,"title":TEXT,"method":"opportunistic|direct|auto|propagated","fields_hex":HEX}
+      fields_hex, optional: the fields map as msgpack; lxm_received reports it the same way
+  {"cmd":"set_propagation_node","dest":HEX}  the node propagated messages go through and syncs come from
+  {"cmd":"sync","max":N}                  download from the propagation node -> {"event":"sync","state":n,"result":n}
+  {"cmd":"send_packet","dest":HEX,"data":TEXT}  single encrypted packet to a SINGLE dest, waits for proof
+  {"cmd":"set_keepalive","link":HEX,"seconds":N}
+  {"cmd":"status"}
+  {"cmd":"quit"}
+
+Events: {"event":"ready","identity":HEX,"delivery":HEX,"transport_id":HEX},
+  announce, path, link_established, link_closed, link_packet, link_proof,
+  lxm_delivered, lxm_failed, lxm_received, packet_proved, packet_received, error.
+"""
+import argparse, json, os, sys, threading, time
+
+import RNS
+import RNS.vendor.umsgpack as umsgpack
+import LXMF
+from LXMF import LXStamper
+
+# Stamp generation in one process: the multiprocess generator starts one
+# worker per core, which on a shared test host is both slow to spawn and
+# unwelcome; the stamps it produces are the same.
+LXStamper.job_linux = LXStamper.job_simple
+LXStamper.job_linux_managed = LXStamper.job_simple
+
+out_lock = threading.Lock()
+
+
+def emit(**ev):
+    with out_lock:
+        sys.stdout.write(json.dumps(ev) + "\n")
+        sys.stdout.flush()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config-dir", required=True)
+    ap.add_argument("--transport", default="no")
+    ap.add_argument("--connect", default=None)
+    ap.add_argument("--listen", default=None)
+    ap.add_argument("--auto", default=None)
+    ap.add_argument("--rnode", default=None)
+    ap.add_argument("--rnode-params", default="867200000,125000,14,8,5")
+    ap.add_argument("--name", default="rnsnode")
+    ap.add_argument("--stamp-cost", type=int, default=0)
+    ap.add_argument("--enforce-stamps", action="store_true")
+    ap.add_argument("--propagation-node", action="store_true")
+    ap.add_argument("--propagation-cost", type=int, default=13)
+    ap.add_argument("--loglevel", type=int, default=2)
+    ap.add_argument("--keep-config", action="store_true", help="use the config already in --config-dir")
+    args = ap.parse_args()
+
+    os.makedirs(args.config_dir, exist_ok=True)
+    ifaces = ""
+    if args.connect:
+        host, port = args.connect.rsplit(":", 1)
+        ifaces += f"""
+  [[client]]
+    type = TCPClientInterface
+    enabled = yes
+    target_host = {host}
+    target_port = {port}
+    ingress_control = No
+"""
+    if args.listen:
+        ifaces += f"""
+  [[server]]
+    type = TCPServerInterface
+    enabled = yes
+    listen_ip = 127.0.0.1
+    listen_port = {args.listen}
+    ingress_control = No
+"""
+    if args.auto:
+        ifaces += f"""
+  [[auto]]
+    type = AutoInterface
+    enabled = yes
+    devices = {args.auto}
+    ingress_control = No
+"""
+    if args.rnode:
+        freq, bw, txp, sf, cr = [int(x) for x in args.rnode_params.split(",")]
+        ifaces += f"""
+  [[rnode]]
+    type = RNodeInterface
+    enabled = yes
+    port = {args.rnode}
+    frequency = {freq}
+    bandwidth = {bw}
+    txpower = {txp}
+    spreadingfactor = {sf}
+    codingrate = {cr}
+    flow_control = True
+    ingress_control = No
+"""
+    if args.keep_config: pass
+    else:
+      with open(os.path.join(args.config_dir, "config"), "w") as f:
+        f.write(f"""[reticulum]
+  enable_transport = {"Yes" if args.transport == "yes" else "No"}
+  share_instance = No
+  panic_on_interface_error = No
+
+[logging]
+  loglevel = {args.loglevel}
+
+[interfaces]
+{ifaces}
+""")
+
+    RNS.logfile = os.path.join(args.config_dir, "rns.log")
+    RNS.logdest = RNS.LOG_FILE
+    reticulum = RNS.Reticulum(args.config_dir)
+    identity = RNS.Identity()
+    router = LXMF.LXMRouter(identity=identity, storagepath=args.config_dir, enforce_stamps=args.enforce_stamps,
+                            autopeer=False, propagation_cost=args.propagation_cost)
+    if args.propagation_node:
+        router.enable_propagation()
+    stamp_cost = args.stamp_cost if args.stamp_cost > 0 else None
+    delivery = router.register_delivery_identity(identity, display_name=args.name, stamp_cost=stamp_cost)
+
+    def on_lxm(message):
+        emit(event="lxm_received", hash=message.hash.hex(), source=message.source_hash.hex(),
+             content=message.content.decode("utf-8", "replace"), title=message.title.decode("utf-8", "replace"),
+             signature_validated=bool(message.signature_validated), stamp_valid=bool(getattr(message, "stamp_valid", False)),
+             method=str(message.method), fields_hex=umsgpack.packb(message.fields or {}).hex())
+
+    router.register_delivery_callback(on_lxm)
+
+    # A plain SINGLE destination for raw packet tests, separate from LXMF.
+    raw_dest = RNS.Destination(identity, RNS.Destination.IN, RNS.Destination.SINGLE, "interop", "raw")
+    raw_dest.set_proof_strategy(RNS.Destination.PROVE_ALL)
+    raw_dest.accepts_links(True)
+
+    def on_raw_packet(data, packet):
+        emit(event="packet_received", data=data.decode("utf-8", "replace"), hash=packet.packet_hash.hex(), hops=packet.hops)
+
+    raw_dest.set_packet_callback(on_raw_packet)
+
+    links = {}
+
+    def on_link_established(link):
+        links[link.link_id.hex()] = link
+        emit(event="link_established", link=link.link_id.hex(), dest=link.destination.hash.hex() if link.destination else raw_dest.hash.hex(),
+             rtt=link.rtt, initiator=bool(link.initiator), mtu=link.mtu)
+        link.set_link_closed_callback(lambda l: emit(event="link_closed", link=l.link_id.hex(), reason=l.teardown_reason))
+        link.set_packet_callback(lambda data, packet: emit(event="link_packet", link=link.link_id.hex(), data=data.decode("utf-8", "replace")))
+        link.set_remote_identified_callback(lambda l, ident: emit(event="link_identified", link=l.link_id.hex(), identity=ident.hash.hex()))
+
+    raw_dest.set_link_established_callback(on_link_established)
+
+    class AnnounceHandler:
+        aspect_filter = None
+        receive_path_responses = True  # RNS skips path responses for handlers without this
+
+        def received_announce(self, destination_hash, announced_identity, app_data, announce_packet_hash=None):
+            emit(event="announce", dest=destination_hash.hex(), identity=announced_identity.hash.hex(),
+                 app_data=(app_data.hex() if app_data else ""), hops=RNS.Transport.hops_to(destination_hash))
+
+    RNS.Transport.register_announce_handler(AnnounceHandler())
+
+    emit(event="ready", identity=identity.hash.hex(), delivery=delivery.hash.hex(), raw=raw_dest.hash.hex(),
+         propagation=router.propagation_destination.hash.hex() if args.propagation_node else "",
+         transport_id=RNS.Transport.identity.hash.hex(), rns=RNS.__version__, lxmf=LXMF.__version__)
+
+    def sync_watch(deadline):
+        # LXMRouter.PR_COMPLETE is 0x07, failures are 0xf0 and up; the router moves the state by itself.
+        while time.time() < deadline:
+            st = router.propagation_transfer_state
+            if st == LXMF.LXMRouter.PR_COMPLETE or st >= LXMF.LXMRouter.PR_NO_PATH:
+                emit(event="sync", state=st, result=router.propagation_transfer_last_result,
+                     duplicates=router.propagation_transfer_last_duplicates)
+                router.acknowledge_sync_completion(reset_state=True)
+                return
+            time.sleep(0.2)
+        emit(event="sync", state=-1, result=None, duplicates=None)
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cmd = json.loads(line)
+        except Exception as e:
+            emit(event="error", error=f"bad json: {e}")
+            continue
+        c = cmd.get("cmd")
+        try:
+            if c == "quit":
+                break
+            elif c == "announce":
+                delivery.announce()
+                raw_dest.announce()
+                if args.propagation_node:
+                    router.propagation_destination.announce(app_data=router.get_propagation_node_app_data())
+                emit(event="announced", delivery=delivery.hash.hex(), raw=raw_dest.hash.hex())
+            elif c == "set_propagation_node":
+                router.set_outbound_propagation_node(bytes.fromhex(cmd["dest"]))
+                emit(event="propagation_node_set", dest=cmd["dest"])
+            elif c == "sync":
+                router.request_messages_from_propagation_node(identity, cmd.get("max") or LXMF.LXMRouter.PR_ALL_MESSAGES)
+                threading.Thread(target=sync_watch, args=(time.time() + float(cmd.get("timeout", 120)),), daemon=True).start()
+                emit(event="sync_started")
+            elif c == "request_path":
+                RNS.Transport.request_path(bytes.fromhex(cmd["dest"]))
+                emit(event="path_requested", dest=cmd["dest"])
+            elif c == "has_path":
+                d = bytes.fromhex(cmd["dest"])
+                known = RNS.Transport.has_path(d)
+                nh = RNS.Transport.next_hop(d)
+                emit(event="path", dest=cmd["dest"], known=bool(known), hops=RNS.Transport.hops_to(d) if known else -1,
+                     next_hop=nh.hex() if nh else "")
+            elif c == "link":
+                d = bytes.fromhex(cmd["dest"])
+                ident = RNS.Identity.recall(d)
+                if ident is None:
+                    emit(event="error", error="destination identity unknown")
+                    continue
+                dest = RNS.Destination(ident, RNS.Destination.OUT, RNS.Destination.SINGLE, "interop", "raw")
+                dest.hash = d
+                dest.hexhash = d.hex()
+                link = RNS.Link(dest, established_callback=on_link_established,
+                                closed_callback=lambda l: emit(event="link_closed", link=l.link_id.hex(), reason=l.teardown_reason))
+                links[link.link_id.hex()] = link
+                emit(event="link_requested", link=link.link_id.hex())
+            elif c == "link_send":
+                link = links[cmd["link"]]
+                p = RNS.Packet(link, cmd["data"].encode("utf-8"))
+                receipt = p.send()
+                if receipt:
+                    receipt.set_delivery_callback(lambda r: emit(event="link_proof", link=cmd["link"], rtt=r.get_rtt()))
+                    receipt.set_timeout_callback(lambda r: emit(event="link_proof_timeout", link=cmd["link"]))
+            elif c == "link_identify":
+                links[cmd["link"]].identify(identity)
+                emit(event="identified", link=cmd["link"])
+            elif c == "link_close":
+                links[cmd["link"]].teardown()
+            elif c == "set_keepalive":
+                link = links[cmd["link"]]
+                link.keepalive = cmd["seconds"]
+                link.stale_time = 2 * cmd["seconds"]
+                emit(event="keepalive_set", link=cmd["link"])
+            elif c == "send_packet":
+                d = bytes.fromhex(cmd["dest"])
+                ident = RNS.Identity.recall(d)
+                dest = RNS.Destination(ident, RNS.Destination.OUT, RNS.Destination.SINGLE, "interop", "raw")
+                dest.hash = d
+                dest.hexhash = d.hex()
+                p = RNS.Packet(dest, cmd["data"].encode("utf-8"))
+                receipt = p.send()
+                receipt.set_delivery_callback(lambda r: emit(event="packet_proved", hash=r.hash.hex(), rtt=r.get_rtt()))
+                receipt.set_timeout_callback(lambda r: emit(event="packet_timeout", hash=r.hash.hex()))
+                emit(event="packet_sent", hash=p.packet_hash.hex())
+            elif c == "send_lxm":
+                d = bytes.fromhex(cmd["dest"])
+                ident = RNS.Identity.recall(d)
+                if ident is None:
+                    emit(event="error", error="destination identity unknown")
+                    continue
+                dest = RNS.Destination(ident, RNS.Destination.OUT, RNS.Destination.SINGLE, "lxmf", "delivery")
+                m = cmd.get("method")
+                if m == "auto":
+                    # Sideband's and MeshChat's own choice (send_message in both):
+                    # opportunistic when no delivery link exists and the
+                    # destination announced a ratchet, otherwise direct.
+                    if not router.delivery_link_available(d) and RNS.Identity.current_ratchet_id(d) != None:
+                        method = LXMF.LXMessage.OPPORTUNISTIC
+                    else:
+                        method = LXMF.LXMessage.DIRECT
+                elif m == "propagated":
+                    method = LXMF.LXMessage.PROPAGATED
+                else:
+                    method = LXMF.LXMessage.DIRECT if m == "direct" else LXMF.LXMessage.OPPORTUNISTIC
+                fields = umsgpack.unpackb(bytes.fromhex(cmd["fields_hex"])) if cmd.get("fields_hex") else None
+                lxm = LXMF.LXMessage(dest, delivery, cmd.get("content", "").encode("utf-8"),
+                                     title=cmd.get("title", "").encode("utf-8"), fields=fields, desired_method=method)
+                lxm.register_delivery_callback(lambda m: emit(event="lxm_delivered", hash=m.hash.hex()))
+                lxm.register_failed_callback(lambda m: emit(event="lxm_failed", hash=m.hash.hex(), state=m.state))
+                router.handle_outbound(lxm)
+                emit(event="lxm_sent", hash=lxm.hash.hex(), method=str(lxm.method))
+            elif c == "status":
+                emit(event="status", paths=len(RNS.Transport.path_table), links=len(links))
+            else:
+                emit(event="error", error=f"unknown command {c}")
+        except Exception as e:
+            emit(event="error", error=f"{type(e).__name__}: {e}")
+
+    try:
+        router.exit_handler()
+    except Exception:
+        pass
+    os._exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -205,4 +205,75 @@ final class RnsGoldenTests: XCTestCase {
         XCTAssertEqual(Rns.linkMdu(), 431)
         XCTAssertEqual(Rns.mdu, 464)
     }
+
+    // MARK: Tranche 2: links, proofs, IFAC (GoldenVectorTest.kt's link, linkproof, rtt, proof and ifac cases)
+
+    func testLinkIdsSignallingAndKeysMatchLinkPy() throws {
+        let g = try Vectors.golden()
+        let raw = try g.hex("link.request_raw")
+        XCTAssertEqual(try LinkWire.linkIdFromRequestPacket(raw), try g.hex("link.id"))
+        XCTAssertEqual(try LinkWire.linkIdFromRequestPacket(try g.hex("link.request_raw_unsignalled")), try g.hex("link.id"))
+        XCTAssertEqual(LinkWire.signalling(mtu: 500, mode: 1), try g.hex("link.signalling_500_1"))
+        XCTAssertEqual(LinkWire.signalling(mtu: 262_144, mode: 1), try g.hex("link.signalling_262144_1"))
+        let req = try LinkWire.Request.unpack(try Header.unpack(raw).data)
+        XCTAssertEqual(req.mtu, try g.int("link.mtu"))
+        XCTAssertEqual(req.mode, try g.int("link.mode"))
+        XCTAssertTrue(req.signalled)
+        XCTAssertEqual(LinkWire.deriveLinkKey(shared: try g.hex("link.shared"), linkId: try g.hex("link.id")), try g.hex("link.key"))
+        XCTAssertEqual(LinkWire.mdu(500), 431)
+        XCTAssertEqual(LinkWire.parseSignalling(LinkWire.signalling(mtu: 1196, mode: 1)).mtu, 1196)
+        XCTAssertEqual(try LinkWire.Request.unpack(req.pack()), req)
+    }
+
+    func testALinkProofSignedByPythonVerifies() throws {
+        let g = try Vectors.golden()
+        let id = try RnsIdentity.fromPublicBytes(try g.hex("identity.pub"))
+        let lid = try g.hex("linkproof.link_id")
+        let pd = try LinkWire.ProofData.unpack(try g.hex("linkproof.data"))
+        XCTAssertTrue(pd.signalled)
+        XCTAssertTrue(
+            id.verify(
+                LinkWire.proofSignedData(linkId: lid, ephPub: pd.ephPub, identitySigPub: id.sigPubRaw, mtu: pd.mtu, mode: pd.mode),
+                signature: pd.signature))
+        let old = try LinkWire.ProofData.unpack(try g.hex("linkproof.data_unsignalled"))
+        XCTAssertFalse(old.signalled)
+        XCTAssertTrue(
+            id.verify(
+                LinkWire.proofSignedData(
+                    linkId: lid, ephPub: old.ephPub, identitySigPub: id.sigPubRaw, mtu: old.mtu, mode: old.mode, signalled: false),
+                signature: old.signature))
+        XCTAssertEqual(try LinkWire.ProofData.unpack(pd.pack()), pd)
+    }
+
+    func testRttValuesAreUmsgpackFloat64() throws {
+        let g = try Vectors.golden()
+        XCTAssertEqual(LinkWire.rttData(0.734), try g.hex("rtt.packed_0_734"))
+        XCTAssertEqual(LinkWire.parseRttData(try g.hex("rtt.packed_1_25")), 1.25)
+        XCTAssertNil(LinkWire.parseRttData([0xA1, 0x61]))
+    }
+
+    func testPythonProofsValidateAndAddressTheTruncatedHash() throws {
+        let g = try Vectors.golden()
+        let id = try RnsIdentity.fromPublicBytes(try g.hex("identity.pub"))
+        let ph = Header.packetHash(try g.hex("proof.raw"))
+        XCTAssertEqual(ph, try g.hex("proof.hash"))
+        XCTAssertTrue(Proof.validate(try g.hex("proof.impl"), packetHash: ph, sigPub: id.sigPubRaw))
+        XCTAssertTrue(Proof.validate(try g.hex("proof.expl"), packetHash: ph, sigPub: id.sigPubRaw))
+        XCTAssertFalse(Proof.validate(try g.hex("proof.impl"), packetHash: Array(ph.reversed()), sigPub: id.sigPubRaw))
+        let packet = try Proof.packet(provedRaw: try g.hex("proof.raw"), proofData: try g.hex("proof.impl"))
+        XCTAssertEqual(try Header.unpack(packet).destHash, try g.hex("proof.dest"))
+    }
+
+    func testIfacKeysAndWrappingMatchTransportPy() throws {
+        let g = try Vectors.golden()
+        let f = try Ifac(netname: try g.str("ifac.netname"), netkey: try g.str("ifac.netkey"))
+        XCTAssertEqual(f.key, try g.hex("ifac.key"))
+        // Ed25519 is deterministic, so the wrapped bytes are Python's byte for byte.
+        XCTAssertEqual(try f.wrap(try g.hex("ifac.clean")), try g.hex("ifac.wrapped"))
+        XCTAssertEqual(try f.unwrap(try g.hex("ifac.wrapped")), try g.hex("ifac.clean"))
+        XCTAssertTrue(Ifac.hasFlag(try g.hex("ifac.wrapped")))
+        XCTAssertFalse(Ifac.hasFlag(try g.hex("ifac.clean")))
+        XCTAssertThrowsError(try f.unwrap(try g.hex("ifac.wrapped_other")))
+        XCTAssertThrowsError(try Ifac(netname: "", netkey: ""))
+    }
 }

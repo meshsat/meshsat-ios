@@ -37,6 +37,7 @@ let package = Package(
         .library(name: "MeshSatCrypto", targets: ["MeshSatCrypto"]),
         .library(name: "MeshSatFec", targets: ["MeshSatFec"]),
         .library(name: "MeshSatNet", targets: ["MeshSatNet"]),
+        .library(name: "MeshSatNIO", targets: ["MeshSatNIO"]),
         .library(name: "MeshSatReticulum", targets: ["MeshSatReticulum"]),
         .library(name: "MeshSatRns", targets: ["MeshSatRns"]),
         .library(name: "MeshSatLXMF", targets: ["MeshSatLXMF"]),
@@ -76,6 +77,14 @@ let package = Package(
         .target(name: "MeshSatFec"),
         .target(name: "MeshSatNet"),
         .target(
+            name: "MeshSatNIO",
+            dependencies: [
+                "MeshSatNet",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ]
+        ),
+        .target(
             name: "MeshSatReticulum",
             dependencies: [
                 "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatProto", "MeshSatMeshtastic",
@@ -87,14 +96,14 @@ let package = Package(
         .target(
             name: "MeshSatRns",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatReticulum",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatReticulum",
                 .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
         .target(
             name: "MeshSatLXMF",
             dependencies: [
-                "MeshSatWire", "MeshSatRns", "MeshSatReticulum",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatNet", "MeshSatRns", "MeshSatReticulum",
                 .product(name: "Crypto", package: "swift-crypto"),
             ]
         ),
@@ -149,7 +158,7 @@ let package = Package(
         .testTarget(
             name: "MeshSatKitTests",
             dependencies: [
-                "MeshSatWire", "MeshSatCrypto", "MeshSatFec", "MeshSatNet", "MeshSatReticulum", "MeshSatRns", "MeshSatLXMF",
+                "MeshSatWire", "MeshSatCrypto", "MeshSatFec", "MeshSatNet", "MeshSatNIO", "MeshSatReticulum", "MeshSatRns", "MeshSatLXMF",
                 "MeshSatSatellite", "MeshSatProto", "MeshSatMeshtastic", "MeshSatEngine",
                 "MeshSatHub", "MeshSatMQTT", "MeshSatMsvqsc", "MeshSatAprs", "MeshSatTak",
                 .product(name: "Crypto", package: "swift-crypto"),

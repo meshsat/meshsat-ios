@@ -71,27 +71,87 @@ the same message packed by the three implementations hashes to one id.
   routing identity's keys in Reticulum order; Android's `d180c2083c4b9fecd0ff19812cb9b074` (msa-flaneur)
   came from the same construction.
 
+## The Opus spike (7 Nov 2026, for the voice notes of tranche 5)
+
+Apple's own Opus encoder does what Android's MediaRecorder does, so the notes need no libopus: on the build Mac
+(Xcode 26.4.1), `AVAudioConverter` from 48 kHz mono Float32 PCM to `kAudioFormatOpus` with `mFramesPerPacket = 960`
+and `bitRate = 16_000` turned a 2 s tone into 101 packets (24 to 75 bytes, mean 58, 5939 bytes in all), every packet
+with TOC byte 0x48 (SILK wideband, one 20 ms frame, mono), `primeInfo.leadingFrames` 312 (the pre-skip Android's
+`OpusVoice` defaults to), and the decoder's round trip measured RMS 0.364 against the tone's 0.354. The applicable
+bitrates include 6 to 512 kbit/s. What is left for tranche 5 is the Ogg container (`OggOpus.kt` ported) around these
+packets and the same check on the phone. Script: the session scratchpad's `opus_spike.swift`; result also on MESHSAT-1735.
+
+## Tranches 2 and 3 (7 Nov 2026): links, resources, IFAC and the node
+
+Both in `Sources/MeshSatRns`, pure Swift, Linux-tested, file for file after Android's `rns/`:
+
+| Swift | Mirrors (Kotlin; Go) | Pinned by |
+|---|---|---|
+| `LinkWire.swift` | `LinkWire.kt`; `internal/reticulum/rnslink.go` | `link.*`, `linkproof.*`, `rtt.*` (RnsGoldenTests) |
+| `Proof.swift` | the `Proof` object of `Wire.kt`; `proof.go` | `proof.*` |
+| `Ifac.swift` | the `Ifac` class of `Wire.kt`; `ifac.go` | `ifac.*` (key, wrap and unwrap byte for byte: Ed25519 is deterministic) |
+| `Node/Node.swift` | `Node.kt` (Transmitter, NodeConfig, Packet, Destination, KnownIdentity, Stats, Node) | `NodeTests` |
+| `Node/Link.swift`, `Resource.swift`, `Requests.swift`, `Receipts.swift` | `Link.kt`, `Resource.kt`, `Requests.kt`, `Receipts.kt` | `NodeTests` |
+| `Node/Transport.swift`, `AnnounceHandling.swift`, `PathRequests.swift`, `Paths.swift`, `PaidLinks.swift` | the same names in `rns/` | `NodeTests` |
+| `MeshSatNet/Promise.swift` | `java.util.concurrent.CompletableFuture` as the Kotlin code uses it | |
+
+`NodeTests` is Kotlin's `NodeTest` case for case: three nodes in a line with the middle one a transport (announce
+learned at two hops, a single packet proved back through the reverse table, a link whose request and proof cross the
+transport, link data proved, identify, teardown, a path request answered by a later announce), a 3,000-byte and a
+20,000-byte resource over one link, the packet filter, the announce replacement rules, a neighbour heard across a paid
+link with extra hops (HEADER_1 stays HEADER_1; a HEADER_2 naming our own destination is taken as local), and a paid
+interface that carries only listed destinations with the 5-minute gate.
+
+Shape differences that are deliberate: `Node`, `Link`, `LinkManager` and the resources are `final class ... @unchecked
+Sendable` with recursive locks (Kotlin's ReentrantLock); callbacks are `@Sendable` and run outside the locks as in
+Kotlin; Kotlin's 250 ms `ScheduledExecutor` is one Task on the injected `DriverClock`, and its one-shot `schedule` is a
+due-list the same tick drains (so a test clock never sleeps); a node that is not running runs a scheduled task at once,
+as Kotlin's shut-down scheduler does. Kotlin's `IllegalStateException`s are `NodeError`. `requestPathBlocking` is
+`requestPathAwait`.
+
+**The TCP listener and the Python harness (tranche 3's second half, 7 Nov 2026).** `MeshSatNet/ByteStream.swift` gained
+`ByteStreamListener` and `ByteStreamListenerFactory`; the new target **MeshSatNIO** (`NIOByteStreams.swift`) implements
+the dialer and the listener on SwiftNIO's POSIX sockets for Linux and the Mac (the app keeps Network.framework);
+`MeshSatReticulum/RnsTcpServerInterface.swift` mirrors `TcpServerInterface.kt` (any number of HDLC peers, a transmit
+goes to all, `peerCount`, `listen(port:)`); `MeshSatRns/Node/InterfaceTransmitter.swift` is the Transmitter of
+`RnsStack.kt` (one ordered queue per interface, floodable = online and bidirectional and unpaid, 1000 bit/s for
+`mesh*`). Tests: `Reticulum/RnsTcpServerInterfaceTests` on real sockets (CI), and under `Tests/Interop/`: `PyEnv.swift`
+and `PyPeer.swift` (mirrors of `PyEnv.kt`, `PyPeer.kt`), `Fixtures/interop/rnsnode.py` (the Bridge's script, unchanged)
+and `InteropNodeTests` (Kotlin's six: announce both ways, packet and proof both ways, a link each way with identify,
+keepalive and close, three-node transport with us in the middle, us behind a stock rnsd). They skip without the venv;
+**`scripts/interop-docker.sh`** runs them with `MESHSAT_INTEROP=1` in `scripts/interop/Dockerfile` (swift:6.2-noble
+plus python3; the venv and SwiftPM's caches on the host mount `~/.cache/meshsat-interop`). **All six green against Python
+RNS 1.5.5 on 7 Nov 2026 20:44 CET**, first run. NIO trap: `ChannelOptions.socketOption(.tcp_nodelay)` is the SOL_SOCKET
+level (option 1 there is SO_DEBUG, EACCES in a container); TCP_NODELAY is `ChannelOptions.Types.SocketOption(level: .tcp,
+name: .tcp_nodelay)`.
+
+## Tranche 4 (7 Nov 2026): the router, the propagation client and the stack
+
+`MeshSatLXMF/LxmfRouter.swift` and `LxmfRouter+Propagation.swift` mirror `lxmf/LxmfRouter.kt` (LXMF/LXMRouter.py
+1.2.0): the lxmf.delivery destination with ratchets and the announce app data, inbound with stamp checks and the dedup,
+the outbound queue (opportunistic one-packet, direct over a link reused and identified for the backchannel, a resource
+above 319 bytes, upstream's attempt limits and retry waits, direct across a paid link), the propagation client
+(`PROPAGATED` through an lxmf.propagation node with the node's stamp, the signalling packet, `sync()` with the two
+`/get` rounds and the confirmation). `LxmfPropagation.swift` = `LxmfPropagation.kt` (the node announce, `SyncState`).
+`RnsStack.swift` = `RnsStack.kt`: node + router over the app's `RnsInterface`s, ratchets through an `RnsStackStore`
+(the Keychain on the phone), the announce loop, the paid policy with our own address, the propagation choice, the
+sync loop, `inbound` for the legacy stack's `RnsTransportNode.upstreamInbound` (added). Shape: `LxmfRouter.Outbound`'s
+fields sit behind one lock (`read`/`update`); the 1 s tick and every timer read the node's clock; `Promise` replaces
+`CompletableFuture`; the class is split in two files for the linter. Tests: `LXMF/LxmfRouterTests` (Kotlin's four, in
+memory: opportunistic, direct with link reuse, a resource and the backchannel; stamps at 6; across a paid link with 2 s
+each way; an unreachable peer fails after its attempts), `LXMF/RnsStackTests`, and under `Interop/`: `InteropLxmfTests`
+(Kotlin's seven: single packet both ways, the HeMB-NG mid field both ways with the 252/253 boundary, direct links both
+ways with reuse, stamps at 6, resources both ways, propagated to Python through a node, propagated from Python through
+a node) and `LxmfOracleTests` (two). **All fifteen interop cases green against Python RNS 1.5.5 + LXMF 1.2.0 on 7 Nov
+2026 21:01 CET**, first run of the router.
+
 ## What comes next
 
-1. **Links and resources** (`rns/Link.kt`, `LinkWire.kt`, `Resource.kt`, `Receipts.kt`, `Requests.kt`;
-   Go `internal/reticulum/rnslink.go`, `proof.go`, `resource.go`, `internal/rns/link.go`, `resource.go`,
-   `receipts.go`): the link request and proof (the golden `link.*`, `linkproof.*`, `proof.*`, `rtt.*`
-   vectors are already in `golden.properties`), the link keys, keepalives, proofs, the resource transfer
-   LXMF uses above 319 bytes, and IFAC (`ifac.*` vectors) for the Hub's Private networks.
-2. **The node** (`rns/Node.kt`, `Transport.kt`, `Paths.kt`, `PathRequests.kt`, `AnnounceHandling.kt`,
-   `PaidLinks.kt`; Go `internal/rns/node.go`, `transport.go`, `paths.go`, `pathreq.go`, `announce.go`,
-   `paidlinks.go`): the transport node with its path table, announce handling and rebroadcast, path
-   requests, the paid-link policy (extra hops 20, the allow-list, one announce per 5 minutes per
-   destination) and the leaf mode a kit uses on the Hub's port.
-3. **Transport binding**: a TCP interface to `rns.meshsat.net:4242` (and a tenant's Private network with
+1. **Transport binding**: a TCP interface to `rns.meshsat.net:4242` (and a tenant's Private network with
    its IFAC), the RNSI framing on the Iridium pipe (`rns/ImtFraming.kt` is the same as the existing
    `RnsImtFraming.swift`), and the phones' port 256 framing over Meshtastic (MESHSAT-1721) when the Bridge
    adopts it. The node sees every packet first; what it declines falls through to `MeshSatReticulum`.
-4. **The router** (`lxmf/LxmfRouter.kt`; Go `internal/lxmf/router.go`): the delivery destination, inbound
-   (signature, stamp enforcement, the mid dedup), outbound (opportunistic below 287 bytes off a paid link,
-   direct over a link, resource above 319), receipts and states, the propagation node client
-   (`LxmfPropagation.kt`; Go `propagation.go`) for a held message.
-5. **Store and screens**: `lxmf_messages` in GRDB, the Reticulum settings (display name, stamp cost, the
+2. **Store and screens**: `lxmf_messages` in GRDB, the Reticulum settings (display name, stamp cost, the
    paid-link allow-list of Settings > Reticulum by satellite), a conversation keyed by delivery hash, the
    voice note and photo attachments in chat (recording and encoding are the app's, playback through the
    fields above), and the README's proven table.

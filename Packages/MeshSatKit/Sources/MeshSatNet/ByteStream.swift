@@ -139,6 +139,21 @@ public enum ByteStreamError: Error, Equatable, Sendable {
     case refused(String)
 }
 
+/// A listening TCP socket (java.net.ServerSocket on Android, NWListener on the phone, NIO on Linux):
+/// every accepted connection arrives as a `ByteStream`; the stream of connections ends when the
+/// listener closes.
+public protocol ByteStreamListener: Sendable {
+    /// The port bound (the one asked for, or the one picked for 0).
+    var port: Int { get }
+    var connections: AsyncStream<any ByteStream> { get }
+    func close() async
+}
+
+/// Opens listening sockets; port 0 picks a free one.
+public protocol ByteStreamListenerFactory: Sendable {
+    func listen(host: String, port: Int) async throws -> any ByteStreamListener
+}
+
 /// Two ends of an in-memory pipe for tests: what one side sends, the other receives.
 public final class LoopbackByteStream: ByteStream, @unchecked Sendable {
     public let incoming: AsyncStream<[UInt8]>
