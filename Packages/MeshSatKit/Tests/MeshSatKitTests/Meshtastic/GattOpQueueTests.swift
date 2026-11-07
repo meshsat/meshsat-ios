@@ -148,4 +148,83 @@ final class GattOpQueueTests: XCTestCase {
         let r3 = await queue.enqueueUrgent("w:v") { true }.await()
         XCTAssertEqual([r1, r2, r3], [GattOpQueue.statusClosed, GattOpQueue.statusClosed, GattOpQueue.statusClosed])
     }
+
+    private final class Clock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: Int64
+        init(_ start: Int64) { value = start }
+        var now: Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+        func advance(_ ms: Int64) {
+            lock.lock()
+            value += ms
+            lock.unlock()
+        }
+    }
+
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func bump() {
+            lock.lock()
+            n += 1
+            lock.unlock()
+        }
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return n
+        }
+    }
+
+    // MESHSAT-1816, Android's "a client that refuses everything for a minute is reported dead once".
+    func testAConnectionThatRefusesEverythingForAMinuteIsReportedDeadOnce() async {
+        let clock = Clock(1_000_000)
+        let queue = GattOpQueue(timeoutMs: 2_000, nowMs: { clock.now })
+        let dead = Counter()
+        queue.onDead = { _, _ in dead.bump() }
+        // The first refusals after a connect come within milliseconds: not dead.
+        for _ in 0..<5 {
+            let r = await queue.enqueue("w:a") { false }.await()
+            XCTAssertEqual(r, GattOpQueue.statusRefused)
+        }
+        XCTAssertEqual(dead.value, 0)
+        clock.advance(GattOpQueue.deadAfterMs - 1)
+        _ = await queue.enqueue("rssi") { false }.await()
+        XCTAssertEqual(dead.value, 0)
+        clock.advance(1)
+        _ = await queue.enqueue("rssi") { false }.await()
+        XCTAssertEqual(dead.value, 1)
+        clock.advance(GattOpQueue.deadAfterMs)
+        _ = await queue.enqueue("rssi") { false }.await()
+        XCTAssertEqual(dead.value, 1)
+    }
+
+    // Android's "an accepted operation starts the count again".
+    func testAnAcceptedOperationStartsTheCountAgain() async {
+        let clock = Clock(0)
+        let queue = GattOpQueue(timeoutMs: 2_000, nowMs: { clock.now })
+        let dead = Counter()
+        queue.onDead = { _, _ in dead.bump() }
+        for _ in 0..<2 { _ = await queue.enqueue("w:a") { false }.await() }
+        clock.advance(GattOpQueue.deadAfterMs / 2)
+        let ok = queue.enqueue("r:b") { true }
+        await settle()
+        queue.complete("r:b", status: 0)
+        let r = await ok.await()
+        XCTAssertEqual(r, 0)
+        clock.advance(GattOpQueue.deadAfterMs / 2 + 1)
+        for _ in 0..<3 { _ = await queue.enqueue("w:a") { false }.await() }
+        XCTAssertEqual(dead.value, 0)
+        // Two refusals alone, however far apart, are not enough either.
+        let queue2 = GattOpQueue(timeoutMs: 2_000, nowMs: { clock.now })
+        queue2.onDead = { _, _ in dead.bump() }
+        _ = await queue2.enqueue("w:a") { false }.await()
+        clock.advance(10 * GattOpQueue.deadAfterMs)
+        _ = await queue2.enqueue("w:a") { false }.await()
+        XCTAssertEqual(dead.value, 0)
+    }
 }

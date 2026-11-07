@@ -4,7 +4,8 @@
 // same discipline keeps the pipe's chunked writes acknowledged one by one, gives every
 // operation a timeout, and fails what is queued when the connection goes away. `enqueueUrgent`
 // puts an operation ahead of every queued one (never ahead of the one in flight): the 9704's MO
-// segment answer, which the modem waits for only about 360 ms (MESHSAT-1674).
+// segment answer, which the modem waits for only about 360 ms (MESHSAT-1674). `onDead` reports a
+// connection that refuses every operation for a minute (MESHSAT-1816), so its owner reconnects.
 import Foundation
 
 public final class GattOpQueue: @unchecked Sendable {
@@ -15,6 +16,13 @@ public final class GattOpQueue: @unchecked Sendable {
     public static let statusRefused = -1
     public static let statusTimeout = -2
     public static let statusClosed = -3
+
+    /// How long every operation may be refused before the connection counts as dead. The first
+    /// subscriptions after a connect can be refused while the link comes up, and the next operation
+    /// is accepted; a minute is far beyond that (Android's DEAD_AFTER_MS, MESHSAT-1816).
+    public static let deadAfterMs: Int64 = 60_000
+    /// And at least this many refusals in that time, so one slow retry is not enough.
+    public static let deadAfterRefusals = 3
 
     /// One operation. `key` names what its callback will report (e.g. "w:<uuid>"), so a late
     /// callback for an operation that already timed out cannot complete the next one.
@@ -72,15 +80,44 @@ public final class GattOpQueue: @unchecked Sendable {
     }
 
     private let timeoutMs: Int64
+    private let nowMs: @Sendable () -> Int64
     private let lock = NSLock()
+    // The run of refusals, guarded by `lock`; one operation runs at a time.
+    private var refusedSinceMs: Int64 = 0
+    private var refusedCount = 0
+    private var deadReported = false
+    private var deadHandler: (@Sendable (_ refused: Int, _ forMs: Int64) -> Void)?
+
+    /// Called once when every operation has been refused for `deadAfterMs`, at least
+    /// `deadAfterRefusals` of them, with none accepted in between: the connection is dead and its
+    /// owner drops it and connects again. On Android a restart of the Bluetooth process left the
+    /// client refusing every call with no disconnect callback (MESHSAT-1816); CoreBluetooth reports a
+    /// restart as `.resetting`, and this is the guard for a link that still says connected while its
+    /// characteristics cannot be found. Timeouts do not count: the node may be slow, not gone.
+    public var onDead: (@Sendable (_ refused: Int, _ forMs: Int64) -> Void)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return deadHandler
+        }
+        set {
+            lock.lock()
+            deadHandler = newValue
+            lock.unlock()
+        }
+    }
     private var pending: [Operation] = []
     private var urgent: [Operation] = []
     private var current: Operation?
     private var closed = false
     private var running = false
 
-    public init(timeoutMs: Int64 = GattOpQueue.defaultTimeoutMs) {
+    public init(
+        timeoutMs: Int64 = GattOpQueue.defaultTimeoutMs,
+        nowMs: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }
+    ) {
         self.timeoutMs = timeoutMs
+        self.nowMs = nowMs
     }
 
     /// Queue `start`, which issues the operation and returns false if the stack refused it.
@@ -165,9 +202,12 @@ public final class GattOpQueue: @unchecked Sendable {
             return
         }
         if !op.start() {
+            // Before the caller hears of the refusal, so the verdict is in when it does.
+            noteRefused()
             op.complete(Self.statusRefused)
             return
         }
+        noteAccepted()
         // Wait for the callback, or the timeout, whichever comes first.
         let deadline = Task { [timeoutMs] in
             try? await Task.sleep(for: .milliseconds(timeoutMs))
@@ -175,5 +215,25 @@ public final class GattOpQueue: @unchecked Sendable {
         }
         _ = await op.await()
         deadline.cancel()
+    }
+
+    private func noteAccepted() {
+        lock.lock()
+        refusedCount = 0
+        lock.unlock()
+    }
+
+    private func noteRefused() {
+        let now = nowMs()
+        lock.lock()
+        if refusedCount == 0 { refusedSinceMs = now }
+        refusedCount += 1
+        let dead = !deadReported && refusedCount >= Self.deadAfterRefusals && now - refusedSinceMs >= Self.deadAfterMs
+        if dead { deadReported = true }
+        let count = refusedCount
+        let since = refusedSinceMs
+        let handler = deadHandler
+        lock.unlock()
+        if dead { handler?(count, now - since) }
     }
 }

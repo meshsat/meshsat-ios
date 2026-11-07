@@ -425,6 +425,17 @@ public final class MeshtasticCentral: NSObject, @unchecked Sendable {
     /// node also offers its Iridium pipe; it is published here and taken by the 9603 driver.
     private func startSession() {
         let q = GattOpQueue()
+        // A link that takes no operation at all for a minute is dropped and connected again, as
+        // Android 2.26.4 does (MESHSAT-1816); only while it is still this session's queue.
+        q.onDead = { [weak self, weak q] refused, forMs in
+            guard let self, let q else { return }
+            self.lock.lock()
+            let current = self.ops === q
+            self.lock.unlock()
+            guard current else { return }
+            Self.log.warning("The node link took none of \(refused) operations for \(forMs / 1000) s; reconnecting")
+            self.queue.async { self.forceReconnect() }
+        }
         lock.lock()
         ops = q
         lock.unlock()
