@@ -18,7 +18,7 @@ public enum Tab: String, CaseIterable, Sendable, Hashable {
 }
 
 public enum SetupSection: String, CaseIterable, Sendable, Hashable {
-    case node, satellite, hub, sms, safety, messaging, maps, integrations, diagnostics
+    case node, satellite, hub, sms, safety, messaging, maps, integrations, kits, diagnostics
 
     public var title: String {
         switch self {
@@ -30,6 +30,7 @@ public enum SetupSection: String, CaseIterable, Sendable, Hashable {
         case .messaging: "Messaging"
         case .maps: "Maps"
         case .integrations: "Ham radio, TAK and Reticulum"
+        case .kits: "Field kits on your network"
         case .diagnostics: "Diagnostics"
         }
     }

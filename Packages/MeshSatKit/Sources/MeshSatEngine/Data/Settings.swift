@@ -109,6 +109,9 @@ public enum SettingsKey {
     public static let hubRelayTarget = Setting("hub_relay_target", default: "")
     /// Hub API base URL override. Blank = derived from the MQTT URL.
     public static let hubRelayUrl = Setting("hub_relay_url", default: "")
+    /// Field kits reached directly on the LAN (MESHSAT-1738): `KitConnection.encodeList`; each API
+    /// token lives in the Keychain under `KitConnection.tokenKey(id)`, never here.
+    public static let kitsLan = Setting("kits_lan", default: "")
     // mTLS (MESHSAT-387); the client key is a secret.
     public static let hubClientCertPem = Setting("hub_client_cert_pem", default: "")
     public static let hubCaCertPem = Setting("hub_ca_cert_pem", default: "")

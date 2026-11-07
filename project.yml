@@ -73,7 +73,11 @@ targets:
         NSLocationWhenInUseUsageDescription: Your position goes on the map, into satellite pass prediction, into zones and into an SOS.
         NSLocationAlwaysAndWhenInUseUsageDescription: With the gateway running in the background, MeshSat keeps reporting your position to the Hub, watches zones and the check-in timer, and can send an SOS with a fix.
         NSCameraUsageDescription: The camera reads the Hub's provisioning QR code and contact cards from other phones.
-        NSLocalNetworkUsageDescription: Reticulum peers and a KISS TNC on your local network.
+        NSLocalNetworkUsageDescription: Field kits you add under Setup, Reticulum peers and a KISS TNC on your local network.
+        # A field kit's API on the LAN is plain HTTP on port 6050 (MESHSAT-1738, iOS MESHSAT-1820): local
+        # addresses only; everything on the internet stays HTTPS.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UIBackgroundModes:
           - bluetooth-central
           - bluetooth-peripheral

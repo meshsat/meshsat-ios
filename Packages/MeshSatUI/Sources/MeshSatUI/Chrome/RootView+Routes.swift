@@ -48,6 +48,7 @@ extension RootView {
         case .setupSection(.node): RoutedScreen(SetupSection.node.title, SettingsNodeSection())
         case .setupSection(.maps): RoutedScreen(SetupSection.maps.title, SettingsMapsSection())
         case .setupSection(.integrations): RoutedScreen(SetupSection.integrations.title, SettingsIntegrationsSection())
+        case .setupSection(.kits): RoutedScreen(SetupSection.kits.title, SettingsKitsSection())
         default: nil
         }
     }

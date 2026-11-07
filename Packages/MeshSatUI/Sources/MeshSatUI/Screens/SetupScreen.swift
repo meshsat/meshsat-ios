@@ -99,6 +99,9 @@ public struct SetupScreen: View {
                 NavRow(icon: MSIcon.radio, title: "Ham radio, TAK and Reticulum", detail: "Other networks MeshSat can bridge") {
                     router.navigate(.setupSection(.integrations))
                 }
+                NavRow(icon: MSIcon.router, title: "Field kits on your network", detail: "A kit's address on the LAN and its API token") {
+                    router.navigate(.setupSection(.kits))
+                }
                 NavRow(icon: MSIcon.tune, title: "Mesh radio settings", detail: "Region, channels, transmit power") {
                     router.navigate(.radioConfig)
                 }
