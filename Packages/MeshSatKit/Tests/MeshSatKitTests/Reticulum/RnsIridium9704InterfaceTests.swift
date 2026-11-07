@@ -71,7 +71,16 @@ final class RnsIridium9704InterfaceTests: XCTestCase {
         let tooBig = await iface.send(big)
         XCTAssertEqual(tooBig, "packet exceeds IMT MTU")
         // The modem never comes up: the first packet sits in its retry loop and the next ones queue behind it.
-        for _ in 0..<3 {
+        let first = await iface.send(packet())
+        XCTAssertNil(first)
+        // Only once the sender holds the first one does the queue have its two places free (under load the
+        // sender task can start late).
+        var waited = 0
+        while iface.queueStats().waiting > 0, waited < 200 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            waited += 1
+        }
+        for _ in 0..<2 {
             let r = await iface.send(packet())
             XCTAssertNil(r)
         }
