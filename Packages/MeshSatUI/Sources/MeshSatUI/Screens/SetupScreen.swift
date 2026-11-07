@@ -1,7 +1,7 @@
-// Mirrors ui/screens/SetupScreen.kt: the "Setup" title, then NavRows in three groups, "Get
+// Mirrors ui/screens/SetupScreen.kt: the "Setup" title, then NavRows in four groups, "Get
 // connected" (node, satellite, Hub, SMS, each with a coloured icon and a state dot), "Using
-// MeshSat" (Safety, Messaging, Maps, Ham radio, TAK and Reticulum, Mesh radio settings) and
-// "For experts" (Advanced, About). The state dots read the gateway once MESHSAT-1322 lands.
+// MeshSat" (Safety, Messaging, Maps, Ham radio, TAK and Reticulum, Field kits on your network,
+// Mesh radio settings), "For experts" (Advanced) and "Help" (Support, About).
 import SwiftUI
 
 public struct SetupScreen: View {
@@ -109,6 +109,11 @@ public struct SetupScreen: View {
                 GroupTitle("For experts")
                 NavRow(icon: MSIcon.build, title: "Advanced", detail: "Routing, links, queue, logs, diagnostics") {
                     router.navigate(.setupAdvanced)
+                }
+
+                GroupTitle("Help")
+                NavRow(icon: MSIcon.supportAgent, title: "Support", detail: "Send feedback, with the app's logs if you like") {
+                    router.navigate(.support)
                 }
                 NavRow(icon: MSIcon.info, title: "About", detail: "MeshSat iOS \(AppVersion.marketing)") {
                     router.navigate(.about)

@@ -66,6 +66,8 @@ public enum MSIcon {
     public static var warning: Image { asset("outlined_warning", fallback: "exclamationmark.triangle") }
     /// Setup > Field kits on your network (Icons.Outlined.Router, MESHSAT-1738).
     public static var router: Image { asset("outlined_router", fallback: "wifi.router") }
+    /// Setup > Help > Support (Icons.Outlined.SupportAgent, MESHSAT-1806).
+    public static var supportAgent: Image { asset("outlined_support_agent", fallback: "person.crop.circle.badge.questionmark") }
 
     public static func tab(_ tab: Tab, filled: Bool) -> Image {
         switch tab {

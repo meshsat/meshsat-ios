@@ -43,8 +43,8 @@ public enum Route: Hashable, Sendable {
     case setupAdvanced
     case passes, radioConfig, rules, interfaces, deliveries, topology, geofence
     case audit, credentials, decrypt, about, sos, nodeLog
-    /// Setup > Safety > Warnings (MESHSAT-1734).
-    case warnings
+    /// Setup > Safety > Warnings (MESHSAT-1734) and Setup > Help > Support (MESHSAT-1806).
+    case warnings, support
 
     /// The Android route string, so logs and notification extras read the same.
     public var string: String {
@@ -71,13 +71,14 @@ public enum Route: Hashable, Sendable {
         case .sos: "sos"
         case .nodeLog: "node-log"
         case .warnings: "warnings"
+        case .support: "support"
         }
     }
 
     private static let fixedRoutes: [String: Route] = {
         let all: [Route] = [
             .home, .messages, .map, .people, .setup, .setupAdvanced, .passes, .radioConfig, .rules,
-            .interfaces, .deliveries, .topology, .geofence, .audit, .credentials, .decrypt, .about, .sos, .nodeLog, .warnings,
+            .interfaces, .deliveries, .topology, .geofence, .audit, .credentials, .decrypt, .about, .sos, .nodeLog, .warnings, .support,
         ]
         return Dictionary(uniqueKeysWithValues: all.map { ($0.string, $0) })
     }()
@@ -125,6 +126,7 @@ public enum Route: Hashable, Sendable {
         case .sos: "SOS"
         case .nodeLog: "Node log"
         case .warnings: "Warnings"
+        case .support: "Support"
         default: nil
         }
     }
