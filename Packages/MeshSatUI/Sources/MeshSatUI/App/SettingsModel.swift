@@ -236,6 +236,7 @@ public final class SettingsModel {
     public func pollSignal() async -> Int { await gateway.pollSignal() }
     public func checkMailbox() -> Bool { gateway.checkIridiumMailbox() }
     public func pingHub() async -> Int64? { await gateway.pingHub() }
+    public func pingHubLine() async -> String { await gateway.pingHubLine() }
     public func restartGateway() { gateway.restart() }
     public func provisionFromQr(_ url: String) { gateway.provisionClaim.fromQr(url) }
     /// After the Hub settings were typed by hand: the client starts again on them.

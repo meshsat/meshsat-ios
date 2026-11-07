@@ -69,7 +69,7 @@ public enum Route: Hashable, Sendable {
         case .decrypt: "decrypt"
         case .about: "about"
         case .sos: "sos"
-        case .nodeLog: "node-log"
+        case .nodeLog: "nodelog"
         case .warnings: "warnings"
         case .support: "support"
         }

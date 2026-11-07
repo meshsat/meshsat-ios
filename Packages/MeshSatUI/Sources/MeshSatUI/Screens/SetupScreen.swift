@@ -46,20 +46,28 @@ public struct SetupScreen: View {
         }
     }
 
-    /// SetupScreen.kt: the satellite row's detail.
+    /// SetupScreen.kt: the satellite row's detail; the node's 9704 first when it carries one
+    /// (MESHSAT-1826: the row said "No modem on this radio" beside a connected 9704).
     private var satelliteDetail: String {
+        switch model.imtState {
+        case .ready: return "Modem ready (RockBLOCK 9704)" + (model.imtReading.map { ", signal \($0.bars) of 5" } ?? "")
+        case .connecting, .connected, .initializing: return "Bringing the 9704 up"
+        case .disconnected: break
+        }
         switch model.modemState {
-        case .connected: "Modem ready, signal \(model.modemSignal) of 5"
-        case .connecting: "Checking the modem"
-        case .disconnected: model.meshState == .connected ? "No modem on this radio" : "Connect your node first"
+        case .connected: return "Modem ready, signal \(model.modemSignal) of 5"
+        case .connecting: return model.modemSilent ? "The node's modem does not answer (still trying)" : "Checking the modem"
+        case .disconnected: return model.meshState == .connected ? "No modem on this radio" : "Connect your node first"
         }
     }
 
     private var modemDot: Color {
+        if model.imtState == .ready { return MSColors.green }
+        if model.imtState != .disconnected { return MSColors.amber }
         switch model.modemState {
-        case .connected: MSColors.green
-        case .connecting: MSColors.amber
-        case .disconnected: MSColors.textMuted
+        case .connected: return MSColors.green
+        case .connecting: return model.modemSilent ? MSColors.red : MSColors.amber
+        case .disconnected: return MSColors.textMuted
         }
     }
 

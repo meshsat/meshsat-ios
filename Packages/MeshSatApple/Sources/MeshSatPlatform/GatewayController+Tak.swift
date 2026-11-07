@@ -1,9 +1,9 @@
-// Mirrors the TAK parts of service/GatewayService.kt (MESHSAT-191, 451, 1708): the TakIntegration
-// built next to the MQTT transport, the CoT PLI on every phone fix, the SOS and dead-man
-// events, inbound CoT from the Hub (reporter.onTakCot and the "/tak/cot/in" branch of the
-// MQTT transport) onto the map, and a dispatcher's chat to this phone (onTakChatIn, sendTakChat). Android publishes through its generic
-// MQTT transport (mqtt_0); iOS has none yet, so the Hub session carries the events, on the
-// same topic under the tenant's prefix. There is no ATAK intent on iOS (README).
+// Mirrors the TAK parts of service/GatewayService.kt (MESHSAT-191, 451, 1463, 1487, 1708): the
+// TakIntegration built at service start, the CoT PLI on every phone fix and again once a minute,
+// the SOS and dead-man events, inbound CoT from the Hub (reporter.onTakCot and the "/tak/cot/in"
+// branch of the MQTT transport) onto the map, and a dispatcher's chat to this phone (onTakChatIn,
+// sendTakChat). Both apps publish on the Hub session, on the bridge's own tak/cot/out topic under
+// the tenant's prefix. There is no ATAK intent on iOS (README).
 import Foundation
 import MeshSatEngine
 import MeshSatHub
@@ -16,6 +16,20 @@ final class TakParts: @unchecked Sendable {
     private var value: TakIntegration?
     /// Message ids of the TAK chats already shown, oldest first: the Hub delivers at least once.
     private var seen: [String] = []
+    private var repeaterTask: Task<Void, Never>?
+    /// The once-a-minute position repeat (MESHSAT-1831), cancelled with the integration.
+    var repeater: Task<Void, Never>? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return repeaterTask
+        }
+        set {
+            lock.lock()
+            repeaterTask = newValue
+            lock.unlock()
+        }
+    }
     var integration: TakIntegration? {
         get {
             lock.lock()
@@ -62,12 +76,43 @@ extension GatewayController {
         tak.integration = integration
         if enabled {
             Self.log.info("TAK/CoT integration initialized: callsign=\(integration.callsign) mqtt=\(integration.mqttExportEnabled)")
+            repeatTakPosition()
         } else {
             Self.log.debug("TAK/CoT disabled in settings")
         }
     }
 
-    func stopTak() { tak.integration = nil }
+    func stopTak() {
+        tak.integration = nil
+        tak.repeater?.cancel()
+        tak.repeater = nil
+    }
+
+    /// The TAK card's Save (GatewayService.updateOutputFlags): the switch, the prefix and the
+    /// Hub export apply at once, not at the next start.
+    public func applyTakSettings() {
+        stopTak()
+        initTak()
+    }
+
+    /// GatewayService.repeatTakPosition (MESHSAT-1487, here MESHSAT-1831): the last fix again
+    /// once a minute while TAK is on. iOS hands a new fix over only on movement, so a phone at
+    /// rest reported once, at start, before the Hub session was up, and a position event goes
+    /// stale after five minutes.
+    private func repeatTakPosition() {
+        tak.repeater?.cancel()
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.takPositionRepeatMs) * 1_000_000)
+                guard !Task.isCancelled, let self else { return }
+                if let fix = location.phoneLocation.value { await takSendPosition(fix) }
+            }
+        }
+        tak.repeater = task
+        keep(task)
+    }
+
+    static let takPositionRepeatMs: Int64 = 60_000
 
     /// The CoT PLI on each phone fix (locationListener).
     func takSendPosition(_ fix: PhoneFix) async {

@@ -518,7 +518,9 @@ final class ProvingTests: XCTestCase {
     @MainActor
     func testLxmf() throws {
         try gate("lxmf")
-        let dest = try XCTUnwrap(env["MESHSAT_LXMF_DEST"], "MESHSAT_LXMF_DEST").lowercased()
+        // Without a destination the run only points the TCP client somewhere (also how the owner's
+        // rns.meshsat.net:443 with TLS is put back after a proof).
+        let dest = env["MESHSAT_LXMF_DEST"]?.lowercased() ?? ""
         let method = env["MESHSAT_LXMF_METHOD"] ?? "Direct"
         let mark = env["MESHSAT_LXMF_MARK"] ?? (method == "Propagated" ? "At the propagation node" : "Delivered")
         let text = env["MESHSAT_TEXT"] ?? "iPhone to \(dest.prefix(8)) by Reticulum, \(method)"
@@ -528,15 +530,32 @@ final class ProvingTests: XCTestCase {
         if env["MESHSAT_RNS_SETUP"] != "0" {
             openTab(app, "Setup")
             tap(app, "Ham radio, TAK and Reticulum")
-            let hostField = try fieldNear(app, label: "Host")
-            replaceText(app, hostField, with: env["MESHSAT_RNS_HOST"] ?? "192.168.181.111")
-            let portField = try fieldNear(app, label: "Port", below: hostField)
-            replaceText(app, portField, with: env["MESHSAT_RNS_PORT"] ?? "4242")
+            // Host and Port share one row under the "Reticulum over TCP" heading (the APRS cards above
+            // have Port fields of their own): both fields are taken from that row before any typing.
+            // The row is looked up again before each field: typing scrolls the card under the keyboard.
+            func tcpRow() throws -> [XCUIElement] {
+                let hostLabel = try scrollToLabel(app, "Host")
+                let row = app.textFields.allElementsBoundByIndex
+                    .filter { $0.exists && abs($0.frame.midY - hostLabel.frame.midY) < 30 }
+                    .sorted { $0.frame.minX < $1.frame.minX }
+                XCTAssertEqual(row.count, 2, "the Host and Port fields")
+                return row
+            }
+            let before = try tcpRow()
+            NSLog(
+                "MeshSatProve: lxmf tcp before host=%@ port=%@", (before.first?.value as? String) ?? "",
+                (before.last?.value as? String) ?? "")
+            replaceText(app, try XCTUnwrap(before.first, "the Host field"), with: env["MESHSAT_RNS_HOST"] ?? "192.168.181.111")
+            Thread.sleep(forTimeInterval: 1)
+            replaceText(app, try XCTUnwrap(try tcpRow().last, "the Port field"), with: env["MESHSAT_RNS_PORT"] ?? "4242")
             app.swipeDown()  // the keyboard away
             let enable = try scrollToToggle(app, "Enable RNS TCP")
             if !isOn(enable) { enable.tap() }
             // The card has several Save buttons: the one right under the TLS switch.
             let tls = try scrollToToggle(app, "TLS")
+            NSLog("MeshSatProve: lxmf tcp before tls=%@", (tls.value as? String) ?? "")
+            let wantTls = env["MESHSAT_RNS_TLS"] == "1"
+            if isOn(tls) != wantTls { tls.tap() }
             let save = try XCTUnwrap(
                 app.buttons.matching(NSPredicate(format: "label == %@", "Save")).allElementsBoundByIndex
                     .filter { $0.exists && $0.frame.minY > tls.frame.minY }.min { $0.frame.minY < $1.frame.minY }, "the TCP Save")
@@ -547,6 +566,10 @@ final class ProvingTests: XCTestCase {
             Thread.sleep(forTimeInterval: 3)
             app = attach()
             Thread.sleep(forTimeInterval: 12)  // the TCP connect and the first announces
+        }
+        if dest.isEmpty {
+            NSLog("MeshSatProve: lxmf tcp client set, nothing to send")
+            return
         }
         openTab(app, "Setup")
         tap(app, "Ham radio, TAK and Reticulum")
@@ -589,33 +612,45 @@ final class ProvingTests: XCTestCase {
         Thread.sleep(forTimeInterval: 5)
     }
 
-    /// The text field nearest a label drawn over it (the MSOutlinedTextField pattern), scrolled on screen.
+    /// A static text by its exact label, scrolled on screen.
     @MainActor
-    private func fieldNear(_ app: XCUIApplication, label: String, below: XCUIElement? = nil) throws -> XCUIElement {
+    private func scrollToLabel(_ app: XCUIApplication, _ label: String) throws -> XCUIElement {
         let text = app.staticTexts.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
         var tries = 0
         var anchor: XCUIElement?
         while anchor == nil, tries < 8 {
-            anchor = text.first { $0.exists && $0.isHittable && (below == nil || $0.frame.minY >= below!.frame.minY - 1) }
+            anchor = text.first { $0.exists && $0.isHittable }
             if anchor == nil {
                 app.swipeUp()
                 Thread.sleep(forTimeInterval: 0.8)
                 tries += 1
             }
         }
-        let a = try XCTUnwrap(anchor, "the label '\(label)'")
+        return try XCTUnwrap(anchor, "the label '\(label)'")
+    }
+
+    /// The text field nearest a label drawn over it (the MSOutlinedTextField pattern), scrolled on screen.
+    @MainActor
+    private func fieldNear(_ app: XCUIApplication, label: String) throws -> XCUIElement {
+        let a = try scrollToLabel(app, label)
         let fields = app.textFields.allElementsBoundByIndex.filter { $0.exists }
         return try XCTUnwrap(fields.min { abs($0.frame.midY - a.frame.midY) < abs($1.frame.midY - a.frame.midY) }, "the field '\(label)'")
     }
 
-    /// Types over whatever a field holds.
+    /// Types over whatever a field holds: the cursor goes to the end (a tap at the right edge), the
+    /// old text is deleted key by key, then the value is typed. (A long press selected one word
+    /// only: "reticulum.meshsat.net" became "reticulum.192.168.181.111.net" on 7 Nov 2026.)
     @MainActor
     private func replaceText(_ app: XCUIApplication, _ field: XCUIElement, with value: String) {
-        field.tap()
+        // Until the field has the keyboard: a tap during the keyboard's slide lands nowhere.
+        var tries = 0
+        repeat {
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+            Thread.sleep(forTimeInterval: 0.8)
+            tries += 1
+        } while (field.value(forKey: "hasKeyboardFocus") as? Bool) != true && tries < 4
         if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
-            field.press(forDuration: 1.2)
-            let all = app.menuItems["Select All"]
-            if all.waitForExistence(timeout: 3) { all.tap() }
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count + 2))
         }
         field.typeText(value)
     }

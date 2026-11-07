@@ -73,12 +73,16 @@ targets:
         NSLocationWhenInUseUsageDescription: Your position goes on the map, into satellite pass prediction, into zones and into an SOS.
         NSLocationAlwaysAndWhenInUseUsageDescription: With the gateway running in the background, MeshSat keeps reporting your position to the Hub, watches zones and the check-in timer, and can send an SOS with a fix.
         NSCameraUsageDescription: The camera reads the Hub's provisioning QR code and contact cards from other phones.
+        NSMicrophoneUsageDescription: While you hold the microphone button in a Reticulum chat, MeshSat records a voice note to send in that message.
+        NSSpeechRecognitionUsageDescription: While you record a voice note, MeshSat turns it into text you can send instead where a voice note cannot go, such as by satellite or SMS.
         NSLocalNetworkUsageDescription: Field kits you add under Setup, Reticulum peers and a KISS TNC on your local network.
         # A field kit's API on the LAN is plain HTTP on port 6050 (MESHSAT-1738, iOS MESHSAT-1820): local
         # addresses only; everything on the internet stays HTTPS.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UIBackgroundModes:
+          # location: only with "Keep the gateway running in the background" on (MESHSAT-1506).
+          - location
           - bluetooth-central
           - bluetooth-peripheral
           - processing

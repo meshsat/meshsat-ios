@@ -98,7 +98,7 @@ public struct SettingsMapsSection: View {
                             .bodyMedium, color: MSColors.textSecondary)
                     },
                     buttons: {
-                        MSTextButton("Cancel") { confirmDelete = nil }
+                        MSTextButton("Keep it", color: MSColors.textSecondary) { confirmDelete = nil }
                         MSTextButton("Delete", color: MSColors.red) {
                             confirmDelete = nil
                             Task { await delete(info) }

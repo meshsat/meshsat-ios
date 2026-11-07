@@ -198,6 +198,24 @@ extension GatewayController {
         content.body = words.text
         content.userInfo = ["route": "sos"]
         content.interruptionLevel = n.run.test ? .active : .timeSensitive
+        content.categoryIdentifier = n.run.test ? Self.sosTestCategory : Self.sosCategory
         try? await center.add(UNNotificationRequest(identifier: Self.sosNotificationId, content: content, trigger: nil))
+    }
+
+    /// The notification's action (MESHSAT-1830): "Cancel SOS" on a real one, behind the phone's
+    /// lock, "Stop test" on a test, as Android's notification buttons. The app delegate registers
+    /// the categories and routes the action to `cancelSos()`.
+    public static let sosCategory = "sos"
+    public static let sosTestCategory = "sos-test"
+    public static let sosCancelAction = "sos-cancel"
+
+    public static func notificationCategories() -> Set<UNNotificationCategory> {
+        let cancel = UNNotificationAction(
+            identifier: sosCancelAction, title: "Cancel SOS", options: [.destructive, .authenticationRequired, .foreground])
+        let stop = UNNotificationAction(identifier: sosCancelAction, title: "Stop test", options: [.foreground])
+        return [
+            UNNotificationCategory(identifier: sosCategory, actions: [cancel], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: sosTestCategory, actions: [stop], intentIdentifiers: [], options: []),
+        ]
     }
 }

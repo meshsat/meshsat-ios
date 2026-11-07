@@ -94,6 +94,19 @@ extension GatewayController {
 
     func mqttDisconnect() { mqtt.transport?.disconnect() }
 
+    /// GatewayService.deliverToTransport's mqtt branch (MESHSAT-1832): the text on the device's
+    /// mo/decoded topic, and a sent row in the message list. Nil on success.
+    func deliverToMqtt(textPreview: String) async -> String? {
+        guard let transport = mqtt.transport else { return "mqtt not available" }
+        guard transport.isConnected else { return "mqtt not connected" }
+        await transport.publishMODecoded(text: textPreview, channel: "ios")
+        try? await db.messages.insert(
+            MessageRecord(
+                timestamp: clock.nowMs(), transport: "mqtt", direction: "tx", sender: "self", recipient: "mqtt", text: textPreview,
+                forwarded: true, forwardedTo: "mqtt:\(transport.topicMODecoded)"))
+        return nil
+    }
+
     func stopMqtt() {
         mqtt.transport?.disconnect()
         mqtt.transport = nil

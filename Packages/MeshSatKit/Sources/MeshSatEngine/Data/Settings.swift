@@ -147,11 +147,17 @@ public enum SettingsKey {
     /// Start the gateway after a phone restart (MESHSAT-1249). On iOS this means: relaunch on
     /// a Bluetooth event through state restoration; there is no boot receiver.
     public static let startOnBoot = Setting("start_on_boot", default: false)
+    /// Keep the gateway running in the background with continuous location (MESHSAT-1506, Android's
+    /// foreground service): off by default; on, iOS shows its blue location indicator while it runs.
+    public static let backgroundGateway = Setting("background_gateway", default: false)
     public static let dashboardOrder = Setting("dashboard_card_order", default: "")
     /// Night mode: the app in red only, for night vision (MESHSAT-1249).
     public static let nightMode = Setting("night_mode", default: false)
     /// Home's "Getting started" list was hidden by the user.
     public static let checklistDismissed = Setting("checklist_dismissed", default: false)
+    /// The permissions the welcome page has asked for on this phone, comma separated (WelcomeGate.kt's
+    /// SharedPreferences set; MESHSAT-1834): each is explained and asked once, a refusal is not asked again.
+    public static let welcomeAsked = Setting("welcome_asked", default: "")
     /// Master switch for local release telemetry (MESHSAT-494). Nothing leaves the device.
     public static let telemetryEnabled = Setting("telemetry_enabled", default: true)
 

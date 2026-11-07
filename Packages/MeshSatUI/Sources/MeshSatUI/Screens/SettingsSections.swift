@@ -124,8 +124,8 @@ public struct SettingsSatelliteSection: View {
 
 /// The node's modem as SettingsScreen.kt's satellite card shows it (MESHSAT-1507, MESHSAT-1623;
 /// here MESHSAT-1624): which modem the node carries, what the node says, and for a 9704 the kits'
-/// satellite chain and the modem's IMEI. iOS cannot read a key bundle yet, so the kit's iridium
-/// "shared" key is entered here.
+/// satellite chain and the modem's IMEI; the kit's iridium "shared" key is entered here (a key
+/// bundle scanned under Hub fills the Hub's keys, not this one).
 struct NodeModemRows: View {
     @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
@@ -241,13 +241,36 @@ struct NodeHealthCard: View {
 struct CheckMailboxButton: View {
     @Environment(GatewayModel.self) private var model
     @Environment(SettingsModel.self) private var settings
+    /// The cost question before the billed session (MESHSAT-1835): a mailbox check is an Iridium
+    /// session, at least one credit, whether or not a message waits.
+    @State private var confirming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             MSOutlinedButton(model.mailboxRunning ? "Checking the mailbox..." : "Check for messages", enabled: !model.mailboxRunning) {
-                if !settings.checkMailbox() { model.showToast("The modem is busy, try again in a moment.") }
+                confirming = true
             }
             if let line = model.mailboxResultText { Text(line).msText(.bodySmall, color: MSColors.textSecondary) }
+        }
+        .overlay {
+            if confirming {
+                MSAlertDialog(
+                    "Check the satellite mailbox?", onDismiss: { confirming = false },
+                    content: {
+                        Text(
+                            "This opens an Iridium session, which can take up to 90 seconds. It uses at least 1 credit, even when no "
+                                + "message is waiting. A message waiting to be sent goes out in the same session."
+                        )
+                        .msText(.bodyMedium)
+                    },
+                    buttons: {
+                        MSTextButton("Cancel", color: MSColors.textSecondary) { confirming = false }
+                        MSFilledButton("Check", container: MSColors.teal, fullWidth: false) {
+                            confirming = false
+                            if !settings.checkMailbox() { model.showToast("The modem is busy, try again in a moment.") }
+                        }
+                    })
+            }
         }
     }
 }
@@ -338,11 +361,15 @@ public struct SettingsHubSection: View {
                         pinging = true
                         pingResult = "..."
                         Task {
-                            if let ms = await settings.pingHub() { pingResult = "\(ms)ms" } else { pingResult = "Not connected" }
+                            pingResult = await settings.pingHubLine()
                             pinging = false
                         }
                     }
-                    Text(pingResult).msText(.bodyMedium, color: pingResult.hasSuffix("ms") ? MSColors.green : MSColors.textMuted)
+                    Text(pingResult)
+                        .msText(
+                            .bodyMedium,
+                            color: pingResult.hasSuffix("ms")
+                                ? MSColors.green : pingResult.hasPrefix("Failed") ? MSColors.red : MSColors.textMuted)
                 }
                 MSTextButton(showDetails ? "Hide connection details" : "Connection details", color: MSColors.offWhite) {
                     if !showDetails { loadFields() }
@@ -462,9 +489,8 @@ public struct SettingsMessagingSection: View {
                     SettingRow("Encryption enabled") {
                         MSSwitch(isOn: settings.binding(SettingsKey.encryptionEnabled), label: "Encryption enabled")
                     }
-                    SettingRow("Auto-decrypt incoming SMS") {
-                        MSSwitch(isOn: settings.binding(SettingsKey.autoDecryptSms), label: "Auto-decrypt incoming SMS")
-                    }
+                    // Android's "Auto-decrypt incoming SMS" switch has no twin: iOS lets no app read a
+                    // text message, so there is nothing to decrypt (README, MESHSAT-1836).
                     MSOutlinedTextField(
                         text: $keyInput, label: "AES-256-GCM Key (hex)", secure: !showKey, focusedBorder: MSColors.teal,
                         keyboard: .asciiCapable)
@@ -816,6 +842,33 @@ public struct SettingsDiagnosticsSection: View {
                         }
                     }
                 }
+                // ConfigManager's show-run/import (MESHSAT-1836): the export was computed and the
+                // import dialog written, and neither had a button until now.
+                SectionCard("Configuration") {
+                    Text("The rules, object groups and failover groups as a document, as the Bridge's config file.")
+                        .msText(.bodySmall, color: MSColors.textMuted)
+                    HStack(spacing: 8) {
+                        MSOutlinedButton("Copy JSON") {
+                            UIPasteboard.general.string = configJson
+                            model.showToast("Configuration copied as JSON")
+                        }
+                        MSOutlinedButton("Copy YAML") {
+                            UIPasteboard.general.string = configYaml
+                            model.showToast("Configuration copied as YAML")
+                        }
+                    }
+                    MSOutlinedButton("Import from the clipboard") {
+                        let text = UIPasteboard.general.string ?? ""
+                        guard !text.isEmpty else { return model.showToast("The clipboard is empty") }
+                        Task {
+                            switch await model.gateway.previewConfiguration(text) {
+                            case .success(let diff): importPreview = (text: text, diff: diff)
+                            case .failure(let e): importError = e.description
+                            }
+                        }
+                    }
+                    if !importError.isEmpty { Text(importError).msText(.bodySmall, color: MSColors.red) }
+                }
                 SectionCard("Background service") {
                     HStack {
                         VStack(alignment: .leading, spacing: 0) {
@@ -828,6 +881,20 @@ public struct SettingsDiagnosticsSection: View {
                         }
                         Spacer(minLength: 8)
                         MSSwitch(isOn: settings.binding(SettingsKey.startOnBoot), label: "Reconnect after a phone restart")
+                    }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Keep the gateway running in the background").msText(.bodyMedium)
+                            Text(
+                                "With location allowed Always, MeshSat keeps reporting your position, watching zones and relaying "
+                                    + "while the app is not on screen, as Android's gateway does. iOS shows its blue location "
+                                    + "indicator meanwhile, and the battery drains faster."
+                            )
+                            .msText(.bodySmall, color: MSColors.textMuted)
+                        }
+                        Spacer(minLength: 8)
+                        MSSwitch(
+                            isOn: settings.binding(SettingsKey.backgroundGateway), label: "Keep the gateway running in the background")
                     }
                     HStack {
                         VStack(alignment: .leading, spacing: 0) {

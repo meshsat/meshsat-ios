@@ -28,7 +28,10 @@ public struct RootView: View {
         _nightMode = State(initialValue: gateway.settings.get(SettingsKey.nightMode))
     }
 
-    /// What the strip shows, from the gateway: the mesh and satellite states and counts.
+    /// What the strip shows, from the gateway (MeshSatUI.kt's StatusStrip): the mesh with the
+    /// other nodes counted, the satellite from whichever modem the node carries (red for one that
+    /// does not answer, MESHSAT-1826), SMS (the Messages app is always there), the Hub and the
+    /// phone's fix.
     private var strip: StatusStripModel {
         var m = StatusStripModel()
         switch model.meshState {
@@ -36,17 +39,45 @@ public struct RootView: View {
         case .connecting, .scanning: m.mesh = .trying
         case .disconnected: m.mesh = .off
         }
-        m.meshNodes = model.nodes.count
-        switch model.modemState {
-        case .connected: m.satellite = model.modemSignal > 0 ? .working : .trying
-        case .connecting: m.satellite = .trying
-        case .disconnected: m.satellite = .off
+        m.meshNodes = model.nodes.filter { $0.nodeNum != model.myNodeNum }.count
+        if model.imtState == .ready {
+            m.satellite = .working
+            m.satelliteBars = model.imtReading?.bars ?? 0
+        } else if model.imtState != .disconnected {
+            m.satellite = .trying
+        } else {
+            switch model.modemState {
+            case .connected: m.satellite = model.modemSignal > 0 ? .working : .trying
+            case .connecting: m.satellite = model.modemSilent ? .failed : .trying
+            case .disconnected: m.satellite = .off
+            }
+            m.satelliteBars = model.modemSignal
         }
-        m.satelliteBars = model.modemSignal
+        m.sms = .working
+        switch model.interfaces["hub_0"]?.state {
+        case .online: m.hub = .working
+        case .connecting: m.hub = .trying
+        case .error: m.hub = .failed
+        default: m.hub = model.hubSetUp ? .trying : .off
+        }
+        m.gps = model.phoneFix == nil ? .off : .working
         return m
     }
 
     public var body: some View {
+        // The welcome page before iOS's own questions, once per permission (MESHSAT-1834, as
+        // MainActivity.kt shows WelcomeScreen before permissionLauncher.launch).
+        Group {
+            if model.welcomePending.isEmpty {
+                mainBody
+            } else {
+                WelcomeScreen(pending: model.welcomePending) { model.welcomeContinue() }
+            }
+        }
+        .environment(model)
+    }
+
+    private var mainBody: some View {
         // Night mode is one colour filter on the root, as Android filters its window
         // (MESHSAT-1827): Core Animation filters reach the UIKit-backed scroll views and
         // navigation stacks under it. (A Metal colour-effect shader did not: the strip and the

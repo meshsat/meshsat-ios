@@ -178,6 +178,7 @@ extension GatewayController {
         guard let hub = hubReporter else { return }
         let payload = JSONBody.parse(Data(cmd.payload.utf8)) ?? JSONBody()
         var error = ""
+        var restartAfterAnswer = false
         switch cmd.cmd {
         case "send_text":
             let text = payload.string("text") ?? ""
@@ -199,9 +200,11 @@ extension GatewayController {
             if let v = payload.int("deadman_timeout_min") { settings.set(SettingsKey.deadmanTimeoutMin, String(v)) }
             applyDeadManSettings()
         case "reboot":
-            // iOS cannot restart the app; the gateway restarts its transports instead.
-            Self.log.info("Hub reboot command received: restarting the node link")
-            central.forceReconnect()
+            // iOS cannot restart the app; the whole gateway restarts instead (GatewayService's
+            // scheduleRestart; MESHSAT-1833), after the answer below has gone. Until 0.3.1 only
+            // the node link was reconnected.
+            Self.log.info("Hub reboot command received: restarting the gateway")
+            restartAfterAnswer = true
         case "key_rotate":
             await handleStoreCommand(cmd.cmd, payload)
         default:
@@ -209,6 +212,7 @@ extension GatewayController {
         }
         await hub.publishCommandResponse(
             CommandResponse(requestId: cmd.requestId, cmd: cmd.cmd, status: error.isEmpty ? "ok" : "error", error: error))
+        if restartAfterAnswer { restart() }
     }
 
     /// send_mt: a message the Hub hands this phone for its modem. The node's 9704 when the Hub

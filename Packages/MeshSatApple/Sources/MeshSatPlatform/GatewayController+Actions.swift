@@ -23,4 +23,15 @@ extension GatewayController {
         guard let hub = hubReporter, hub.state.value == .connected else { return nil }
         return try? await hub.ping()
     }
+
+    /// The same, in the words the Hub card shows: the time, "Not connected", or the error the
+    /// ping ran into (MESHSAT-1836; it used to read "Not connected" for a failure too).
+    public func pingHubLine() async -> String {
+        guard let hub = hubReporter, hub.state.value == .connected else { return "Not connected" }
+        do {
+            return "\(try await hub.ping())ms"
+        } catch {
+            return "Failed: \(error.localizedDescription)"
+        }
+    }
 }

@@ -60,12 +60,24 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         manager.distanceFilter = Self.distanceFilterM
         manager.pausesLocationUpdatesAutomatically = false
-        // No location background mode (App Review, guideline 2.5.4, 6 Oct 2026): the app is not
-        // kept alive for location. In the background a fix comes from the significant-change
-        // service, which wakes the app on its own, and from the moments iOS runs the app for
-        // Bluetooth events from the node. allowsBackgroundLocationUpdates must stay false: set
-        // without the mode it is a fatal error.
+        // In the background a fix comes from the significant-change service, which wakes the app on
+        // its own, and from the moments iOS runs the app for Bluetooth events from the node; with
+        // "Keep the gateway running in the background" on and Always granted, standard updates go
+        // on behind iOS's blue indicator and keep the gateway alive (MESHSAT-1506, the location
+        // background mode is back since 0.5.0; App Review 2.5.4 sees it used for the gateway's
+        // position reports, zones and SOS, the person's own choice).
     }
+
+    /// Whether `start()` may put iOS's location question up by itself. The gateway turns it off
+    /// while the welcome page still has to explain the permission (MESHSAT-1834); the welcome's
+    /// Continue then calls `requestAuthorization()`.
+    public var askOnStart = true
+
+    /// iOS has not asked for location yet.
+    public var isUndetermined: Bool { manager.authorizationStatus == .notDetermined }
+
+    /// The "while using" question, from the welcome page or the first use.
+    public func requestAuthorization() { manager.requestWhenInUseAuthorization() }
 
     /// Ask for permission on first use and start updates; a no-op while not authorized (the
     /// delegate starts them once the person allows it).
@@ -75,7 +87,7 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         lock.unlock()
         switch manager.authorizationStatus {
         case .notDetermined:
-            manager.requestWhenInUseAuthorization()
+            if askOnStart { manager.requestWhenInUseAuthorization() }
         case .authorizedAlways, .authorizedWhenInUse:
             beginUpdates()
         default:
@@ -143,8 +155,17 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     /// The app went to the background: with Always granted, the significant-change service
     /// delivers a fix on a cell change or about 500 m of movement and wakes the app for it; the
     /// Hub report, the zones and an SOS use that fix. Standard updates stop with the app.
-    public func beginBackgroundActivity() {
+    public func beginBackgroundActivity(keepAlive: Bool = false) {
         guard manager.authorizationStatus == .authorizedAlways else { return }
+        #if os(iOS)
+        if keepAlive {
+            // Continuous updates behind the blue indicator: the app keeps running (MESHSAT-1506).
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+            manager.startUpdatingLocation()
+            Self.log.info("Continuous location on: the gateway keeps running in the background")
+        }
+        #endif
         lock.lock()
         let start = !significantOn
         significantOn = true
@@ -156,6 +177,9 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     }
 
     public func endBackgroundActivity() {
+        #if os(iOS)
+        if manager.allowsBackgroundLocationUpdates { manager.allowsBackgroundLocationUpdates = false }
+        #endif
         lock.lock()
         let stop = significantOn
         significantOn = false

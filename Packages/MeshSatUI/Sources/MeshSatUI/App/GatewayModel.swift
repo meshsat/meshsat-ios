@@ -30,6 +30,10 @@ public final class GatewayModel {
     public private(set) var scanResults: [MeshtasticCentral.DiscoveredNode] = []
     public private(set) var myInfo: MeshtasticProtocol.MyNodeInfo?
     public private(set) var nodes: [MeshtasticProtocol.MeshNodeInfo] = []
+    /// The node this phone is connected to, left out of the strip's count (MeshSatUI.kt's myNum).
+    public private(set) var myNodeNum: UInt32 = 0
+    /// The permissions the welcome page still has to explain (MESHSAT-1834); empty = the app itself.
+    public private(set) var welcomePending: [String] = []
     /// How our radio heard the last over-the-air packet from each node (SNR, RSSI, hops), by node number.
     public private(set) var linkSignals: [UInt32: MeshtasticProtocol.MeshLinkSignal] = [:]
     /// Who each node reported hearing (NeighborInfo), by node number.
@@ -74,15 +78,17 @@ public final class GatewayModel {
     public var mailboxResultText: String? {
         guard !mailbox.running, mailbox.finishedAt > 0 else { return nil }
         switch mailbox.result {
+        // CheckMailboxButton.kt's describeMailboxResult, word for word (MESHSAT-1835).
         case nil: return "The check did not complete."
         case .notConnected: return "The modem is not connected."
-        case .held(let seconds): return "The modem pauses after a failed session, \(seconds) s more."
-        case .sessionFailed(let moStatus): return "The session failed: \(IridiumATDriver.moStatusText(moStatus))."
-        case .noAnswer: return "The modem gave no readable answer."
+        case .held(let seconds): return "Held after a failed session: try again in \(seconds) s."
+        case .sessionFailed(let moStatus):
+            return moStatus == 32 ? "No network: the modem sees no satellite. No credit used." : "The session failed (status \(moStatus))."
+        case .noAnswer: return "The modem did not answer."
         case .linkLost: return "The link to the node dropped during the session; what it fetched is unknown."
         case .checked(let received, let stillQueued):
-            if received == 0 { return "No messages waiting." }
-            return Words.count(received, "message") + " received" + (stillQueued > 0 ? ", \(stillQueued) more waiting." : ".")
+            let head = received == 0 ? "No new messages." : Words.count(received, "message") + " received."
+            return stillQueued > 0 ? head + " \(stillQueued) more waiting." : head
         }
     }
     /// The Hub provisioning claim (MESHSAT-1306) and a deep link waiting for confirmation.
@@ -93,6 +99,12 @@ public final class GatewayModel {
     /// The dead man's switch has fired and waits for a check-in (SettingsScreen's TRIGGERED row).
     public private(set) var deadManTriggered = false
     public func refreshDeadMan() { deadManTriggered = gateway.deadManSwitch?.isTriggered ?? false }
+
+    /// The welcome's Continue: iOS asks its questions, the app shows (MainActivity.kt's permissionLauncher).
+    public func welcomeContinue() {
+        gateway.welcomeContinue(welcomePending)
+        welcomePending = []
+    }
     public private(set) var sosStatuses: [SosRouteStatus] = []
     /// The settings an SOS reads: contacts, the name, the callsign, the last modem, the paired node.
     public private(set) var sosContacts: [EmergencyContact] = []
@@ -119,6 +131,19 @@ public final class GatewayModel {
         observe()
     }
 
+    /// The node's own number for the strip's count, and the welcome page's question list (MESHSAT-1834).
+    private func observeOwnNodeAndWelcome(_ central: MeshtasticCentral, _ gateway: GatewayController) {
+        tasks.append(
+            Task { [weak self] in
+                for await info in central.radio.myInfo.subscribe() { self?.myNodeNum = info?.myNodeNum ?? 0 }
+            })
+        tasks.append(
+            Task { [weak self] in
+                let pending = await gateway.welcomePending()
+                self?.welcomePending = pending
+            })
+    }
+
     private func observeBluetoothPermission(_ central: MeshtasticCentral) {
         tasks.append(
             Task { [weak self] in
@@ -134,6 +159,7 @@ public final class GatewayModel {
             Task { [weak self] in
                 for await s in central.state.subscribe() { self?.meshState = s }
             })
+        observeOwnNodeAndWelcome(central, gateway)
         tasks.append(
             Task { [weak self] in
                 for await on in central.bluetoothOn.subscribe() { self?.bluetoothOn = on }
@@ -393,7 +419,7 @@ public final class GatewayModel {
 
     /// A message to an LXMF address (GatewayService.ACTION_SEND_LXMF): the row shows queued, sent, delivered or
     /// failed; `method` is the chip ("direct", "auto", "opportunistic", "propagated").
-    public func sendLxmf(_ text: String, to peer: String, method: String) {
+    public func sendLxmf(_ text: String, to peer: String, method: String, attachments: [LxAttachment] = []) {
         let m: LxMethod? =
             switch method {
             case "direct": .direct
@@ -402,7 +428,7 @@ public final class GatewayModel {
             default: nil
             }
         do {
-            _ = try gateway.sendLxmf(destHex: peer, text: text, method: m)
+            _ = try gateway.sendLxmf(destHex: peer, text: text, method: m, attachments: attachments)
         } catch {
             gateway.recordLxmfRefused(destHex: peer, text: text)
             showToast("Not sent by Reticulum: \(error)")

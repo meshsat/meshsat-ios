@@ -43,12 +43,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        // Once, at the first start, as Android's welcome asks for POST_NOTIFICATIONS: without it the
-        // SOS and warning notifications never show (MESHSAT-1823). iOS never asks twice.
-        let gateway = self.gateway
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            gateway.notificationsAnswered(granted)
-        }
+        UNUserNotificationCenter.current().setNotificationCategories(GatewayController.notificationCategories())
+        // The notification permission is asked from the welcome page, which says what it is for
+        // (MESHSAT-1834, as Android's welcome asks for POST_NOTIFICATIONS); a phone that has
+        // answered already is asked nothing (MESHSAT-1823). iOS never asks twice.
+        gateway.requestPermissionsIfAlreadyAsked()
         // Before launching finishes, as BGTaskScheduler requires.
         background.registerTasks()
         gateway.start()
@@ -72,6 +71,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if response.actionIdentifier == GatewayController.sosCancelAction {
+            // "Cancel SOS" / "Stop test" on the SOS notification (MESHSAT-1830).
+            gateway.cancelSos()
+        }
         let route = response.notification.request.content.userInfo["route"] as? String
         if let route { NotificationRoutes.pending.send(route) }
         completionHandler()

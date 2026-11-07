@@ -275,11 +275,13 @@ public final class GatewayController: @unchecked Sendable {
         initDeadMan()
         initMsvqsc()
         initWarnings()
+        initMessageNotifications()
         initMqtt()
         observeTransports()
         reconnectSavedNode()
         observeIridiumPipe()
         startSignalPolling()
+        holdLocationQuestionForWelcome()
         startLocationUpdates()
         initPassScheduler()
         observeModemForHub()
@@ -462,6 +464,7 @@ public final class GatewayController: @unchecked Sendable {
                 payload: payload, textPreview: textPreview, recipient: recipient, deliveryId: deliveryId, sourceBearer: sourceBearer)
         }
         if interfaceId.hasPrefix("aprs") { return await deliverToAprs(textPreview: textPreview) }
+        if interfaceId.hasPrefix("mqtt") { return await deliverToMqtt(textPreview: textPreview) }
         return "\(interfaceId) is not built yet"
     }
 
