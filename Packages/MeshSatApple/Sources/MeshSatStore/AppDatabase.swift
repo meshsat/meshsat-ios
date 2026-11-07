@@ -76,6 +76,10 @@ public final class AppDatabase: Sendable {
         m.registerMigration("v3: drop bond groups") { db in
             try db.execute(sql: "DROP TABLE IF EXISTS hemb_bond_groups")
         }
+        // Public warnings a kit relays over the mesh (Android Room 23 -> 24, MESHSAT-1734; iOS MESHSAT-1819).
+        m.registerMigration("v4: warnings") { db in
+            for statement in schemaV4Warnings { try db.execute(sql: statement) }
+        }
         return m
     }
 

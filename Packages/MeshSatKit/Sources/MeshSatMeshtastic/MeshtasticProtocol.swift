@@ -42,6 +42,8 @@ public enum MeshtasticProtocol {
     /// case says which. `.unhandled` is a frame that parsed but carries nothing the app reads.
     public enum FromRadioResult: Sendable, Equatable {
         case textMessage(MeshTextMessage)
+        /// A text on ALERT_APP (port 11): a public warning a kit relayed, never a chat (MESHSAT-1734).
+        case alert(MeshTextMessage)
         case position(MeshPosition)
         case telemetry(MeshTelemetry)
         case environmentTelemetry(MeshEnvironmentTelemetry)
@@ -89,6 +91,8 @@ public enum MeshtasticProtocol {
         switch portnum {
         case .textMessageApp:
             return a.extractTextMessage(fromRadio).map { .textMessage($0) } ?? .unhandled
+        case .alertApp:
+            return a.extractAlert(fromRadio).map { .alert($0) } ?? .unhandled
         case .positionApp:
             return a.extractPosition(fromRadio, nowMs: nowMs).map { .position($0) } ?? .unhandled
         case .telemetryApp:

@@ -148,6 +148,7 @@ public final class GatewayController: @unchecked Sendable {
     public var routingIdentity: Identity? { rnsParts.identity }
     // APRS and TAK (MESHSAT-1327): in GatewayController+Aprs and +Tak.
     let aprs = AprsParts()
+    public let warningParts = WarningParts()
     let tak = TakParts()
     // Dead man's switch, burst queue, telemetry: GatewayController+Safety.
     let safety = SafetyParts()
@@ -271,6 +272,7 @@ public final class GatewayController: @unchecked Sendable {
         initHealthScorer()
         initDeadMan()
         initMsvqsc()
+        initWarnings()
         initMqtt()
         observeTransports()
         reconnectSavedNode()

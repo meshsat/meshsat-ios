@@ -27,6 +27,8 @@ final class AppDatabaseTests: XCTestCase {
                 "forwarding_rules", "hub_inbox", "hub_op_events", "hub_op_missing", "hub_ops", "iridium_credit_log",
                 "message_deliveries", "messages", "node_positions",
                 "object_groups", "provider_credentials", "rns_tcp_peers", "signal_history", "telemetry", "tle_cache",
+                // Android Room 24's relayed public warnings (MESHSAT-1734, iOS MESHSAT-1819).
+                "warnings",
             ])
         let columns = try db.writer.read { db in try db.columns(in: "message_deliveries").map(\.name) }
         XCTAssertTrue(columns.contains("sat_ref"))

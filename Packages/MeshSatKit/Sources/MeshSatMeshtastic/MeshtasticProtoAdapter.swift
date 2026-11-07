@@ -42,6 +42,15 @@ public enum MeshtasticProtoAdapter {
             text: utf8(data.payload), id: pkt.id)
     }
 
+    /// A text on ALERT_APP (port 11), the same shape as a text message: what a MeshSat kit sends for a
+    /// public warning, with a BEL the reader drops (MESHSAT-1734). Nil if not an alert.
+    public static func extractAlert(_ fromRadio: Meshtastic_FromRadio) -> MeshtasticProtocol.MeshTextMessage? {
+        guard let (pkt, data) = decodedPacket(fromRadio, port: .alertApp) else { return nil }
+        return MeshtasticProtocol.MeshTextMessage(
+            from: pkt.from, to: pkt.to, channel: Int(pkt.channel), portnum: data.portnum.rawValue,
+            text: utf8(data.payload), id: pkt.id)
+    }
+
     public static func extractPosition(_ fromRadio: Meshtastic_FromRadio, nowMs: Int64 = nowMs()) -> MeshtasticProtocol.MeshPosition? {
         guard let (pkt, data) = decodedPacket(fromRadio, port: .positionApp) else { return nil }
         guard let pos = try? Meshtastic_Position(serializedBytes: data.payload) else { return nil }

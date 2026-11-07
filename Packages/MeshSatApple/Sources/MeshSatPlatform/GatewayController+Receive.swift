@@ -54,15 +54,14 @@ extension GatewayController {
         guard let result = MeshtasticProtocol.parseFromRadioFull(data, nowMs: clock.nowMs()) else { return }
         let radio = central.radio
         switch result {
-        case .textMessage(let msg):
-            let nodeId = MeshtasticProtocol.formatNodeId(msg.from)
+        case .alert(let msg):
+            // A public warning on ALERT_APP (MESHSAT-1734): never a chat.
             central.touchNode(msg.from)
             if deduplicator.isDuplicateKey("mesh:\(msg.from):\(msg.id)") { return }
-            try? await db.messages.insert(
-                MessageRecord(timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId, text: msg.text))
-            messageNotifications.send((title: "Mesh: \(nodeId)", text: msg.text))
             interfaceManager.recordActivity("mesh_0")
-            await evaluateAndForward(sourceInterface: "mesh_0", text: msg.text, sender: nodeId)
+            await onMeshWarning(msg)
+        case .textMessage(let msg):
+            await onMeshText(msg)
         case .position(let pos):
             let nodeId = MeshtasticProtocol.formatNodeId(pos.from)
             central.touchNode(pos.from)
@@ -111,6 +110,25 @@ extension GatewayController {
         case .neighborInfo, .traceroute, .rangeTest, .paxcounter, .reply, .configCompleteId, .unhandled:
             break
         }
+    }
+
+    /// A mesh text: a relayed warning goes to the alarm, everything else is a chat (Android's text branch).
+    private func onMeshText(_ msg: MeshtasticProtocol.MeshTextMessage) async {
+        let nodeId = MeshtasticProtocol.formatNodeId(msg.from)
+        central.touchNode(msg.from)
+        if deduplicator.isDuplicateKey("mesh:\(msg.from):\(msg.id)") { return }
+        // The kit's plain-text copy of a warning, with its relay line: the alarm, not a message
+        // in the mesh chat, and never forwarded by the rules (MESHSAT-1734).
+        if WarningText.isRelayedText(msg.text) {
+            interfaceManager.recordActivity("mesh_0")
+            await onMeshWarning(msg)
+            return
+        }
+        try? await db.messages.insert(
+            MessageRecord(timestamp: clock.nowMs(), transport: "mesh", direction: "rx", sender: nodeId, text: msg.text))
+        messageNotifications.send((title: "Mesh: \(nodeId)", text: msg.text))
+        interfaceManager.recordActivity("mesh_0")
+        await evaluateAndForward(sourceInterface: "mesh_0", text: msg.text, sender: nodeId)
     }
 
     /// The node's own state from a frame: a channel, its metadata, a config section, or a

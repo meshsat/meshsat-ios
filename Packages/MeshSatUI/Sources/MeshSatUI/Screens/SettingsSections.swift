@@ -640,7 +640,10 @@ public struct SettingsSafetySection: View {
 
     public var body: some View {
         ScrollView {
-            // SetupPageLinks: the screen that belongs with these settings, at the top.
+            // SetupPageLinks: the screens that belong with these settings, at the top.
+            NavRow(icon: MSIcon.warning, title: "Warnings", detail: "Public warnings a MeshSat kit relayed over the mesh") {
+                router.navigate(.warnings)
+            }
             NavRow(icon: MSIcon.fence, title: "Zones", detail: "Alerts when someone enters or leaves an area") {
                 router.navigate(.geofence)
             }

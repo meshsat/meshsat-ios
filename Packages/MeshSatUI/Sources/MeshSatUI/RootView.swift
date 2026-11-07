@@ -97,12 +97,24 @@ public struct RootView: View {
                     ProvisionLinkDialog(url: link) { model.provisionLinkHandled() }
                 }
                 ProvisionClaimHost()
+                // A relayed public warning over every screen but the list itself (MESHSAT-1734).
+                if router.selectedTab != .setup || router.paths[.setup]?.last != .warnings {
+                    WarningOverlay { router.navigate(.warnings) }
+                }
                 if let toast = model.toast { MSToast(toast) }
             }
             .nightMode(nightMode)
             SmsComposerHost()
         }
         .background(MSColors.bg.ignoresSafeArea())
+        .task {
+            // A notification's tap (AppDelegate), also when it launched the app (MainActivity's EXTRA_ROUTE).
+            for await route in NotificationRoutes.pending.subscribe() {
+                guard let route else { continue }
+                NotificationRoutes.pending.send(nil)
+                router.openFromNotification(route)
+            }
+        }
         .environment(router)
         .environment(model)
         .environment(messages)

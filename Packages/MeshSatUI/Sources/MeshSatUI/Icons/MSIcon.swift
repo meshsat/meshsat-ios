@@ -62,6 +62,8 @@ public enum MSIcon {
     public static var terminal: Image { asset("outlined_terminal", fallback: "terminal") }
     /// The node's satellite beacon in the Home header (Icons.Outlined.Sensors, MESHSAT-1776).
     public static var sensors: Image { asset("outlined_sensors", fallback: "sensor") }
+    /// Setup > Safety > Warnings (Icons.Outlined.Warning, MESHSAT-1734).
+    public static var warning: Image { asset("outlined_warning", fallback: "exclamationmark.triangle") }
     /// Setup > Field kits on your network (Icons.Outlined.Router, MESHSAT-1738).
     public static var router: Image { asset("outlined_router", fallback: "wifi.router") }
 

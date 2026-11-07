@@ -39,7 +39,7 @@ public final class Router {
 
     /// The intent extra net.meshsat.android.ROUTE accepted only these three.
     public func openFromNotification(_ string: String) {
-        guard let route = Route(string: string), [.sos, .messages, .home].contains(route) else { return }
+        guard let route = Route(string: string), [.sos, .warnings, .messages, .home].contains(route) else { return }
         if route == .home || route == .messages {
             selectedTab = route.tab
             paths[route.tab] = []

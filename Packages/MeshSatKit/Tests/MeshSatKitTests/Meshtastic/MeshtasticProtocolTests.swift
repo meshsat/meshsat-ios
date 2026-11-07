@@ -269,6 +269,17 @@ final class MeshtasticProtocolTests: XCTestCase {
         XCTAssertEqual(rp.emoji, 1)
         XCTAssertEqual(rp.payload, "👍")
         XCTAssertEqual(MeshtasticProtocol.parseFromRadioFull(frame { $0.packet = packet(port: .audioApp, payload: Data()) }), .unhandled)
+        // ALERT_APP (port 11): a kit's public warning, with its BEL, is an alert and never a text (MESHSAT-1734).
+        let warning = "WARNING Wind Moderate until 10:11 UTC: x\nRelay of KNMI via MeteoAlarm warning\u{07}"
+        guard
+            case .alert(let al)? = MeshtasticProtocol.parseFromRadioFull(
+                frame { $0.packet = packet(port: .alertApp, payload: Data(warning.utf8)) })
+        else {
+            return XCTFail("not an alert")
+        }
+        XCTAssertEqual(al.text, warning)
+        XCTAssertEqual(al.portnum, 11)
+        XCTAssertEqual(al.from, 0x1234_5678)
     }
 
     func testEncoders() throws {

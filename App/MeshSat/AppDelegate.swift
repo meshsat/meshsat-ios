@@ -67,9 +67,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let route = response.notification.request.content.userInfo["route"] as? String
-        Task { @MainActor in
-            _ = route  // Router.openFromNotification once the router is reachable from here (MESHSAT-1321).
-        }
+        if let route { NotificationRoutes.pending.send(route) }
         completionHandler()
     }
+
 }
