@@ -1,26 +1,26 @@
 MeshSat turns an iPhone into a MeshSat gateway. Pair it with a MeshSat node, a pocket-sized box with a Meshtastic LoRa radio and a RockBLOCK 9603 Iridium modem, and one phone can send and receive over the mesh and by satellite. It keeps working when the mobile network and the internet are gone. It also works with any plain Meshtastic radio, for the mesh only.
 
-The node is open hardware: a LILYGO T-Beam Supreme and a RockBLOCK Iridium modem in a pocket-sized case. The parts list, wiring, enclosure files and build instructions are public at https://github.com/meshsat/meshsat-fieldkit, and anyone can build one. The node firmware and this app are open source as well: https://github.com/meshsat/meshsat-firmware and https://github.com/meshsat/meshsat-ios.
+The node is open hardware anyone can build (https://github.com/meshsat/meshsat-fieldkit); its firmware and this app are open source (https://github.com/meshsat/meshsat-ios).
 
 Status: pre-release. This is a prototype under active development. It has never been deployed to a real user and has never been used in an actual emergency. Do not rely on it for your safety.
 
 What it does:
 
-• Mesh: Meshtastic over Bluetooth LE with the official protobufs: text, positions, telemetry, waypoints, node info and traceroute. A reply to a node goes to that node, not to the whole channel.
+• Mesh: Meshtastic over Bluetooth LE: text, positions, telemetry, waypoints, node info and traceroute.
 • Satellite: Iridium SBD through the node's RockBLOCK 9603, up to 340 bytes out and 270 bytes in. Messages wait in a queue and are retried until they go out. The app opens a satellite session only when there is something to send, when the modem rings or when you check the mailbox, never on a timer, because every session costs a credit. Passes are predicted on the phone, with no internet needed.
-• Text messages: MeshSat opens the Messages composer with the text ready to send, in MeshSat's own wire format, compressed and, if you set it up, encrypted, so a MeshSat kit reads it. iOS does not let an app send or read text messages by itself.
+• Text messages: MeshSat opens the Messages composer with the text ready, compressed and optionally encrypted for a MeshSat kit; iOS lets no app send or read texts by itself.
 • APRS through a KISS TNC over TCP (Direwolf, for example) or directly to APRS-IS.
-• Hub, optional: the phone reports to a MeshSat Hub over MQTT with a client certificate and takes remote commands. The Hub is open source and can be self-hosted.
+• Hub, optional and open source: the phone reports to a MeshSat Hub and takes remote commands.
 • TAK: positions from the Hub's TAK feed appear on the map, and the phone reports its own position, and an SOS, to the Hub as Cursor on Target events.
-• Reticulum: the phone runs as a Reticulum transport node and relays between its links.
+• Reticulum and LXMF: the phone is a Reticulum node with an LXMF address, as Sideband and MeshChat speak it. Write to an LXMF address directly, opportunistically or through a propagation node, with voice notes and photos in a Reticulum chat; over TCP to a Reticulum server or a Sideband on the same WiFi, through the node's RockBLOCK 9704 by satellite, or an RNode LoRa radio over Bluetooth.
 • Safety: hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent, until you cancel it. A check-in timer and zones drawn on the map.
 • The map works offline down to country level. Night mode turns the whole app red.
 
 Satellite messaging needs a RockBLOCK modem and Iridium credits from a provider; Iridium is a paid commercial network.
 
-Internet connections: the bundled world map covers country level; closer in, map tiles come from OpenStreetMap's tile servers while you look at the map online. Once the MeshSat node's satellite modem has been seen, Iridium orbit data is downloaded from celestrak.org, or tle.ivanstanojevic.me if that fails, when the stored copy is more than a day old, checked at most every 12 hours; before that only when you tap Update on the passes screen. The Hub, APRS-IS and Reticulum over TCP connect only when you set them up, and a field kit you add under Setup is reached at the address you give it, or through the Hub relay. Node firmware is downloaded from MeshSat's releases on github.com only when you tap Check for update. Feedback from Setup > Help > Support leaves through your own mail app, only when you send it. Nothing else goes online.
+Internet connections: the bundled world map covers country level; closer in, map tiles come from OpenStreetMap's tile servers while you look at the map online. Once the MeshSat node's satellite modem has been seen, Iridium orbit data is downloaded from celestrak.org, or tle.ivanstanojevic.me if that fails, when the stored copy is more than a day old, checked at most every 12 hours; before that only when you tap Update on the passes screen. The Hub, APRS-IS, Reticulum over TCP and its listener for peers on your WiFi connect only when you set them up, and a field kit you add under Setup is reached at the address you give it, or through the Hub relay. Node firmware is downloaded from MeshSat's releases on github.com only when you tap Check for update. Feedback from Setup > Help > Support leaves through your own mail app, only when you send it. Nothing else goes online.
 
-Permissions: Bluetooth, for the node; location, for the map, passes, zones and SOS; the camera, for QR codes; notifications.
+Permissions: Bluetooth, for the node and an RNode; location, for the map, passes, zones and SOS; the camera, for QR codes; notifications, for incoming messages, warnings and an SOS; the microphone and speech recognition, only while you hold the button to record a voice note; a photo you pick, only to send it. A welcome page says what each is for before iOS asks.
 
 Privacy: the app has no analytics and no account, and sends nothing to MeshSat. https://meshsat.net/privacy/
 
