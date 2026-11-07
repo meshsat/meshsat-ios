@@ -25,6 +25,12 @@ public struct SettingsNodeSection: View {
                     if model.meshState == .connected {
                         connectedRows
                         MSFilledButton("Disconnect", container: MSColors.red) { model.disconnect() }
+                    } else if model.meshState == .connecting {
+                        // CoreBluetooth waits for a known node for ever, so with the saved node away the
+                        // page would never offer a scan for another one; Android's connect fails and its
+                        // page shows Scan between the retries (MESHSAT-1825).
+                        Text("Waiting for your node to come into range.").msText(.bodySmall, color: MSColors.textMuted)
+                        MSFilledButton("Disconnect", container: MSColors.red) { model.disconnect() }
                     } else if model.meshState == .disconnected || model.meshState == .scanning {
                         scanRows
                     }
