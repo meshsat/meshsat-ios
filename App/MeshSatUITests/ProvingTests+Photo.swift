@@ -15,8 +15,6 @@ extension ProvingTests {
         let add = app.buttons["Add a photo"].firstMatch
         XCTAssertTrue(add.waitForExistence(timeout: 10), "the photo button")
         add.tap()
-        Thread.sleep(forTimeInterval: 4)
-        logTree(app, "picker")
         let picture = try onlyPicture(in: app)
         picture.tap()
         let chip = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).firstMatch
@@ -48,38 +46,55 @@ extension ProvingTests {
         Thread.sleep(forTimeInterval: 4)
     }
 
-    /// The single picture on offer; fails, and picks nothing, when the library holds any other.
+    /// The single picture on offer, once the picker has loaded (it took over 4 s on 8 Nov 2026); fails,
+    /// and picks nothing, when the library holds any other. The chat's own photos are labelled with their size.
     @MainActor
     func onlyPicture(in app: XCUIApplication) throws -> XCUIElement {
-        // The chat's own photos are labelled with their size.
-        let offered = NSPredicate(format: "label BEGINSWITH 'Photo,' AND NOT (label ENDSWITH 'KB' OR label ENDSWITH 'MB')")
-        let cells = app.images.matching(offered).allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
-        let others = app.scrollViews.otherElements.images.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
-        let pool = cells.isEmpty ? others : cells
-        NSLog("MeshSatProve: lxmf picker offers %d (labelled %d, other %d)", pool.count, cells.count, others.count)
+        let notChat = NSPredicate(format: "NOT (label MATCHES '^Photo, [0-9.,]+ [KM]?B$')")
+        let labelled = NSCompoundPredicate(andPredicateWithSubpredicates: [NSPredicate(format: "label BEGINSWITH 'Photo,'"), notChat])
+        func offered() -> (cells: [XCUIElement], others: [XCUIElement]) {
+            let cells = app.images.matching(labelled).allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+            let scrolled = app.scrollViews.otherElements.images.matching(notChat)
+            let others = scrolled.allElementsBoundByIndex.filter { $0.exists && $0.isHittable }
+            return (cells, others)
+        }
+        let deadline = Date().addingTimeInterval(40)
+        var found = offered()
+        while found.cells.isEmpty, found.others.isEmpty, Date() < deadline {
+            Thread.sleep(forTimeInterval: 1)
+            found = offered()
+        }
+        Thread.sleep(forTimeInterval: 3)  // a library still filling would show more now
+        found = offered()
+        let pool = found.cells.isEmpty ? found.others : found.cells
+        NSLog("MeshSatProve: lxmf picker offers %d (labelled %d, other %d)", pool.count, found.cells.count, found.others.count)
+        if pool.isEmpty { logTree(app, "picker") }
         XCTAssertEqual(pool.count, 1, "the library must hold only the test image")
         return try XCTUnwrap(pool.first, "a picture in the picker")
     }
 
-    /// Deletes the test image, only when it is the one picture Photos shows.
+    /// Deletes the test image, only when Photos itself says the library is that one picture, then
+    /// comes back to MeshSat.
     @MainActor
     func deleteTestPhoto() {
         let photos = XCUIApplication(bundleIdentifier: "com.apple.mobileslideshow")
+        defer { XCUIApplication().activate() }
         photos.activate()
-        Thread.sleep(forTimeInterval: 4)
-        logTree(photos, "photos")
-        let cells = photos.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo,'")).allElementsBoundByIndex
-            .filter { $0.exists && $0.isHittable }
-        guard cells.count == 1, let cell = cells.first else {
-            NSLog("MeshSatProve: lxmf photo left in place, Photos shows %d", cells.count)
-            return
+        Thread.sleep(forTimeInterval: 5)
+        let onlyOne = photos.descendants(matching: .any).matching(NSPredicate(format: "label == 'Library, 1 Photo'")).firstMatch
+        guard onlyOne.waitForExistence(timeout: 10) else { return NSLog("MeshSatProve: lxmf photo left, library is not one photo") }
+        let pool = (photos.images.allElementsBoundByIndex + photos.cells.allElementsBoundByIndex).filter {
+            $0.exists && $0.isHittable && $0.frame.width > 60 && $0.frame.height > 60
         }
+        NSLog("MeshSatProve: lxmf Photos offers %@", pool.map { "\($0.elementType.rawValue)'\($0.label)'" }.joined(separator: " | "))
+        guard let cell = pool.first else { return NSLog("MeshSatProve: lxmf photo left, no cell") }
         cell.tap()
         Thread.sleep(forTimeInterval: 2)
-        let delete = photos.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete'")).firstMatch
+        let named = NSPredicate(format: "label BEGINSWITH 'Delete' OR label BEGINSWITH 'Trash' OR identifier == 'trash'")
+        let delete = photos.buttons.matching(named).firstMatch
         guard delete.waitForExistence(timeout: 5) else { return NSLog("MeshSatProve: lxmf no Delete button") }
         delete.tap()
-        Thread.sleep(forTimeInterval: 1)
+        Thread.sleep(forTimeInterval: 1.5)
         let confirm = photos.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete'")).allElementsBoundByIndex.last
         if let confirm, confirm.exists { confirm.tap() }
         NSLog("MeshSatProve: lxmf test photo deleted")
