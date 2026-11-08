@@ -57,7 +57,7 @@ The list below is what the app is being built to do, following MeshSat Android. 
 - **APRS** through a KISS TNC over TCP or directly to APRS-IS, with smart beaconing and acknowledged messages.
 - **Hub.** MQTT with a client certificate; the phone shows up in the Hub's fleet like a field kit, reports health and positions, and takes remote commands: send a message, flush the queue, update config, rotate keys, restart the transports. Where a field kit cannot be reached directly, the app reaches it through a tunnel via the Hub.
 - **TAK.** Positions from the Hub's TAK feed appear on the map, and the phone reports its own position, and an SOS, to the Hub as Cursor on Target events. There is no ATAK on iOS, so nothing is handed to another app.
-- **Reticulum.** The phone runs as a Reticulum transport node and relays between the mesh, the Iridium modem, MQTT and TCP peers.
+- **Reticulum and LXMF.** The phone is a Reticulum node with an LXMF address, as Sideband and MeshChat speak it. Messages go to an LXMF address directly, opportunistically or through a propagation node, and a Reticulum chat carries voice notes (hold the microphone; the recogniser's text is only offered) and photos. The links: TCP to a Reticulum server, a listener for peers on the same WiFi, the node's RockBLOCK 9704 by satellite, and an RNode LoRa radio over Bluetooth. The phone also relays between the mesh, the Iridium modem, MQTT and TCP peers.
 - **Safety.** Hold the SOS button for 3 seconds and the SOS goes out on every route the phone has, each retried until it is sent. A check-in timer that sends SOS when the phone sees no activity for too long, and zones drawn on the map that record when a node enters or leaves an area.
 - **Public warnings.** A public warning a MeshSat kit relays over the mesh sounds an alarm, fills the screen while the app is open and stays under Setup > Safety > Warnings until the kit's cancel or a newer one; a test warning says so and uses the normal sound. It is never shown as a chat and never forwarded.
 - **The node's satellite beacon.** With a node that has one, an icon left of night mode on Home lights red while the beacon is on, amber while it sends its last message and grey when it is off, and the node's health card says when the next position goes out.
@@ -82,6 +82,10 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | SOS: hold to send, the text composers, cancel, and the all-clear after it | The alarm test verified 25 September 2026: sent by the mesh and the Hub, the satellite copy queued while the node held its modem, the running-test banner and card, Stop test. A real SOS, the Messages composers and the all-clear are not exercised yet |
 | SOS by satellite to the Hub | **Not built yet** |
 | Contact cards swapped by QR code | Shown (My card) and read as pasted text, fingerprint checked and stored, verified 25 September 2026 on an iPhone 11 Pro Max. **Not yet scanned between two phones** |
+| Reticulum/LXMF messages with stock Reticulum | Verified 8 November 2026 on an iPhone 11 Pro Max against Python RNS 1.5.5 and LXMF 1.2.0 over TCP on the LAN: Direct both ways with the delivered tick, and Propagated through a Python propagation node, the reply fetched with Sync now |
+| Voice notes and photos in a Reticulum chat | Verified 8 November 2026: an Ogg Opus note and a WebP photo from Python LXMF shown, the note played to its end; a note recorded on the iPhone reached Python as a valid 48 kHz Opus file |
+| An RNode LoRa radio over Bluetooth | The driver passes Android's tests against a simulated RNode. **Not yet tried with a radio** |
+| Reticulum peers on the same WiFi finding the phone by themselves | **Waits for Apple's multicast entitlement**; until then a peer connects to the phone's listener by address |
 | The gateway kept alive in the background | **Not built yet** |
 | RockBLOCK 9704 over HC-05 | **Not possible on iOS** |
 | Reading incoming text messages | **Not possible on iOS** |
@@ -136,7 +140,7 @@ Releases are not signed by MeshSat yet. When they are, this section will carry t
 
 **The app does not find my node.** Bluetooth must be on, and the node must not be connected to another phone or to a laptop.
 
-**Nothing happens with the app closed.** iOS wakes the app for Bluetooth events from the node. For everything else the gateway needs to be allowed to run in the background, under Setup > Advanced > Diagnostics, which also asks for location access.
+**Nothing happens with the app closed.** iOS wakes the app for Bluetooth events from the node, and in the background the phone's position is refreshed on significant movement. Keeping the whole gateway running in the background is not in this version yet.
 
 **The satellite shows 0 bars.** That is normal between passes and under a limited view of the sky. The app sends anyway and keeps retrying.
 
