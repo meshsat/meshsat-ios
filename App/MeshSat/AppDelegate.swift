@@ -50,12 +50,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         gateway.requestPermissionsIfAlreadyAsked()
         // Before launching finishes, as BGTaskScheduler requires.
         background.registerTasks()
+        // A SwiftUI app runs in scenes, and UIKit never calls applicationDidEnterBackground on a scene-based
+        // app's delegate: the background hand-off had never run (found on the iPhone, 8 Nov 2026, MESHSAT-1506).
+        // The app-wide notifications are posted for scenes too, once the last one leaves or comes back.
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.background.appDidEnterBackground() }
+        }
+        center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.background.appWillEnterForeground() }
+        }
         gateway.start()
         return true
     }
-
-    func applicationDidEnterBackground(_ application: UIApplication) { background.appDidEnterBackground() }
-    func applicationWillEnterForeground(_ application: UIApplication) { background.appWillEnterForeground() }
 
     func handle(url: URL) {
         guard url.scheme == MeshSatPlatform.provisionURLScheme, url.host == MeshSatPlatform.provisionURLHost else { return }

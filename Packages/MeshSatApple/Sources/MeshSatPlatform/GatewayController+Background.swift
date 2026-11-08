@@ -12,11 +12,14 @@ extension GatewayController {
     /// The app left the screen: significant-change location takes over when Always is granted,
     /// and the telemetry records the transition.
     public func enteredBackground() {
-        location.beginBackgroundActivity(keepAlive: settings.get(SettingsKey.backgroundGateway))
+        let keep = settings.get(SettingsKey.backgroundGateway)
+        Self.log.info("Entered background: location \(location.isAlways ? "allowed Always" : "not allowed Always"), keep running \(keep)")
+        location.beginBackgroundActivity(keepAlive: keep)
         telemetryLogger?.recordEvent(tag: "GatewayController", message: "Entered background")
     }
 
     public func enteredForeground() {
+        Self.log.info("Entered foreground")
         location.endBackgroundActivity()
         telemetryLogger?.recordEvent(tag: "GatewayController", message: "Entered foreground")
     }
