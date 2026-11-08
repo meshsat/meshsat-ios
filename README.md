@@ -67,7 +67,7 @@ The list below is what the app is being built to do, following MeshSat Android. 
 
 Nothing goes online before you ask for it: the map loads tiles once you open it, orbit data is downloaded once your node's satellite modem has been seen, and otherwise only what you set up (the Hub, APRS-IS, Reticulum, a field kit) or tap (Update on the passes screen, Check for update) connects.
 
-Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. iOS keeps the app alive for Bluetooth events from the node; in the background the phone's position is refreshed only on significant movement, so position reports, zones and an SOS from the background use that coarser fix. The Gateway card in Setup says which mode you are in.
+Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 Bluetooth serial adapter (iOS has no Bluetooth Classic serial for apps), and running as a gateway with the screen off without limits. With **Keep the gateway running in the background** on (Setup > Advanced > Diagnostics) and location allowed Always, the app keeps running behind iOS's blue location indicator and keeps reporting its position, as Android's gateway does; without it, iOS keeps the app alive for Bluetooth events from the node and refreshes the position only on significant movement.
 
 ## What works, and what does not
 
@@ -86,7 +86,7 @@ Two things Android does that an iPhone cannot: the RockBLOCK 9704 over an HC-05 
 | Voice notes and photos in a Reticulum chat | Verified 8 November 2026: an Ogg Opus note and a WebP photo from Python LXMF shown, the note played to its end; a note recorded on the iPhone reached Python as a valid 48 kHz Opus file |
 | An RNode LoRa radio over Bluetooth | The driver passes Android's tests against a simulated RNode. **Not yet tried with a radio** |
 | Reticulum peers on the same WiFi finding the phone by themselves | **Waits for Apple's multicast entitlement**; until then a peer connects to the phone's listener by address |
-| The gateway kept alive in the background | **Not built yet** |
+| The gateway kept alive in the background | Verified 8 November 2026 on an iPhone 11 Pro Max: with the switch on and location allowed Always, the app went to the home screen for 120 s while a simulated route played; it logged continuous location on, and stored 12 positions along the route while it was off screen. Until 0.5.0 the app never noticed going to the background at all, so not even the significant-change updates ran |
 | RockBLOCK 9704 over HC-05 | **Not possible on iOS** |
 | Reading incoming text messages | **Not possible on iOS** |
 | Night mode over every screen | Verified 7 November 2026 on an iPhone 11 Pro Max: Home, Messages, the map and its tiles, People, Setup and a sub-screen all red, colours back when switched off, the setting kept across a restart. Until 0.3.1 every screen went black (MESHSAT-1827) |
@@ -140,7 +140,7 @@ Releases are not signed by MeshSat yet. When they are, this section will carry t
 
 **The app does not find my node.** Bluetooth must be on, and the node must not be connected to another phone or to a laptop.
 
-**Nothing happens with the app closed.** iOS wakes the app for Bluetooth events from the node, and in the background the phone's position is refreshed on significant movement. Keeping the whole gateway running in the background is not in this version yet.
+**Nothing happens with the app closed.** Switch on Keep the gateway running in the background under Setup > Advanced > Diagnostics and allow location Always; the switch says so, with a button to iOS Settings, when location is allowed only while the app is open. Without it iOS wakes the app for Bluetooth events from the node and refreshes the position on significant movement.
 
 **The satellite shows 0 bars.** That is normal between passes and under a limited view of the sky. The app sends anyway and keeps retrying.
 

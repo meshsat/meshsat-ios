@@ -53,6 +53,9 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     private var askedAlways = false
     /// Whether the significant-change service is on (the app is in the background with Always).
     private var significantOn = false
+    /// iOS 17's CLBackgroundActivitySession while the gateway keeps running in the background (MESHSAT-1506);
+    /// it keeps the process alive for its location work. AnyObject so the type stays out of older SDK paths.
+    private var backgroundSession: AnyObject?
 
     override public init() {
         super.init()
@@ -152,6 +155,21 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
         return was
     }
 
+    /// Whether location is allowed Always, which the gateway needs to keep running in the background.
+    public var isAlways: Bool { manager.authorizationStatus == .authorizedAlways }
+
+    /// The keep-running switch went on (Android asks for background location at the same moment): iOS shows
+    /// its "Change to Always Allow" question once per install; after that only iOS Settings can change it.
+    public func requestAlways() {
+        #if os(iOS)
+        guard manager.authorizationStatus == .authorizedWhenInUse else { return }
+        lock.lock()
+        askedAlways = true
+        lock.unlock()
+        manager.requestAlwaysAuthorization()
+        #endif
+    }
+
     /// Whether the build declares the location background mode; without it continuous background
     /// updates are a fatal error, so the switch is hidden and nothing asks for them.
     public static var backgroundModeDeclared: Bool {
@@ -169,6 +187,9 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
             manager.allowsBackgroundLocationUpdates = true
             manager.showsBackgroundLocationIndicator = true
             manager.startUpdatingLocation()
+            lock.lock()
+            if backgroundSession == nil, #available(iOS 17.0, *) { backgroundSession = CLBackgroundActivitySession() }
+            lock.unlock()
             Self.log.info("Continuous location on: the gateway keeps running in the background")
         }
         #endif
@@ -185,6 +206,14 @@ public final class LocationProvider: NSObject, CLLocationManagerDelegate, @unche
     public func endBackgroundActivity() {
         #if os(iOS)
         if manager.allowsBackgroundLocationUpdates { manager.allowsBackgroundLocationUpdates = false }
+        lock.lock()
+        let session = backgroundSession
+        backgroundSession = nil
+        lock.unlock()
+        if #available(iOS 17.0, *), let s = session as? CLBackgroundActivitySession {
+            s.invalidate()
+            Self.log.info("Background activity session ended")
+        }
         #endif
         lock.lock()
         let stop = significantOn

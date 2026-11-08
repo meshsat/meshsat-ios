@@ -786,6 +786,9 @@ public struct SettingsDiagnosticsSection: View {
     @State private var configYaml = ""
     @State private var importPreview: (text: String, diff: DiffResult)?
     @State private var importError = ""
+    /// Location allowed Always, read again whenever the app comes back from iOS Settings.
+    @State private var locationAlways = true
+    @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
 
@@ -896,6 +899,25 @@ public struct SettingsDiagnosticsSection: View {
                             Spacer(minLength: 8)
                             MSSwitch(
                                 isOn: settings.binding(SettingsKey.backgroundGateway), label: "Keep the gateway running in the background")
+                        }
+                        .onChange(of: settings.bool(SettingsKey.backgroundGateway)) { _, on in
+                            if on { model.gateway.location.requestAlways() }
+                            locationAlways = model.gateway.location.isAlways
+                        }
+                        .onChange(of: scenePhase) { _, phase in
+                            if phase == .active { locationAlways = model.gateway.location.isAlways }
+                        }
+                        .onAppear { locationAlways = model.gateway.location.isAlways }
+                        if settings.bool(SettingsKey.backgroundGateway), !locationAlways {
+                            // Without Always the switch does nothing, and iOS asks only once (MESHSAT-1506).
+                            HStack {
+                                Text("Location is allowed only while MeshSat is open. Set it to Always in iOS Settings.")
+                                    .msText(.bodySmall, color: MSColors.amber)
+                                Spacer(minLength: 8)
+                                MSOutlinedButton("Open Settings") {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                }
+                            }
                         }
                     }
                     HStack {
