@@ -346,12 +346,6 @@ extension GatewayController {
         return hash
     }
 
-    /// The voice notes and photos of one conversation, by message id, for the chat view.
-    public func attachmentsByMessage(peer: String) async -> [Int64: [MessageAttachmentRecord]] {
-        let all = (try? await db.attachments.forConversation(peer)) ?? []
-        return Dictionary(grouping: all, by: \.messageId)
-    }
-
     /// A send the router refused (no node, a bad address): the conversation shows it failed, as Android does.
     public func recordLxmfRefused(destHex: String, text: String) {
         Task { [self] in

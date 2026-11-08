@@ -96,15 +96,24 @@ public struct GRDBMessageAttachmentStore: Sendable {
 
     /// Every attachment in one conversation, keyed like the conversation query, for the chat view.
     public func forConversation(_ peer: String) async throws -> [MessageAttachmentRecord] {
-        try await db.read { d in
-            try Row.fetchAll(
-                d,
-                sql: """
-                    SELECT a.* FROM message_attachments a JOIN messages m ON m.id = a.message_id
-                    WHERE m.sender = ? OR (m.recipient = ? AND m.direction = 'tx') ORDER BY a.id
-                    """, arguments: [peer, peer]
-            ).map(Self.record)
-        }
+        try await db.read { d in try Self.conversation(d, peer) }
+    }
+
+    /// The same, live (Room's Flow): a new value whenever a message or an attachment of the conversation
+    /// is written. A message row is filed before its attachments, so a view that reads them once when the
+    /// row appears misses them; this one gets them when they land.
+    public func observeConversation(_ peer: String) -> AsyncValueObservation<[MessageAttachmentRecord]> {
+        ValueObservation.tracking { d in try Self.conversation(d, peer) }.values(in: db)
+    }
+
+    private static func conversation(_ d: Database, _ peer: String) throws -> [MessageAttachmentRecord] {
+        try Row.fetchAll(
+            d,
+            sql: """
+                SELECT a.* FROM message_attachments a JOIN messages m ON m.id = a.message_id
+                WHERE m.sender = ? OR (m.recipient = ? AND m.direction = 'tx') ORDER BY a.id
+                """, arguments: [peer, peer]
+        ).map(Self.record)
     }
 
     public func totalBytes() async throws -> Int64 {

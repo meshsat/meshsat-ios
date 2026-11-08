@@ -79,6 +79,20 @@ public final class MessagesModel {
     }
 
     /// One conversation's messages, newest first, as the chat shows them.
+    /// The voice notes and photos of one conversation by message id, again whenever one is written.
+    public func observeAttachments(_ peer: String) -> AsyncStream<[Int64: [MessageAttachmentRecord]]> {
+        let observation = gateway.db.attachments.observeConversation(peer)
+        return AsyncStream { continuation in
+            let task = Task {
+                do {
+                    for try await list in observation { continuation.yield(Dictionary(grouping: list, by: \.messageId)) }
+                } catch {}
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     public func observeConversation(_ peer: String) -> AsyncStream<[MessageRecord]> {
         let observation = gateway.db.messages.getConversation(peer)
         return AsyncStream { continuation in

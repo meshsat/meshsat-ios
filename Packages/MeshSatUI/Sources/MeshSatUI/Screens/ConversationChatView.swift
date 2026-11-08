@@ -105,9 +105,11 @@ public struct ConversationChatView: View {
                 .onChange(of: messages.first?.id) { _, newest in
                     if let newest { proxy.scrollTo(newest, anchor: .bottom) }
                 }
-                .task(id: messages.first?.forwardedTo ?? "") {
-                    // Notes and photos of this conversation, again whenever the newest row changes.
-                    if transport == "lxmf" || Peers.isLxmf(peer) { attachments = await model.gateway.attachmentsByMessage(peer: peer) }
+                .task(id: peer) {
+                    // Notes and photos of this conversation, live: a received message's attachments are filed
+                    // just after its row, and its row's fields never change, so a one-time read missed them.
+                    guard transport == "lxmf" || Peers.isLxmf(peer) else { return }
+                    for await byMessage in messagesModel.observeAttachments(peer) { attachments = byMessage }
                 }
             }
             composeBar
