@@ -517,6 +517,21 @@ platform :ios do
     UI.success("#{version.version_string} (#{build.version}) ready for store_review_info and store_submit")
   end
 
+  # store_new_version keeps the description App Store Connect copied from the live version. This writes the
+  # repo's description.txt into the editable version, so the listing says what the version does.
+  desc "Write fastlane/metadata/en-US/description.txt into the editable App Store version"
+  lane :store_description do
+    asc_key
+    app = Spaceship::ConnectAPI::App.find("net.meshsat.ios")
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    UI.user_error!("no editable version") if version.nil?
+    loc = version.get_app_store_version_localizations.find { |l| l.locale == "en-US" }
+    text = File.read(File.join(__dir__, "metadata", "en-US", "description.txt")).strip
+    UI.user_error!("description is #{text.length} characters, Apple takes 4000") if text.length > 4000
+    loc.update(attributes: { description: text })
+    UI.success("#{version.version_string}: description #{text.length} characters written")
+  end
+
   desc "TestFlight build (needs the App Store Connect API key, MESHSAT-1331)"
   lane :beta do
     asc_key
