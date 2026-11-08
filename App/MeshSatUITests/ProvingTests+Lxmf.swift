@@ -104,6 +104,7 @@ extension ProvingTests {
             XCTAssertTrue(got, "the far end's text")
         }
         if env["MESHSAT_LXMF_ATTACH"] == "1" { try lxmfAttachments(app) }
+        if env["MESHSAT_LXMF_PHOTO"] == "1" { try lxmfSendPhoto(app) }
         Thread.sleep(forTimeInterval: 5)
     }
 

@@ -172,6 +172,10 @@ platform :ios do
     sh("cd .. && rm -rf build-uitest && xcodebuild build-for-testing -project #{PROJECT} -scheme #{SCHEME} " \
        "-configuration Release -destination 'generic/platform=iOS' -derivedDataPath build-uitest " \
        "-allowProvisioningUpdates=NO 2>&1 | grep -E 'error:|warning: .*provision|BUILD (SUCCEEDED|FAILED)' | sort -u")
+    # The runner Xcode generates has no add-only Photos usage string; the photo proof needs it.
+    sh("cd ../build-uitest/Build/Products/Release-iphoneos && R=MeshSatUITests-Runner.app && " \
+       "plutil -insert NSPhotoLibraryAddUsageDescription -string 'Access is necessary for automated testing.' $R/Info.plist && " \
+       "codesign -d --entitlements runner-ent.plist --xml $R && codesign -f -s 'Apple Development' --entitlements runner-ent.plist $R")
     sh("cd ../build-uitest/Build/Products/Release-iphoneos && ls -d *.app && tar czf ../../../../uitest-apps.tgz MeshSat.app MeshSatUITests-Runner.app")
   end
 
