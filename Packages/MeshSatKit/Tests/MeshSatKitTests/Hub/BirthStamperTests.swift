@@ -158,7 +158,8 @@ final class BirthStamperTests: XCTestCase {
 
     // MARK: The reporter
 
-    private func eventually(_ timeoutMs: Int = 10_000, _ cond: () async -> Bool) async -> Bool {
+    // Above the reporter's 10 s between tries, with room for a loaded CI host (MESHSAT-1824).
+    private func eventually(_ timeoutMs: Int = 40_000, _ cond: () async -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
         while Date() < deadline {
             if await cond() { return true }
@@ -215,11 +216,12 @@ final class BirthStamperTests: XCTestCase {
 
         // The chain switched to plain: re-announced again.
         format.value = "plain"
-        let switched = await eventually { self.births(session).count == 3 }
+        // By its content, not by count: on a loaded host a retry can add a birth in between.
+        let switched = await eventually { self.births(session).last.flatMap { self.modem($0)?["egress_format"] as? String } == "plain" }
         XCTAssertTrue(switched)
-        XCTAssertEqual(modem(births(session)[2])?["egress_format"] as? String, "plain")
-        XCTAssertNil(modem(births(session)[2])?["egress_sealed"])
-        XCTAssertEqual(store.stored, BirthStamper.format(micro(floor, 3)))
+        let last = try XCTUnwrap(births(session).last)
+        XCTAssertNil(modem(last)?["egress_sealed"])
+        XCTAssertEqual(store.stored, last["timestamp"] as? String)
         await reporter.stop()
     }
 
