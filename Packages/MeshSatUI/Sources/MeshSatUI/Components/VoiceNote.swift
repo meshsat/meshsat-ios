@@ -24,6 +24,9 @@ struct RecordNoteButton: View {
     @State private var transcriber: SpeechTranscriber?
     @State private var elapsedMs: Int64 = 0
     @State private var watch: [Task<Void, Never>] = []
+    @State private var starting = false
+    // Goes back to false by itself when the gesture is cancelled too, as by the permission alert.
+    @GestureState private var fingerDown = false
 
     private var recording: Bool { recorder != nil }
 
@@ -34,11 +37,14 @@ struct RecordNoteButton: View {
                 .foregroundStyle(recording ? MSColors.red : (enabled ? MSColors.teal : MSColors.textMuted))
                 .frame(width: 40, height: 40)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in if !recording, enabled { begin() } }
-                        .onEnded { _ in if recording { end() } }
-                )
+                .gesture(DragGesture(minimumDistance: 0).updating($fingerDown) { _, down, _ in down = true })
+                .onChange(of: fingerDown) { _, down in
+                    if down {
+                        if !recording, enabled { begin(whileHeld: true) }
+                    } else if recording {
+                        end()
+                    }
+                }
                 .accessibilityLabel(recording ? "Stop the voice note" : "Hold to record a voice note")
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction { recording ? end() : begin() }
@@ -48,13 +54,19 @@ struct RecordNoteButton: View {
         }
     }
 
-    private func begin() {
+    private func begin(whileHeld: Bool = false) {
+        guard !starting else { return }
+        starting = true
         Task { @MainActor in
+            defer { starting = false }
             guard await VoiceRecorder.requestPermission() else {
                 model.showToast("The microphone is not allowed for MeshSat. Allow it in the iPhone's Settings.")
                 return
             }
             _ = await SpeechTranscriber.requestPermission()
+            // Nothing else can run from here until the recorder is set: a finger that lifted
+            // during the wait above has asked for nothing, and no lift would ever end this one.
+            if whileHeld, !fingerDown { return }
             let r = VoiceRecorder()
             let t = SpeechTranscriber()
             r.onBuffer = { [t] buffer in t.append(buffer) }
