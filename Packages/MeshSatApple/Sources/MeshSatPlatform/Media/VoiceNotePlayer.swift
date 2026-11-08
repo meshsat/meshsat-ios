@@ -50,7 +50,12 @@ public final class VoiceNotePlayer: @unchecked Sendable {
         current = id
         lock.unlock()
         playing.send(id)
-        node.scheduleBuffer(pcm, at: nil, options: []) { [weak self] in self?.finished(id) }
+        // The handler runs on the node's own thread when the last sample has played. Stopping there releases
+        // the engine inside its own callback, which killed the app at the end of every note (iPhone, 8 Nov
+        // 2026), so the stop goes to the main queue, as Android's MediaPlayer reports completion on its looper.
+        node.scheduleBuffer(pcm, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async { self?.finished(id) }
+        }
         node.play()
     }
 
