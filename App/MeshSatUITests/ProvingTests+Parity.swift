@@ -26,7 +26,14 @@ extension ProvingTests {
         let lines = labels(app, containing: words)
         NSLog("MeshSatProve: satellite row lines %@", lines.joined(separator: " | "))
         XCTAssertTrue(named, "the row names the 9704")
-        XCTAssertFalse(lines.contains { $0.contains("No modem on this radio") }, "no 'No modem on this radio' beside the 9704")
+        // The row through the 9704's init attempts: never the 9603's "No modem on this radio".
+        var seen = Set(lines)
+        for _ in 0..<(Int(env["MESHSAT_SAMPLES"] ?? "24") ?? 24) {
+            Thread.sleep(forTimeInterval: 5)
+            seen.formUnion(labels(app, containing: words))
+        }
+        NSLog("MeshSatProve: satellite row seen %@", seen.sorted().joined(separator: " | "))
+        XCTAssertFalse(seen.contains { $0.contains("No modem on this radio") }, "no 'No modem on this radio' beside the 9704")
         Thread.sleep(forTimeInterval: 4)  // the row, for the screenshot
         tap(app, "Satellite")
         Thread.sleep(forTimeInterval: 6)  // the satellite page beside it
@@ -42,45 +49,61 @@ extension ProvingTests {
         let app = attach()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         openTab(app, "Home")
-        tap(app, "Test the alarm")
-        tap(app, "Send the test")
-        for _ in 0..<3 {
-            // The composer is the system's: its Send and Cancel. Cancel only.
-            guard app.buttons["Send"].firstMatch.waitForExistence(timeout: 8) else { break }
-            Thread.sleep(forTimeInterval: 2)
-            let cancel = app.buttons["Cancel"].firstMatch
-            guard cancel.exists else { break }
-            cancel.tap()
-            NSLog("MeshSatProve: sosstop composer cancelled")
-            Thread.sleep(forTimeInterval: 2)
+        // A test an earlier run left going is used as it is.
+        if !app.buttons["Stop test"].firstMatch.exists {
+            tap(app, "Test the alarm")
+            tap(app, "Send the test")
+            for _ in 0..<3 {
+                // The composer is the system's: its Send and Cancel. Cancel only.
+                guard app.buttons["Send"].firstMatch.waitForExistence(timeout: 8) else { break }
+                Thread.sleep(forTimeInterval: 2)
+                let cancel = app.buttons["Cancel"].firstMatch
+                guard cancel.exists else { break }
+                cancel.tap()
+                NSLog("MeshSatProve: sosstop composer cancelled")
+                Thread.sleep(forTimeInterval: 2)
+            }
         }
         let stopOnCard = app.buttons["Stop test"].firstMatch
         XCTAssertTrue(stopOnCard.waitForExistence(timeout: 20), "the test runs (Stop test on the card)")
         Thread.sleep(forTimeInterval: 4)  // the notification is posted with the routes' first state
         XCUIDevice.shared.press(.home)
-        Thread.sleep(forTimeInterval: 2)
-        // Notification Centre: a swipe down from the top left edge.
-        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.003))
-            .press(forDuration: 0.1, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.75)))
-        Thread.sleep(forTimeInterval: 2)
-        let cell = springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", "Alarm test running")).firstMatch
-        let found = cell.waitForExistence(timeout: 10)
-        NSLog("MeshSatProve: sosstop notification %@", found ? cell.label : "not found")
-        guard found else {
-            NSLog("MeshSatProve: springboard %@", String(springboard.debugDescription.prefix(3000)))
-            return XCTFail("the alarm test's notification in Notification Centre")
-        }
-        Thread.sleep(forTimeInterval: 2)  // the notification, for the screenshot
-        cell.press(forDuration: 1.5)
+        // The banner of the last update goes first: a swipe that starts on it opens the banner, not
+        // Notification Centre.
+        Thread.sleep(forTimeInterval: 9)
+        let matching = NSPredicate(format: "label CONTAINS %@", "Alarm test running")
         var stop = springboard.buttons["Stop test"].firstMatch
-        if !stop.waitForExistence(timeout: 5) {
-            // A stack of MeshSat notifications opens on a tap first.
-            cell.tap()
-            Thread.sleep(forTimeInterval: 1.5)
+        for attempt in 1...4 where !stop.exists {
+            // Notification Centre: a slow swipe down from the top left corner.
+            if !springboard.descendants(matching: .any).matching(matching).firstMatch.exists {
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.0))
+                    .press(
+                        forDuration: 0.05, thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.7)),
+                        withVelocity: .slow, thenHoldForDuration: 0.2)
+                Thread.sleep(forTimeInterval: 2)
+            }
+            // Looked up again right before the press: each routes update replaces the notification.
+            let cell = springboard.descendants(matching: .any).matching(matching).firstMatch
+            guard cell.waitForExistence(timeout: 8) else {
+                NSLog("MeshSatProve: sosstop attempt %d: no notification on screen", attempt)
+                continue
+            }
+            NSLog("MeshSatProve: sosstop attempt %d notification %@", attempt, cell.label)
+            Thread.sleep(forTimeInterval: 1)  // the notification, for the screenshot
+            guard cell.exists else { continue }
             cell.press(forDuration: 1.5)
             stop = springboard.buttons["Stop test"].firstMatch
+            if !stop.waitForExistence(timeout: 4), cell.exists {
+                // A stack of MeshSat notifications opens on a tap first.
+                cell.tap()
+                Thread.sleep(forTimeInterval: 1.5)
+                let again = springboard.descendants(matching: .any).matching(matching).firstMatch
+                if again.exists { again.press(forDuration: 1.5) }
+                stop = springboard.buttons["Stop test"].firstMatch
+                _ = stop.waitForExistence(timeout: 4)
+            }
         }
+        if !stop.exists { NSLog("MeshSatProve: springboard %@", String(springboard.debugDescription.prefix(4000))) }
         XCTAssertTrue(stop.waitForExistence(timeout: 5), "Stop test on the notification")
         Thread.sleep(forTimeInterval: 2)  // the action, for the screenshot
         stop.tap()
@@ -181,6 +204,34 @@ extension ProvingTests {
         app.swipeUp()
         Thread.sleep(forTimeInterval: 5)  // the list, for the screenshot
         openTab(app, "Home")
+    }
+
+    /// Puts the phone back after a proof: answers iOS's open questions with MESHSAT_ALLOW (labels
+    /// separated by "|", in order of preference) and stops an alarm test still running on Home.
+    @MainActor
+    func testTidy() throws {
+        try gate("tidy")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let app = XCUIApplication()
+        app.activate()
+        let allow = (env["MESHSAT_ALLOW"] ?? "Change to Always Allow|Allow|Allow While Using App").split(separator: "|").map(String.init)
+        for _ in 0..<6 {
+            guard let button = allow.lazy.map({ springboard.buttons[$0].firstMatch }).first(where: { $0.waitForExistence(timeout: 6) })
+            else { break }
+            Thread.sleep(forTimeInterval: 2)  // the question, for the screenshot
+            NSLog("MeshSatProve: tidy answered %@", button.label)
+            button.tap()
+            Thread.sleep(forTimeInterval: 2)
+        }
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 20), "the app")
+        openTab(app, "Home")
+        let stop = app.buttons["Stop test"].firstMatch
+        if stop.waitForExistence(timeout: 5) {
+            stop.tap()
+            let gone = stop.waitForNonExistence(timeout: 15)
+            NSLog("MeshSatProve: tidy alarm test stopped=%@", gone ? "yes" : "no")
+        }
+        Thread.sleep(forTimeInterval: 5)
     }
 
     /// The screens of the housekeeping issue (MESHSAT-1836): no Auto-decrypt switch under

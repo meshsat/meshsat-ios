@@ -7,6 +7,7 @@ import SwiftUI
 public struct SetupScreen: View {
     @Environment(Router.self) private var router
     @Environment(GatewayModel.self) private var model
+    @Environment(SettingsModel.self) private var settings
 
     public init() {}
 
@@ -52,7 +53,10 @@ public struct SetupScreen: View {
         switch model.imtState {
         case .ready: return "Modem ready (RockBLOCK 9704)" + (model.imtReading.map { ", signal \($0.bars) of 5" } ?? "")
         case .connecting, .connected, .initializing: return "Bringing the 9704 up"
-        case .disconnected: break
+        case .disconnected:
+            // Between two init attempts the 9704 driver is down while the node still says it carries
+            // a 9704: the 9603's words were wrong there (seen on the iPhone on 12 Nov 2026).
+            if settings.nodeCarries9704, model.meshState == .connected { return "The node's 9704 does not answer (still trying)" }
         }
         switch model.modemState {
         case .connected: return "Modem ready, signal \(model.modemSignal) of 5"
@@ -64,6 +68,7 @@ public struct SetupScreen: View {
     private var modemDot: Color {
         if model.imtState == .ready { return MSColors.green }
         if model.imtState != .disconnected { return MSColors.amber }
+        if settings.nodeCarries9704, model.meshState == .connected { return MSColors.red }
         switch model.modemState {
         case .connected: return MSColors.green
         case .connecting: return model.modemSilent ? MSColors.red : MSColors.amber
