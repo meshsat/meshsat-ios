@@ -15,6 +15,17 @@ final class ProvingTests: XCTestCase {
         let app = XCUIApplication()
         app.activate()
         XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 20))
+        // A relayed public warning fills the screen until it is dismissed (MESHSAT-1819) and hides
+        // every tab: a proof about something else dismisses it (it stays under Setup > Safety >
+        // Warnings); the warning screen's own proof keeps it.
+        if env["MESHSAT_PROVE"] != "warnscreen", app.buttons["All warnings"].firstMatch.exists {
+            let dismiss = app.buttons["Dismiss"].firstMatch
+            if dismiss.exists, dismiss.isHittable {
+                NSLog("MeshSatProve: a public warning was on screen, dismissed")
+                dismiss.tap()
+                Thread.sleep(forTimeInterval: 1)
+            }
+        }
         return app
     }
 
